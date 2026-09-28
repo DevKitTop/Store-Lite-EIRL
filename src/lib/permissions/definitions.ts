@@ -19,6 +19,7 @@ export type Permission =
   | 'chat.respond'
   | 'chat.delete'
   | 'dashboard.view'
+  | 'orders.manage'
   | 'storage.upload'
   | 'storage.delete'
   | 'home.edit'
@@ -57,6 +58,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'chat.respond',
     'chat.delete',
     'dashboard.view',
+    'orders.manage',
     'storage.upload',
     'storage.delete',
     'home.edit',
@@ -89,6 +91,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'chat.respond',
     'chat.delete',
     'dashboard.view',
+    'orders.manage',
     'storage.upload',
     'storage.delete',
     'home.edit',
@@ -114,6 +117,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'chat.view',
     'chat.respond',
     'dashboard.view',
+    'orders.manage',
     'storage.upload',
     // NO storage.delete
     'home.edit',
@@ -160,6 +164,11 @@ export const PERMISSION_GROUPS: Record<
     label: 'Dashboard',
     icon: 'dashboard',
     permissions: ['dashboard.view'],
+  },
+  orders: {
+    label: 'Pedidos',
+    icon: 'local_shipping',
+    permissions: ['orders.manage'],
   },
   storage: {
     label: 'Almacenamiento',
@@ -235,6 +244,10 @@ export const PERMISSION_LABELS: Record<Permission, { label: string; description:
   'chat.respond': { label: 'Responder chat', description: 'Puede responder a clientes' },
   'chat.delete': { label: 'Eliminar chats', description: 'Puede eliminar sesiones de chat' },
   'dashboard.view': { label: 'Ver dashboard', description: 'Puede ver métricas y estadísticas' },
+  'orders.manage': {
+    label: 'Gestionar pedidos',
+    description: 'Puede avanzar y finalizar pedidos',
+  },
   'storage.upload': { label: 'Subir archivos', description: 'Puede subir imágenes y archivos' },
   'storage.delete': { label: 'Eliminar archivos', description: 'Puede eliminar archivos subidos' },
   'home.edit': {

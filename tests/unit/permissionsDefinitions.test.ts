@@ -46,3 +46,37 @@ describe('PERMISSION_LABELS', () => {
     expect(entry.description).toBe('Puede ver el centro de notificaciones');
   });
 });
+
+// =====================================================
+// orders.manage — required by the seller order authorization gate
+// =====================================================
+
+describe('orders.manage', () => {
+  test('owner includes orders.manage', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.owner).toContain('orders.manage');
+  });
+
+  test('admin includes orders.manage', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.admin).toContain('orders.manage');
+  });
+
+  test('member includes orders.manage', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.member).toContain('orders.manage');
+  });
+
+  test('has a label and description', () => {
+    const entry = PERMISSION_LABELS['orders.manage'];
+    expect(entry).toBeDefined();
+    expect(entry.label).toBe('Gestionar pedidos');
+    expect(entry.description).toBe('Puede avanzar y finalizar pedidos');
+  });
+
+  test('is assignable in exactly one PERMISSION_GROUPS entry', () => {
+    const groups = Object.values(PERMISSION_GROUPS).filter((group) =>
+      group.permissions.includes('orders.manage'),
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBe('Pedidos');
+    expect(groups[0].icon).toBe('local_shipping');
+  });
+});

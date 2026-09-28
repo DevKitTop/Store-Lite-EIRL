@@ -2,7 +2,15 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // ── Mocks ────────────────────────────────────────────
 // All mock objects created via vi.hoisted() so they exist before vi.mock factories run
-const { mockEnv, mockFrom, mockWhere, mockLimit, mockTransition } = vi.hoisted(() => {
+const {
+  mockEnv,
+  mockFrom,
+  mockWhere,
+  mockLimit,
+  mockTransition,
+  mockCheckPermission,
+  mockProfileFindFirst,
+} = vi.hoisted(() => {
   const env = { orderFlowV2: true };
   return {
     mockEnv: env,
@@ -10,6 +18,8 @@ const { mockEnv, mockFrom, mockWhere, mockLimit, mockTransition } = vi.hoisted((
     mockWhere: vi.fn(),
     mockLimit: vi.fn(),
     mockTransition: vi.fn(),
+    mockCheckPermission: vi.fn(),
+    mockProfileFindFirst: vi.fn(),
   };
 });
 
@@ -25,9 +35,25 @@ vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
 }));
 
+// The module exports `createClient`, not a bare `{ auth }` shape.
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: () => ({
+    auth: {
+      getUser: async () => ({ data: { user: { id: 'user_1' } } }),
+    },
+  }),
+}));
+
+vi.mock('@/lib/permissions', () => ({
+  checkPermission: mockCheckPermission,
+}));
+
 vi.mock('@/core/database/client', () => ({
   db: {
     select: vi.fn(() => ({ from: mockFrom })),
+    // getAuthenticatedUserId hits profiles.findFirst as an FK guard; without it the
+    // call throws into the catch and the resolved actor comes back null.
+    query: { profiles: { findFirst: mockProfileFindFirst } },
   },
 }));
 
@@ -62,6 +88,8 @@ describe('markReadyForPickup', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockEnv.orderFlowV2 = true;
+    mockCheckPermission.mockResolvedValue(true);
+    mockProfileFindFirst.mockResolvedValue({ id: 'user_1' });
   });
 
   test('calls transition with READY_FOR_PICKUP', async () => {
@@ -76,7 +104,7 @@ describe('markReadyForPickup', () => {
       expect.objectContaining({
         paymentId: 'pay_123',
         toStatus: 'READY_FOR_PICKUP',
-        actor: { type: 'seller' },
+        actor: { type: 'seller', id: 'user_1' },
       }),
     );
   });
@@ -97,6 +125,8 @@ describe('confirmPickedUp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockEnv.orderFlowV2 = true;
+    mockCheckPermission.mockResolvedValue(true);
+    mockProfileFindFirst.mockResolvedValue({ id: 'user_1' });
   });
 
   test('validates pickup code and transitions to PICKED_UP then auto-completes to COMPLETED', async () => {
@@ -118,7 +148,7 @@ describe('confirmPickedUp', () => {
       expect.objectContaining({
         paymentId: 'pay_123',
         toStatus: 'PICKED_UP',
-        actor: { type: 'seller' },
+        actor: { type: 'seller', id: 'user_1' },
       }),
     );
     expect(mockTransition).toHaveBeenNthCalledWith(
