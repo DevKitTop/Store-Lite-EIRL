@@ -14,6 +14,7 @@
 // }
 // ──────────────────────────────────────────
 
+import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import type { NotificationCategory, NotificationType } from '@/core/database/schema';
 import { businessSubscriptions } from '@/core/database/schema';
@@ -21,12 +22,10 @@ import { createBusinessNotification } from '@/lib/notifications';
 import { eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
-const SASS_API_KEY = process.env.SASS_API_KEY;
-
 export async function POST(request: Request) {
   // ── 1. Validar API key ──────────────────
   const apiKey = request.headers.get('x-sass-key');
-  if (!apiKey || apiKey !== SASS_API_KEY) {
+  if (!apiKey || apiKey !== env.sassApiKey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

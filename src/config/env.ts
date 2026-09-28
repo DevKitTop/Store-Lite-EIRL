@@ -4,6 +4,9 @@ export const env = {
   // Only available server-side — never expose to the client
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
   nextPublicAppUrl: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+  // Allowed return origin for the customer auth popup (public — used by
+  // isAllowedAuthReturnOrigin to validate postMessage targets).
+  authOrigin: process.env.NEXT_PUBLIC_AUTH_ORIGIN || '',
   // Feature flags
   // Order Flow V2 — nuevo ciclo de vida de 12 estados con state machine, timeline, attachments
   orderFlowV2: process.env.ORDER_FLOW_V2 === 'true',
@@ -44,6 +47,16 @@ export const env = {
   // CRON_SECRET / cron_secret — protege los endpoints cron contra acceso público.
   //   Las llamadas desde Supabase pg_cron deben incluir este token.
   cronSecret: process.env.CRON_SECRET || process.env.cron_secret || '',
+  // PLATFORM_ADMIN_IDS — allowlist of Supabase auth user ids allowed to run
+  //   operator-only cross-tenant reports (server-side only). Comma-separated;
+  //   blanks are dropped. Unset → [] (fail-closed, never a wildcard).
+  platformAdminIds: (process.env.PLATFORM_ADMIN_IDS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+  // SASS_API_KEY — shared secret for the `x-sass-key` header on service
+  //   endpoints (server-side only). Unset → '' so an empty header can never match.
+  sassApiKey: process.env.SASS_API_KEY || '',
   // Meta Pixel + Conversions API (CAPI) — tracking consent-gated (ver sl_consent_status).
   //   NEXT_PUBLIC_META_PIXEL_ID: público, usado por el pixel en el navegador.
   //   META_CAPI_ACCESS_TOKEN: solo server-side, NUNCA exponer al cliente.

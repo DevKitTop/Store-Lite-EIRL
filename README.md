@@ -109,10 +109,16 @@ Incluye deduplicación: no envía la misma notificación dos veces en el mismo d
 
 ### Variables de entorno
 
-| Variable       | Descripción                                         |
-| -------------- | --------------------------------------------------- |
-| `SASS_API_KEY` | Clave para autenticar broadcasts contra el endpoint |
-| `CRON_SECRET`  | Clave para autenticar requests de Vercel Cron       |
+| Variable             | Descripción                                                                                                                 |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `SASS_API_KEY`       | Clave para autenticar broadcasts contra el endpoint                                                                         |
+| `CRON_SECRET`        | Clave para autenticar requests de Vercel Cron                                                                               |
+| `PLATFORM_ADMIN_IDS` | IDs de usuario de Supabase (separados por coma) autorizados en endpoints de operador. Si queda vacío, nadie está autorizado |
+
+> `GET /api/billing/sunat-report` es cross-tenant y requiere **o bien** un usuario
+> listado en `PLATFORM_ADMIN_IDS` **o bien** el header `x-sass-key` con el valor de
+> `SASS_API_KEY`. Configuralo **antes** de desplegar el cambio: si queda vacío, el
+> operador recibe 401.
 
 ## 🛠️ Configuración de Desarrollo
 
