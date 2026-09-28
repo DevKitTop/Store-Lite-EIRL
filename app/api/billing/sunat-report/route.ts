@@ -1,3 +1,4 @@
+import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { planPayments } from '@/core/database/schema';
 import { requireAuthenticatedUserId } from '@/features/storage/actions/authz';
@@ -9,14 +10,29 @@ import { NextResponse } from 'next/server';
  * GET ?month=04&year=2026
  *
  * Solo para administradores del SaaS.
+ * El export es cross-tenant a propósito (el operador declara a SUNAT por todos
+ * los negocios), por eso la autorización es la única barrera: o bien el header
+ * `x-sass-key` con SASS_API_KEY (autoriza solo, sin sesión — misma semántica que
+ * /api/sass/notifications/broadcast) o bien un usuario de PLATFORM_ADMIN_IDS.
  * Retorna las boletas en CSV/JSON del mes para declarar a SUNAT.
  */
 export async function GET(request: Request) {
   // ── Auth check ──────────────────────────────────────────
-  try {
-    await requireAuthenticatedUserId();
-  } catch {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+  // La clave de servicio autoriza sin sesión; el guard `!!env.sassApiKey`
+  // impide que una clave sin configurar valide un header vacío.
+  const isSassScript = !!env.sassApiKey && request.headers.get('x-sass-key') === env.sassApiKey;
+
+  if (!isSassScript) {
+    let userId: string | null = null;
+    try {
+      userId = await requireAuthenticatedUserId();
+    } catch {
+      userId = null;
+    }
+
+    if (!userId || !env.platformAdminIds.includes(userId)) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    }
   }
 
   try {
