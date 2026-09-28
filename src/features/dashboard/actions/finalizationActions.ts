@@ -13,9 +13,15 @@ import {
 import { processOrderCompletion } from '@/lib/deactivation';
 import { checkIncompleteOrderDeactivation } from '@/lib/incompleteOrderRate';
 import { createBusinessNotification } from '@/lib/notifications';
+import { checkPermission } from '@/lib/permissions';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { and, eq, lt } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
+
+// Every unauthorized outcome — unresolved actor, missing grant, or a payment row
+// owned by another tenant — reports the same string, so an anonymous caller
+// learns nothing about session state (spec R3).
+const NO_PERMISSION_ERROR = 'Pago no encontrado o no tienes permisos.';
 
 async function getAuthenticatedUserId(): Promise<string | null> {
   try {
@@ -48,6 +54,24 @@ async function getAuthenticatedUserId(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Authorization gate for the seller order actions.
+ *
+ * Callers MUST run this at the top of the action, before the first DB read and
+ * outside the `env.orderFlowV2` branch, so the legacy inline path is guarded
+ * too (design D4). An unresolved actor is a hard abort, not a permissive
+ * default (design D6) — callers must not fall back to a partial actor.
+ */
+async function requireOrderManager(
+  businessId: string,
+): Promise<{ ok: true; actorId: string } | { ok: false }> {
+  const actorId = await getAuthenticatedUserId();
+  if (!actorId) return { ok: false };
+  const canManage = await checkPermission(businessId, actorId, 'orders.manage');
+  if (!canManage) return { ok: false };
+  return { ok: true, actorId };
 }
 
 // =====================================================
@@ -84,6 +108,11 @@ export async function requestFinalization(
   businessId: string,
 ): Promise<FinalizationActionResult> {
   try {
+    // Authorization gate — before any DB read and outside the orderFlowV2 branch (design D4).
+    const gate = await requireOrderManager(businessId);
+    if (!gate.ok) return { success: false, error: NO_PERMISSION_ERROR };
+    const { actorId } = gate;
+
     // 1. Fetch the payment and validate ownership + status
     const [payment] = await db
       .select()
@@ -93,7 +122,7 @@ export async function requestFinalization(
 
     if (!payment) {
       console.error('[requestFinalization] Payment not found or not owned by business');
-      return { success: false, error: 'Pago no encontrado o no tienes permisos.' };
+      return { success: false, error: NO_PERMISSION_ERROR };
     }
 
     // 2. Check if status allows finalization
@@ -132,13 +161,12 @@ export async function requestFinalization(
     const expectedVersion = (payment as { version?: number }).version ?? 0;
 
     if (env.orderFlowV2) {
-      const actorId = await getAuthenticatedUserId();
       const result = await transition({
         paymentId,
         // In legacy flow, requestFinalization moves to 'not_delivered' which maps to DELIVERED.
         // In V2, this means the seller confirms the order was delivered to the customer.
         toStatus: ORDER_STATUS_V2.DELIVERED,
-        actor: { type: 'seller', id: actorId ?? undefined },
+        actor: { type: 'seller', id: actorId },
         expectedVersion,
         extraFields: { finalizationRequestedAt: now, finalizationDeadline: deadline },
       });
