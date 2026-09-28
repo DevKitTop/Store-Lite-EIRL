@@ -175,6 +175,9 @@ describe('requestFinalization authorization gate', () => {
     const result = await requestFinalization(PAYMENT_ID, BUSINESS_ID);
 
     expect(result.success).toBe(true);
+    // The gate must ask for `orders.manage` on the caller's own business, in the
+    // real (businessId, userId, permission) order.
+    expect(mockCheckPermission).toHaveBeenCalledWith(BUSINESS_ID, 'user_1', 'orders.manage');
     // objectContaining is shallow, so `actor` deep-equals — proves the seller
     // id reaches the audit trail instead of falling back to undefined.
     expect(mockTransition).toHaveBeenCalledWith(
