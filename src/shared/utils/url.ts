@@ -197,3 +197,35 @@ export function extractTenantSlugFromHost(hostname: string): string | null {
 export function isReservedSubdomain(slug: string): boolean {
   return (RESERVED_SUBDOMAINS as readonly string[]).includes(slug.toLowerCase());
 }
+
+/**
+ * Valida un origin como destino de `postMessage` desde el popup de auth.
+ *
+ * `postMessage` acepta cualquier string como targetOrigin, así que un opener
+ * hostil puede apuntar el popup a sí mismo y recibir los tokens. Por eso el
+ * param `origin` de la URL se usa SOLO como input de esta allowlist:
+ *   - mismo origen que la página (en prod el storefront y el popup comparten
+ *     dominio, así que esta cláusula es la que sostiene el flujo real)
+ *   - env.authOrigin (NEXT_PUBLIC_AUTH_ORIGIN) — superconjunto del anterior
+ *   - host tenant, únicamente si FEATURE_SUBDOMAIN_REWRITE está activo
+ *     (la rama queda preparada; hoy el flag es false)
+ * Cualquier otro caso se deniega (fail-closed), incluidos `javascript:`,
+ * `data:`, rutas relativas y strings vacíos.
+ *
+ * Solo se invoca desde el popup (componente cliente), donde `window` existe.
+ */
+export function isAllowedAuthReturnOrigin(origin: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    // No parseable (relativo, vacío, esquema inválido) → denegar.
+    return false;
+  }
+
+  if (parsed.origin === window.location.origin) return true;
+  if (parsed.origin === env.authOrigin) return true;
+  if (env.featureSubdomainRewrite && isTenantHost(parsed.hostname)) return true;
+
+  return false;
+}

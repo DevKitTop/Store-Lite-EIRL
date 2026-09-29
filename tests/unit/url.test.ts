@@ -304,3 +304,76 @@ describe('getCanonicalBusinessUrl — subdomain mode', () => {
     expect(fn('mi-tienda', '/')).toBe('http://mi-tienda.localhost:3000');
   });
 });
+
+// --- isAllowedAuthReturnOrigin (postMessage target allowlist) ---
+// `env` is a module-scope literal, so every case stubs the env vars it needs
+// and re-imports the module — same pattern as the subdomain-mode suites above.
+// jsdom serves this suite from http://localhost:3000.
+
+describe('isAllowedAuthReturnOrigin', () => {
+  async function loadHelper(vars: Record<string, string> = {}) {
+    // Flag off by default: the tenant branch is prepared but disabled.
+    vi.stubEnv('FEATURE_SUBDOMAIN_REWRITE', '');
+    for (const [key, value] of Object.entries(vars)) {
+      vi.stubEnv(key, value);
+    }
+    vi.resetModules();
+    const { isAllowedAuthReturnOrigin: fn } = await import('@/shared/utils/url');
+    return fn;
+  }
+
+  test('allows the origin the popup itself is served from', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app' });
+    // Guards the assumption this suite's other assertions rest on.
+    expect(window.location.origin).toBe('http://localhost:3000');
+    expect(fn('http://localhost:3000/some/path')).toBe(true);
+  });
+
+  test('allows the configured auth origin', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app' });
+    expect(fn('https://storelite.app')).toBe(true);
+    expect(fn('https://storelite.app/some/path')).toBe(true);
+  });
+
+  test('denies a foreign origin', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app' });
+    expect(fn('https://evil.example')).toBe(false);
+    expect(fn('https://storelite.app.evil.example')).toBe(false);
+    expect(fn('https://storelite.app:8443')).toBe(false);
+  });
+
+  test('denies non-URL and hostile-scheme inputs', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app' });
+    // eslint-disable-next-line sonarjs/code-eval -- hostile-scheme fixture, never executed
+    expect(fn('javascript:alert(1)')).toBe(false);
+    expect(fn('data:text/html,<script>alert(1)</script>')).toBe(false);
+    expect(fn('relative/path')).toBe(false);
+    expect(fn('')).toBe(false);
+  });
+
+  test('denies a tenant host while featureSubdomainRewrite is off', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app' });
+    expect(fn('https://acme.storelite.app')).toBe(false);
+  });
+
+  test('denies a foreign origin when NEXT_PUBLIC_AUTH_ORIGIN is unset', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: '' });
+    expect(fn('https://evil.example')).toBe(false);
+  });
+
+  test('allows a tenant host once featureSubdomainRewrite is on', async () => {
+    const fn = await loadHelper({
+      NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app',
+      FEATURE_SUBDOMAIN_REWRITE: 'true',
+    });
+    expect(fn('https://acme.storelite.app')).toBe(true);
+  });
+
+  test('still denies a reserved subdomain when featureSubdomainRewrite is on', async () => {
+    const fn = await loadHelper({
+      NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app',
+      FEATURE_SUBDOMAIN_REWRITE: 'true',
+    });
+    expect(fn('https://admin.storelite.app')).toBe(false);
+  });
+});
