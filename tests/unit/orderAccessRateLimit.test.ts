@@ -19,7 +19,11 @@
 // =====================================================
 
 import { POST } from '@/app/api/order/lookup/route';
-import { buildOrderAccessIdentifier } from '@/lib/orderAccessRateLimit';
+import {
+  buildOrderAccessIdentifier,
+  checkOrderAccessRateLimitFor,
+  resetOrderAccessRateLimit,
+} from '@/lib/orderAccessRateLimit';
 import { RATE_LIMITS, type checkRateLimit as CheckRateLimit } from '@/lib/rateLimit';
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -151,6 +155,58 @@ describe('buildOrderAccessIdentifier', () => {
 
     expect(identifier).toBe(`${IP}:dni:${'9'.repeat(64)}`);
     expect(identifier).toHaveLength(IP.length + ':dni:'.length + 64);
+  });
+});
+
+// ── Suite: identifier-level entry points (R9 / R10, design D2) ──
+//
+// `checkOrderAccessRateLimit(request, body)` can only be used from a route that
+// HAS a `NextRequest`. The buyer order gate is a `'use server'` action, so it
+// reaches the same bucket through `(clientId, rawBody)` instead. These cases pin
+// that the two entry points are the SAME bucket, not a parallel one: same
+// identifier composition, same config, and a reset that cancels what a charge
+// created.
+
+describe('checkOrderAccessRateLimitFor / resetOrderAccessRateLimit', () => {
+  beforeEach(() => {
+    // The REAL limiter: the point is that the composition reaches the real store.
+    mockCheckRateLimit.mockImplementation(realLimiter.current!);
+  });
+
+  test('charges `${clientId}:dni:${dni}` with the shared RATE_LIMITS.auth config', () => {
+    const clientId = '198.51.100.201';
+
+    const result = checkOrderAccessRateLimitFor(clientId, { dni: '44556677' });
+
+    expect(mockCheckRateLimit).toHaveBeenCalledWith(`${clientId}:dni:44556677`, AUTH_LIMIT);
+    // Real sliding-window math, not a stub echo.
+    expect(result).toEqual({
+      allowed: true,
+      remaining: AUTH_LIMIT.maxRequests - 1,
+      resetInMs: AUTH_LIMIT.windowMs,
+    });
+  });
+
+  test('resets the bucket it charged, scoped to that dni (D2)', () => {
+    const clientId = '198.51.100.202';
+    const body = { dni: '44556678' };
+    const siblingBody = { dni: '44556679' };
+
+    for (let attempt = 1; attempt <= AUTH_MAX; attempt += 1) {
+      checkOrderAccessRateLimitFor(clientId, body);
+      checkOrderAccessRateLimitFor(clientId, siblingBody);
+    }
+    expect(checkOrderAccessRateLimitFor(clientId, body).allowed).toBe(false);
+    expect(checkOrderAccessRateLimitFor(clientId, siblingBody).allowed).toBe(false);
+
+    resetOrderAccessRateLimit(clientId, body);
+
+    expect(checkOrderAccessRateLimitFor(clientId, body)).toMatchObject({
+      allowed: true,
+      remaining: AUTH_MAX - 1,
+    });
+    // The reset is scoped: a sibling dni on the same client stays exhausted.
+    expect(checkOrderAccessRateLimitFor(clientId, siblingBody).allowed).toBe(false);
   });
 });
 
