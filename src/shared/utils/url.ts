@@ -199,6 +199,32 @@ export function isReservedSubdomain(slug: string): boolean {
 }
 
 /**
+ * Normaliza un valor de origin a su forma canónica (`new URL(v).origin`).
+ *
+ * Se aplica a `NEXT_PUBLIC_AUTH_ORIGIN` para que la comparación de origins no
+ * dependa de cómo está escrito el valor configurado: una barra final, un path,
+ * el case del host o el puerto default explícito (`https://storelite.app:443`)
+ * resuelven al mismo origin. Es idempotente: normalizar un origin ya canónico
+ * devuelve el mismo string, así que no se revoca ninguna Origins permitidas hoy.
+ *
+ * Devuelve `null` (fail-closed) cuando el valor no sirve como origin:
+ *   - vacío o no parseable (`'not a url'`, rutas relativas) → `new URL` lanza
+ *   - origen opaco: `new URL('javascript:alert(1)').origin` es el string
+ *     `'null'` (y `data:` igual). Sin esta guarda, un valor hostil en el env
+ *     normalizaría a `'null'` y coincidiría con un origin de request hostil.
+ */
+function normalizeOrigin(value: string): string | null {
+  if (!value) return null;
+  try {
+    const parsedValue = new URL(value);
+    if (parsedValue.origin === 'null') return null;
+    return parsedValue.origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Valida un origin como destino de `postMessage` desde el popup de auth.
  *
  * `postMessage` acepta cualquier string como targetOrigin, así que un opener
@@ -219,12 +245,14 @@ export function isAllowedAuthReturnOrigin(origin: string): boolean {
   try {
     parsed = new URL(origin);
   } catch {
-    // No parseable (relativo, vacío, esquema inválido) → denegar.
+    // Sin URL absoluta (relativo o vacío) → denegar. Los esquemas hostiles
+    // (`javascript:`, `data:`) SÍ parsean y los deniega el fallthrough final.
     return false;
   }
 
   if (parsed.origin === window.location.origin) return true;
-  if (parsed.origin === env.authOrigin) return true;
+  const configuredOrigin = normalizeOrigin(env.authOrigin);
+  if (configuredOrigin !== null && parsed.origin === configuredOrigin) return true;
   if (env.featureSubdomainRewrite && isTenantHost(parsed.hostname)) return true;
 
   return false;

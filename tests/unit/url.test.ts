@@ -361,6 +361,56 @@ describe('isAllowedAuthReturnOrigin', () => {
     expect(fn('https://evil.example')).toBe(false);
   });
 
+  // --- R4: the env clause compares origins, not raw strings (design D6/D7) ---
+  // A non-canonical NEXT_PUBLIC_AUTH_ORIGIN used to make the clause silently
+  // dead, because a raw string never equals a parsed `origin`. Each case below
+  // pins one spelling of the same origin.
+
+  test('allows the configured auth origin written with a trailing slash', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app/' });
+    expect(fn('https://storelite.app')).toBe(true);
+  });
+
+  test('allows the configured auth origin written with a path', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app/callback' });
+    expect(fn('https://storelite.app')).toBe(true);
+  });
+
+  test('ignores host case in the configured auth origin', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: 'https://StoreLite.app' });
+    expect(fn('https://storelite.app')).toBe(true);
+  });
+
+  test('ignores an explicit default port in the configured auth origin', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app:443' });
+    expect(fn('https://storelite.app')).toBe(true);
+  });
+
+  test('keeps a non-default port distinct instead of widening the allowlist', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app:8443/cb' });
+    // The port survives normalization, so this is the configured origin …
+    expect(fn('https://storelite.app:8443')).toBe(true);
+    // … and it does not pull the default-port origin into the allowlist.
+    expect(fn('https://storelite.app')).toBe(false);
+  });
+
+  test('denies without throwing when the configured origin is unparseable', async () => {
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: 'not a url' });
+    expect(() => fn('https://evil.example')).not.toThrow();
+    expect(fn('https://evil.example')).toBe(false);
+  });
+
+  test('denies without throwing when the configured origin is a hostile scheme', async () => {
+    // eslint-disable-next-line sonarjs/code-eval -- hostile-scheme fixture, never executed
+    const hostileOrigin = 'javascript:alert(1)';
+    const fn = await loadHelper({ NEXT_PUBLIC_AUTH_ORIGIN: hostileOrigin });
+    // The D6 guard: `new URL('javascript:alert(1)').origin` is the string 'null',
+    // so normalizing the env without checking for it would ALLOW this origin.
+    expect(() => fn(hostileOrigin)).not.toThrow();
+    expect(fn(hostileOrigin)).toBe(false);
+    expect(fn('https://storelite.app')).toBe(false);
+  });
+
   test('allows a tenant host once featureSubdomainRewrite is on', async () => {
     const fn = await loadHelper({
       NEXT_PUBLIC_AUTH_ORIGIN: 'https://storelite.app',
