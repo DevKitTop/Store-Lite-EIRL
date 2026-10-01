@@ -21,10 +21,14 @@ export class CulqiReadError extends Error {
   }
 }
 
+// Mirrors Culqi's real ORDER object: an order has NO `status` field. `status`
+// / `paid` belong to the CHARGE object. Both markers are `unknown` so the
+// fail-closed non-string rules below are enforced by the type.
 export interface CulqiOrderState {
   id?: string;
-  status?: unknown;
+  object?: unknown;
   state?: unknown;
+  paid_at?: unknown;
   [k: string]: unknown;
 }
 
@@ -78,14 +82,45 @@ export async function getCulqiOrder(orderId: string, secretKey: string): Promise
   }
 }
 
-// Culqi reports the paid marker as `status`; the community field `state` carries
-// the same signal. Either marker can be present on its own, but every marker that
-// IS present must be exactly 'paid' — non-strings count as not-paid (R11).
+// Culqi's real ORDER object carries its payment state in TWO fields, not one:
+//   - `state`   — lifecycle string. 'paid' is confirmed real (Culqi's own
+//                 Prestashop module compares `$state == 'paid'` on the order
+//                 webhook payload; GET /v2/orders filters on `state`).
+//   - `paid_at` — unix timestamp of the capture, `null` while unpaid.
+//
+// There is deliberately NO `status` here. An earlier revision of this contract
+// read `status` because this repo's POST create-order handler and its webhook
+// touch that name — but on the CHARGE object, where `status`/`paid` really
+// live. On an order, a `status` key is fiction: it filters out as `undefined`
+// and silently proves nothing, while poisoning the written contract and the
+// next reader. `status` is therefore ignored, and a response carrying only
+// `status: 'paid'` denies.
+//
+// The check is OR, not AND, on purpose. `state` can still read 'pending' for a
+// few seconds after Culqi captured the money on an async method, so a non-null
+// `paid_at` is authoritative money evidence and wins. Denying there would reject
+// a buyer who genuinely paid — the free-order failure mode this gate exists to
+// prevent. Everything else denies (R11).
 export function isCulqiOrderPaid(order: CulqiOrderState): boolean {
-  const markers = [order.status, order.state].filter((marker) => marker !== undefined);
+  if (order.state === 'paid') return true;
 
-  // No marker at all means the gateway never confirmed the payment.
-  if (markers.length === 0) return false;
+  return isMoneyTimestamp(order.paid_at);
+}
 
-  return markers.every((marker) => typeof marker === 'string' && marker === 'paid');
+// A timestamp counts as money evidence only when it is a finite number > 0, or
+// a non-empty string that parses to one. Epoch 0, `''`, `null` and non-numeric
+// strings deny: none of them is a real capture time, and admitting any of them
+// would let a synthetic default unlock a free order.
+function isMoneyTimestamp(value: unknown): boolean {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0;
+  }
+
+  if (typeof value === 'string') {
+    if (value === '') return false;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0;
+  }
+
+  return false;
 }

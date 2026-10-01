@@ -114,38 +114,74 @@ describe('getCulqiOrder', () => {
 });
 
 describe('isCulqiOrderPaid', () => {
-  // Truth table pinned by R11: every marker present must equal exactly 'paid'.
+  // Truth table pinned by R11 against Culqi's REAL order schema.
+  //
+  // The order object has NO `status` field. Its real paid markers are:
+  //   - `state`   — string lifecycle value; 'paid' is confirmed real
+  //   - `paid_at` — unix timestamp (ms or string), null while unpaid
+  // `status` / `paid` belong to the CHARGE object, not the order.
   const cases: { label: string; order: Record<string, unknown>; expected: boolean }[] = [
+    // --- paid: state or paid_at is authoritative money evidence -------------
+    { label: "state 'paid'", order: { state: 'paid' }, expected: true },
+    { label: 'paid_at timestamp (number)', order: { paid_at: 1538540700000 }, expected: true },
     {
-      label: "status 'paid' and state 'paid'",
-      order: { status: 'paid', state: 'paid' },
+      label: 'paid_at timestamp (non-empty numeric string)',
+      order: { paid_at: '1538540700000' },
       expected: true,
     },
-    { label: "status 'paid' with state absent", order: { status: 'paid' }, expected: true },
-    { label: "state 'paid' with status absent", order: { state: 'paid' }, expected: true },
-    { label: "status 'pending'", order: { status: 'pending' }, expected: false },
-    { label: "status 'expired'", order: { status: 'expired' }, expected: false },
-    { label: "status 'cancelled'", order: { status: 'cancelled' }, expected: false },
-    { label: "state 'created' alone", order: { state: 'created' }, expected: false },
     {
-      label: "status 'paid' with state 'created' (self-contradictory)",
-      order: { status: 'paid', state: 'created' },
+      label: "state 'paid' with paid_at",
+      order: { state: 'paid', paid_at: 1538540700000 },
+      expected: true,
+    },
+
+    // --- denied: every real non-paid state ---------------------------------
+    { label: "state 'pending'", order: { state: 'pending' }, expected: false },
+    { label: "state 'created'", order: { state: 'created' }, expected: false },
+    { label: "state 'expired'", order: { state: 'expired' }, expected: false },
+    { label: "state 'cancelled'", order: { state: 'cancelled' }, expected: false },
+    { label: "state 'refunded'", order: { state: 'refunded' }, expected: false },
+    {
+      label: "state 'unpaid' (substring trap for includes())",
+      order: { state: 'unpaid' },
       expected: false,
     },
-    { label: 'neither marker present', order: {}, expected: false },
+
+    // --- denied: state is not exactly 'paid' (no case/trim normalization) ---
+    { label: "state 'PAID' (wrong case)", order: { state: 'PAID' }, expected: false },
+    { label: "state ' paid' (leading space)", order: { state: ' paid' }, expected: false },
+    { label: 'state is the number 123', order: { state: 123 }, expected: false },
+    { label: 'state is null', order: { state: null }, expected: false },
+    { label: 'state is an object', order: { state: {} }, expected: false },
+
+    // --- denied: paid_at is absent or carries no money evidence -----------
+    { label: 'paid_at null (unpaid order)', order: { paid_at: null }, expected: false },
+    // Epoch 0 is not a real payment timestamp — denying it prevents a
+    // synthetic/default value from unlocking a free order.
+    { label: 'paid_at 0 (epoch zero)', order: { paid_at: 0 }, expected: false },
+    { label: 'paid_at empty string', order: { paid_at: '' }, expected: false },
+    { label: 'paid_at non-numeric string', order: { paid_at: 'not-a-date' }, expected: false },
+    { label: 'no marker at all', order: {}, expected: false },
+
+    // --- REGRESSION PIN: `status` is NOT a Culqi order marker --------------
+    // `status` / `paid` belong to the CHARGE object. A prior spec revision
+    // invented `status` on the order; this row fails if anyone reintroduces it.
     {
-      label: "status 'PAID' (wrong case)",
-      order: { status: 'PAID', state: 'paid' },
+      label: "status 'paid' (charge-only field, not an order marker)",
+      order: { status: 'paid' },
       expected: false,
     },
+
+    // --- documented asymmetry, pinned on purpose --------------------------
+    // `state` can still read 'pending' for a few seconds after Culqi captured
+    // the money (async methods). A non-null `paid_at` is authoritative money
+    // evidence, so it wins: denying here would hand a real payer a free-order
+    // rejection.
     {
-      label: "status ' paid' (leading space)",
-      order: { status: ' paid', state: 'paid' },
-      expected: false,
+      label: 'state pending but paid_at present (paid_at wins)',
+      order: { state: 'pending', paid_at: 1538540700000 },
+      expected: true,
     },
-    { label: 'status is the number 123', order: { status: 123, state: 'paid' }, expected: false },
-    { label: 'status is an object', order: { status: {}, state: 'paid' }, expected: false },
-    { label: 'status is null', order: { status: null, state: 'paid' }, expected: false },
   ];
 
   test.each(cases)('$label => $expected', ({ order, expected }) => {
