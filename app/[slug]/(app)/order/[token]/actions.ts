@@ -4,6 +4,7 @@ import { db } from '@/core/database/client';
 import { chatSessions, messages, payments } from '@/core/database/schema';
 import { transition } from '@/core/orders/orderService';
 import { ORDER_STATUS_V2, type OrderStatusV2 } from '@/core/orders/orderStatus';
+import { deleteOrderAccessCookie, setOrderAccessCookie } from '@/lib/orderAccessCookie';
 import {
   checkOrderAccessRateLimitFor,
   resetOrderAccessRateLimit,
@@ -136,16 +137,20 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
     }
 
     // P4: Normalize orderNumber comparison (handle null/empty)
+    // R15: ensure `null !== null` cannot authorize — an absent order number
+    // must never pass when the order itself has no order number.
     const providedOrderNumber = orderNumber?.trim() || null;
     const dbOrderNumber = order.orderNumber || null;
 
-    if (providedOrderNumber !== dbOrderNumber) {
+    if (!providedOrderNumber || providedOrderNumber !== dbOrderNumber) {
       return { success: false };
     }
 
     // Success — refund this caller's own (client, dni) budget, scoped so no
     // sibling dni is handed a fresh window it has not paid for.
     resetOrderAccessRateLimit(clientId, { dni });
+
+    await setOrderAccessCookie(trackingToken);
 
     return { success: true };
   } catch (error) {
@@ -299,16 +304,29 @@ export async function verifyOrderByGoogleIdentity(
       const dbOrderNumber = order.orderNumber || null;
       const providedOrderNumber = orderNumber.trim() || null;
 
-      if (providedOrderNumber !== dbOrderNumber) {
+      if (!providedOrderNumber || providedOrderNumber !== dbOrderNumber) {
         return { success: false, reason: 'wrong_order' };
       }
     }
+
+    await setOrderAccessCookie(trackingToken);
 
     return { success: true };
   } catch (error) {
     console.error('[Action Error] verifyOrderByGoogleIdentity:', error);
     return { success: false, reason: 'error' };
   }
+}
+
+/**
+ * Revokes the signed order-access cookie (R16) — the server half of logout.
+ *
+ * Named `clearOrderAccessCookie` rather than re-exporting the module's
+ * `deleteOrderAccessCookie`, because a `'use server'` file may only export
+ * async functions and the R16 name has to stay stable for `LogoutButton`.
+ */
+export async function clearOrderAccessCookie(trackingToken: string): Promise<void> {
+  await deleteOrderAccessCookie(trackingToken);
 }
 
 // =====================================================
