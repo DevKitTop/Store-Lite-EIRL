@@ -14,6 +14,7 @@ import {
   products,
 } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
+import { CulqiReadError, getCulqiOrder, isCulqiOrderPaid } from '@/core/payments/culqiOrders';
 import { completeIdempotencyKey, reserveIdempotencyKey } from '@/core/payments/idempotency';
 import { paymentRateLimiter } from '@/core/payments/rateLimiter';
 import { generateTrackingToken } from '@/core/utils/trackingToken';
@@ -28,10 +29,36 @@ import { sendOrderStatusSms } from '@/lib/twilio/orderSms';
 import { splitFullName } from '@/shared/payments/fullName';
 import type { CulqiChargeResponse } from '@/types/culqi';
 import { decrypt } from '@/utils/crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
 const LOW_STOCK_THRESHOLD = 5;
+
+// Buyer-facing copy for a Culqi order that is not acknowledged as paid yet.
+// `chargePayment` throws `data.details || data.error`, so this text lives in
+// `error` and the response MUST NOT carry a `details` key.
+const ORDER_NOT_PAID_MESSAGE =
+  'Tu pago todavía se está confirmando con la pasarela. Esperá unos segundos e intentá de nuevo.';
+
+/** Map a Culqi read failure: an abort is 504, anything else is a 502 transport fault. */
+function culqiReadErrorResponse(err: unknown): NextResponse {
+  if (err instanceof CulqiReadError && err.kind === 'timeout') {
+    return NextResponse.json({ error: 'Timeout al leer la orden de Culqi' }, { status: 504 });
+  }
+  return NextResponse.json({ error: 'Error de conexión con la pasarela' }, { status: 502 });
+}
+
+/** Only the fields `useCulqiCallback` reads — never the raw row with buyer PII. */
+function projectReplayPayment(payment: typeof payments.$inferSelect) {
+  return {
+    id: payment.id,
+    trackingToken: payment.trackingToken,
+    orderNumber: payment.orderNumber,
+    amount: payment.amount,
+    currency: payment.currency,
+    status: payment.status,
+  };
+}
 
 // ─── Internal types ─────────────────────────────────────────────────
 interface ShippingInfoData {
@@ -277,6 +304,40 @@ export async function POST(request: Request) {
     if (isOrderFlow) {
       // ORDER-BASED: Culqi Checkout ya cobró contra la orden
       // Solo creamos el payment en DB y marcamos la orden como pagada
+      const orderRow = await db.query.paymentOrders.findFirst({
+        where: and(
+          eq(paymentOrders.culqiOrderId, culqiOrderId as string),
+          eq(paymentOrders.businessId, businessId),
+        ),
+      });
+
+      if (!orderRow) {
+        return NextResponse.json(
+          { success: false, error: 'Orden de pago no encontrada' },
+          { status: 404 },
+        );
+      }
+
+      const { secretKey, error: keyError } = await resolveCulqiSecretKey(businessId);
+      if (keyError) return keyError;
+
+      let culqiOrderPaid = false;
+      try {
+        culqiOrderPaid = isCulqiOrderPaid(await getCulqiOrder(culqiOrderId as string, secretKey));
+      } catch (err) {
+        return culqiReadErrorResponse(err);
+      }
+
+      if (!culqiOrderPaid) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: ORDER_NOT_PAID_MESSAGE,
+            code: 'ORDER_NOT_PAID',
+          },
+          { status: 402 },
+        );
+      }
     } else if (isTokenFlow) {
       // TOKEN-BASED: Ejecutar el cargo contra Culqi con la key del negocio
       const { secretKey, error: keyError } = await resolveCulqiSecretKey(businessId);
@@ -310,13 +371,16 @@ export async function POST(request: Request) {
     const culqiChargeIdForLookup = culqiOrderId || culqiData?.id || null;
     if (culqiChargeIdForLookup) {
       const existingPayment = await db.query.payments.findFirst({
-        where: eq(payments.culqiChargeId, culqiChargeIdForLookup),
+        where: and(
+          eq(payments.culqiChargeId, culqiChargeIdForLookup),
+          eq(payments.businessId, businessId),
+        ),
       });
 
       if (existingPayment) {
         const responseBody = {
           success: true,
-          payment: existingPayment,
+          payment: projectReplayPayment(existingPayment),
           charge: {
             id: culqiChargeIdForLookup,
             status: 'paid',
@@ -391,10 +455,22 @@ export async function POST(request: Request) {
 
         // 5b. Si es pago contra orden, marcar la orden como pagada
         if (culqiOrderId) {
-          await tx
+          const flipped = await tx
             .update(paymentOrders)
             .set({ status: 'paid', updatedAt: sql`now()` })
-            .where(eq(paymentOrders.culqiOrderId, culqiOrderId));
+            .where(
+              and(
+                eq(paymentOrders.culqiOrderId, culqiOrderId),
+                eq(paymentOrders.businessId, businessId),
+              ),
+            )
+            .returning({ id: paymentOrders.id });
+
+          // Fail closed: a 0-row flip (or an undefined result) means the order we
+          // verified is not the row we would mark paid, so abort the transaction.
+          if (flipped?.length !== 1) {
+            throw new Error('payment_orders flip affected no row');
+          }
         }
 
         // 5. Actualizar Stock

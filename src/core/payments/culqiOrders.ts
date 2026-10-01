@@ -53,7 +53,7 @@ export async function getCulqiOrder(orderId: string, secretKey: string): Promise
     let data: unknown = {};
     try {
       data = await response.json();
-    } catch (err) {
+    } catch {
       if (declaresJson) {
         clearTimeout(timeout);
         throw new CulqiReadError('transport');

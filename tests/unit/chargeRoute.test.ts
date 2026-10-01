@@ -6,6 +6,7 @@
 // =====================================================
 
 import { POST } from '@/app/api/payment/charge/route';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // ── Mocks (must be before module imports — vi.mock is hoisted) ──
@@ -14,6 +15,10 @@ const {
   mockBusinessFindFirst,
   mockBusinessSettingsFindFirst,
   mockPaymentsFindFirst,
+  mockPaymentOrdersFindFirst,
+  mockGetCulqiOrder,
+  mockIsCulqiOrderPaid,
+  CulqiReadErrorMock,
   mockProductsFindFirst,
   mockProductsSelectWhere,
   mockProductsSelectFrom,
@@ -21,6 +26,7 @@ const {
   mockTxReturning,
   mockTxValues,
   mockTxInsert,
+  mockTxUpdateReturning,
   mockTxSet,
   mockTxWhere,
   mockTxUpdate,
@@ -29,7 +35,19 @@ const {
   const mockBusinessFindFirst = vi.fn();
   const mockBusinessSettingsFindFirst = vi.fn();
   const mockPaymentsFindFirst = vi.fn();
+  const mockPaymentOrdersFindFirst = vi.fn();
+  const mockGetCulqiOrder = vi.fn();
+  const mockIsCulqiOrderPaid = vi.fn();
   const mockProductsFindFirst = vi.fn();
+
+  class CulqiReadErrorMock extends Error {
+    readonly kind: 'timeout' | 'transport';
+    constructor(kind: 'timeout' | 'transport') {
+      super(`CulqiReadError:${kind}`);
+      this.name = 'CulqiReadError';
+      this.kind = kind;
+    }
+  }
 
   const mockProductsSelectWhere = vi.fn();
   const mockProductsSelectFrom = vi.fn(() => ({ where: mockProductsSelectWhere }));
@@ -38,8 +56,11 @@ const {
   const mockTxReturning = vi.fn();
   const mockTxValues = vi.fn(() => ({ returning: mockTxReturning }));
   const mockTxInsert = vi.fn(() => ({ values: mockTxValues }));
+  const mockTxUpdateReturning = vi.fn();
   const mockTxSet = vi.fn(() => ({ where: mockTxWhere }));
-  const mockTxWhere = vi.fn();
+  // `.where()` is chainable: the payment_orders flip continues into `.returning()`,
+  // while the stock UPDATE stops at `.where()`.
+  const mockTxWhere = vi.fn(() => ({ returning: mockTxUpdateReturning }));
   const mockTxUpdate = vi.fn(() => ({ set: mockTxSet }));
   const mockTransaction = vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
     callback({
@@ -52,6 +73,10 @@ const {
     mockBusinessFindFirst,
     mockBusinessSettingsFindFirst,
     mockPaymentsFindFirst,
+    mockPaymentOrdersFindFirst,
+    mockGetCulqiOrder,
+    mockIsCulqiOrderPaid,
+    CulqiReadErrorMock,
     mockProductsFindFirst,
     mockProductsSelectWhere,
     mockProductsSelectFrom,
@@ -59,6 +84,7 @@ const {
     mockTxReturning,
     mockTxValues,
     mockTxInsert,
+    mockTxUpdateReturning,
     mockTxSet,
     mockTxWhere,
     mockTxUpdate,
@@ -80,11 +106,19 @@ vi.mock('@/core/database/client', () => ({
       businesses: { findFirst: mockBusinessFindFirst },
       businessSettings: { findFirst: mockBusinessSettingsFindFirst },
       payments: { findFirst: mockPaymentsFindFirst },
+      paymentOrders: { findFirst: mockPaymentOrdersFindFirst },
       products: { findFirst: mockProductsFindFirst },
     },
     select: mockProductsSelect,
     transaction: mockTransaction,
   },
+}));
+
+vi.mock('@/core/payments/culqiOrders', () => ({
+  // original-impl form so restoreMocks keeps these resolved values across tests
+  getCulqiOrder: mockGetCulqiOrder,
+  isCulqiOrderPaid: mockIsCulqiOrderPaid,
+  CulqiReadError: CulqiReadErrorMock,
 }));
 
 vi.mock('@/core/entitlements/getBusinessEntitlements', () => ({
@@ -94,27 +128,39 @@ vi.mock('@/core/entitlements/getBusinessEntitlements', () => ({
 
 vi.mock('@/core/payments/idempotency', () => ({
   // original-impl form so restoreMocks keeps these resolved values across tests
-  reserveIdempotencyKey: vi.fn(async () => ({ type: 'reserved', key: 'idem-1' })),
-  completeIdempotencyKey: vi.fn(async () => undefined),
+  reserveIdempotencyKey: mockReserveIdempotencyKey,
+  completeIdempotencyKey: mockCompleteIdempotencyKey,
 }));
 
 vi.mock('@/core/payments/rateLimiter', () => ({
   paymentRateLimiter: { check: vi.fn(() => true) },
 }));
 
-const mockDecrypt = vi.hoisted(() => vi.fn());
+const {
+  mockDecrypt,
+  mockReserveIdempotencyKey,
+  mockCompleteIdempotencyKey,
+  mockNotifyNewOrder,
+  mockSendOrderStatusSms,
+} = vi.hoisted(() => ({
+  mockDecrypt: vi.fn(),
+  mockReserveIdempotencyKey: vi.fn(async () => ({ type: 'reserved', key: 'idem-1' })),
+  mockCompleteIdempotencyKey: vi.fn(async () => undefined),
+  mockNotifyNewOrder: vi.fn(async () => undefined),
+  mockSendOrderStatusSms: vi.fn(async () => undefined),
+}));
 vi.mock('@/utils/crypto', () => ({
   decrypt: mockDecrypt,
 }));
 
 vi.mock('@/lib/notifications', () => ({
-  notifyNewOrder: vi.fn().mockResolvedValue(undefined),
+  notifyNewOrder: mockNotifyNewOrder,
   notifyLowStock: vi.fn().mockResolvedValue(undefined),
   notifyOutOfStock: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@/lib/twilio/orderSms', () => ({
-  sendOrderStatusSms: vi.fn().mockResolvedValue(undefined),
+  sendOrderStatusSms: mockSendOrderStatusSms,
 }));
 
 vi.mock('@/lib/email/orderEmails', () => ({
@@ -129,6 +175,15 @@ const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 // ── Helpers ──────────────────────────────────────────
+
+/**
+ * Compile a Drizzle `where` node to SQL so a test can assert that BOTH columns
+ * are constrained. `and(a, b)` wraps the predicates in parentheses; a single
+ * `eq()` never does, so this distinguishes "scoped by both" from "scoped by one".
+ */
+function compileWhere(where: unknown): { sql: string; params: unknown[] } {
+  return new PgDialect().sqlToQuery(where as never);
+}
 
 function createValidPayload(overrides: Record<string, unknown> = {}) {
   return {
@@ -180,6 +235,9 @@ describe('POST /api/payment/charge', () => {
 
     // Default mock: no existing payment (not a replay)
     mockPaymentsFindFirst.mockResolvedValue(null);
+    mockPaymentOrdersFindFirst.mockResolvedValue(null);
+    mockGetCulqiOrder.mockResolvedValue({ id: 'ord_culqi_abc123', status: 'paid', state: 'paid' });
+    mockIsCulqiOrderPaid.mockReturnValue(true);
 
     // Default mock: product has stock above threshold (no low-stock alerts)
     mockProductsFindFirst.mockResolvedValue({
@@ -203,7 +261,7 @@ describe('POST /api/payment/charge', () => {
     mockTxReturning.mockResolvedValue([
       { id: 'pay-1', trackingToken: 'tt_test_token', buyerPhone: '999888777' },
     ]);
-    mockTxWhere.mockResolvedValue(undefined);
+    mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
 
     vi.stubEnv('NODE_ENV', 'development');
   });
@@ -327,5 +385,249 @@ describe('POST /api/payment/charge', () => {
 
     // Culqi API WAS called (charge proceeds)
     expect(mockFetch).toHaveBeenCalled();
+  });
+
+  // ============================================================
+  // Order flow: verify the Culqi order before trusting the order flow
+  // (R8 - R12)
+  // ============================================================
+
+  describe('order flow - Culqi order verification gate', () => {
+    function createOrderFlowPayload(overrides: Record<string, unknown> = {}) {
+      return createValidPayload({
+        token: undefined,
+        culqiOrderId: 'ord_culqi_abc123',
+        metadata: { shippingInfo: { phone: '999888777', courier: 'recojo' } },
+        ...overrides,
+      });
+    }
+
+    function createOrderFlowRequest(payload: Record<string, unknown>) {
+      return new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
+
+    test('returns 404 when the culqiOrderId does not belong to this business', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(null);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(404);
+      const body = await response.json();
+      expect(body.success).toBe(false);
+      expect(body.error).toBe('Orden de pago no encontrada');
+
+      // No side effects at all: no transaction, no idempotency key burned
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+    });
+
+    test('scopes the payment_orders read to BOTH culqiOrderId and businessId', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(null);
+
+      await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(mockPaymentOrdersFindFirst).toHaveBeenCalledTimes(1);
+      const arg = mockPaymentOrdersFindFirst.mock.calls[0][0] as { where: unknown };
+      const compiled = compileWhere(arg.where);
+      expect(compiled.sql).toMatch(/culqi_order_id.* and .*business_id/);
+      expect(compiled.params).toEqual(
+        expect.arrayContaining(['ord_culqi_abc123', '550e8400-e29b-41d4-a716-446655440000']),
+      );
+    });
+
+    test.each([
+      ['pending', 'pending'],
+      ['expired', 'expired'],
+      ['cancelled', 'cancelled'],
+    ])('returns 402 with the buyer retry text when Culqi reports %s', async (marker) => {
+      mockPaymentOrdersFindFirst.mockResolvedValue({
+        id: 'po-1',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        culqiOrderId: 'ord_culqi_abc123',
+      });
+      mockGetCulqiOrder.mockResolvedValue({ id: 'ord_culqi_abc123', status: marker });
+      mockIsCulqiOrderPaid.mockReturnValue(false);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.success).toBe(false);
+      expect(body.error).toBe(
+        'Tu pago todavía se está confirmando con la pasarela. Esperá unos segundos e intentá de nuevo.',
+      );
+      expect(body.code).toBe('ORDER_NOT_PAID');
+      // chargePayment throws `data.details || data.error` — a details key would
+      // shadow the buyer-facing text.
+      expect(body).not.toHaveProperty('details');
+
+      // Zero side effects
+      expect(mockTxInsert).not.toHaveBeenCalled();
+      expect(mockTxUpdate).not.toHaveBeenCalled();
+      expect(mockTxReturning).not.toHaveBeenCalled();
+      expect(mockNotifyNewOrder).not.toHaveBeenCalled();
+      expect(mockSendOrderStatusSms).not.toHaveBeenCalled();
+    });
+
+    test('maps an aborted Culqi read to 504 and reserves nothing', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue({
+        id: 'po-1',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        culqiOrderId: 'ord_culqi_abc123',
+      });
+      mockGetCulqiOrder.mockRejectedValue(new CulqiReadErrorMock('timeout'));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(504);
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('maps a Culqi transport failure to 502 and reserves nothing', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue({
+        id: 'po-1',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        culqiOrderId: 'ord_culqi_abc123',
+      });
+      mockGetCulqiOrder.mockRejectedValue(new CulqiReadErrorMock('transport'));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(502);
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('returns 500 without committing the flip when the payment_orders update affects no row', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue({
+        id: 'po-1',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        culqiOrderId: 'ord_culqi_abc123',
+      });
+      mockTxUpdateReturning.mockResolvedValue([]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(500);
+      expect(mockTransaction).toHaveBeenCalledTimes(1);
+      // No committed flip and no order created downstream
+      expect(mockNotifyNewOrder).not.toHaveBeenCalled();
+      expect(mockCompleteIdempotencyKey).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        200,
+      );
+    });
+
+    test('scopes the payment_orders flip to BOTH culqiOrderId and businessId', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue({
+        id: 'po-1',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        culqiOrderId: 'ord_culqi_abc123',
+      });
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      // First UPDATE in the transaction is the payment_orders flip; the second
+      // one is the stock decrement.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(2);
+      const flipped = mockTxSet.mock.calls[0][0] as Record<string, unknown>;
+      expect(flipped.status).toBe('paid');
+      const whereArg = mockTxWhere.mock.calls[0][0] as unknown;
+      const compiled = compileWhere(whereArg);
+      expect(compiled.sql).toMatch(/culqi_order_id.* and .*business_id/);
+      expect(compiled.params).toEqual(
+        expect.arrayContaining(['ord_culqi_abc123', '550e8400-e29b-41d4-a716-446655440000']),
+      );
+    });
+
+    test('does not replay another tenant payment for the same culqiChargeId', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue({
+        id: 'po-1',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        culqiOrderId: 'ord_culqi_abc123',
+      });
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+      // A single-column lookup WOULD return the other tenant's row. Scoping the
+      // query by businessId means the params no longer identify that row.
+      mockPaymentsFindFirst.mockImplementation((arg: { where: unknown }) => {
+        const { params } = compileWhere(arg.where);
+        if (!params.includes('550e8400-e29b-41d4-a716-446655440000')) {
+          return Promise.resolve({
+            id: 'pay-other-tenant',
+            businessId: '99999999-e29b-41d4-a716-446655440099',
+            trackingToken: 'tt_other',
+            buyerEmail: 'victim@other.test',
+          });
+        }
+        return Promise.resolve(null);
+      });
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // The cross-tenant row is NOT returned; this tenant gets its own 200 insert
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.payment.id).toBe('pay-1');
+      expect(body.replayed).toBeUndefined();
+      const lookupArg = mockPaymentsFindFirst.mock.calls[0][0] as { where: unknown };
+      const lookup = compileWhere(lookupArg.where);
+      expect(lookup.sql).toMatch(/culqi_charge_id.* and .*business_id/);
+      expect(lookup.params).toEqual(
+        expect.arrayContaining(['ord_culqi_abc123', '550e8400-e29b-41d4-a716-446655440000']),
+      );
+    });
+
+    test('returns a PII-free replay body on a same-tenant duplicate', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue({
+        id: 'po-1',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        culqiOrderId: 'ord_culqi_abc123',
+      });
+      mockPaymentsFindFirst.mockResolvedValue({
+        id: 'pay-existing',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        trackingToken: 'tt_existing',
+        orderNumber: 'ORD-12345678',
+        amount: '50.00',
+        currency: 'PEN',
+        status: 'paid',
+        buyerEmail: 'buyer@test.com',
+        buyerDni: '12345678',
+        buyerPhone: '999888777',
+        shippingAddress: 'Av. Siempre Viva 742',
+        shippingPhone: '999888777',
+        metadata: { customerAuth: { authId: 'auth-1' } },
+      });
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.replayed).toBe(true);
+      expect(body.payment).toEqual({
+        id: 'pay-existing',
+        trackingToken: 'tt_existing',
+        orderNumber: 'ORD-12345678',
+        amount: '50.00',
+        currency: 'PEN',
+        status: 'paid',
+      });
+      expect(body.payment).not.toHaveProperty('buyerEmail');
+      expect(body.payment).not.toHaveProperty('buyerDni');
+      expect(body.payment).not.toHaveProperty('buyerPhone');
+      expect(body.payment).not.toHaveProperty('shippingAddress');
+      expect(body.payment).not.toHaveProperty('metadata');
+      // No second write on a replay
+      expect(mockTxInsert).not.toHaveBeenCalled();
+    });
   });
 });
