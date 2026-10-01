@@ -34,7 +34,9 @@ describe('getCulqiOrder', () => {
   });
 
   test('GETs /v2/orders/{id} with the business secret key as a Bearer token', async () => {
-    mockFetch.mockResolvedValue(jsonResponse({ id: ORDER_ID, status: 'paid', state: 'paid' }));
+    mockFetch.mockResolvedValue(
+      jsonResponse({ id: ORDER_ID, state: 'paid', paid_at: 1538540700000 }),
+    );
 
     await getCulqiOrder(ORDER_ID, SECRET_KEY);
 
@@ -104,12 +106,46 @@ describe('getCulqiOrder', () => {
   });
 
   test('parses a received response even when the gateway answers non-ok', async () => {
-    mockFetch.mockResolvedValue(jsonResponse({ id: ORDER_ID, status: 'paid' }, false));
+    mockFetch.mockResolvedValue(jsonResponse({ id: ORDER_ID, state: 'paid' }, false));
 
     await expect(getCulqiOrder(ORDER_ID, SECRET_KEY)).resolves.toEqual({
       id: ORDER_ID,
-      status: 'paid',
+      state: 'paid',
     });
+  });
+
+  // The id is client-supplied. Interpolated raw it escapes its own path segment
+  // and can retarget the request at a different Culqi endpoint.
+  test.each([
+    {
+      label: 'path traversal and query separator',
+      orderId: '../../v2/charges/chr_x?limit=100',
+      encoded: '..%2F..%2Fv2%2Fcharges%2Fchr_x%3Flimit%3D100',
+    },
+    { label: 'space and plus', orderId: 'ord 123+x', encoded: 'ord%20123%2Bx' },
+  ])('percent-encodes the order id ($label) into the URL path', async ({ orderId, encoded }) => {
+    mockFetch.mockResolvedValue(jsonResponse({ id: orderId, state: 'paid' }));
+
+    await getCulqiOrder(orderId, SECRET_KEY);
+
+    const [url] = mockFetch.mock.calls[0] as [string];
+    expect(url).toBe(`https://api.culqi.com/v2/orders/${encoded}`);
+
+    // Structural guarantee: nothing the caller controls can add a path segment
+    // or a query string after the fixed orders/ prefix.
+    const idSegment = url.slice('https://api.culqi.com/v2/orders/'.length);
+    expect(idSegment).not.toContain('/');
+    expect(idSegment).not.toContain('?');
+    expect(idSegment).not.toContain(' ');
+  });
+
+  test('a benign id is still requested unchanged', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ id: ORDER_ID, state: 'paid' }));
+
+    await getCulqiOrder(ORDER_ID, SECRET_KEY);
+
+    const [url] = mockFetch.mock.calls[0] as [string];
+    expect(url).toBe(`https://api.culqi.com/v2/orders/${ORDER_ID}`);
   });
 });
 

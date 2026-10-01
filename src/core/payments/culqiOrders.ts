@@ -39,7 +39,10 @@ export async function getCulqiOrder(orderId: string, secretKey: string): Promise
   }, CULQI_TIMEOUT_MS);
 
   try {
-    const response = await fetch(`https://api.culqi.com/v2/orders/${orderId}`, {
+    // The id is client-supplied, so it is percent-encoded: interpolated raw it
+    // escapes its own path segment and can retarget the read at a different
+    // Culqi endpoint (e.g. `../../v2/charges/chr_x?limit=100`).
+    const response = await fetch(`https://api.culqi.com/v2/orders/${encodeURIComponent(orderId)}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${secretKey}`,
