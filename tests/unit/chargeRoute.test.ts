@@ -196,6 +196,49 @@ function createValidPayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * A `payment_orders` row as the gate sees it. The gate projects only
+ * `amount`, `currency` and `metadata`, so the fixture mirrors that shape:
+ * `amount` is decimal(10,2) in SOLES (create-order writes `String(amount/100)`),
+ * and the product binding lives in `metadata.productId` (absent for a
+ * product-less order).
+ */
+function createPaymentOrderRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'po-1',
+    businessId: '550e8400-e29b-41d4-a716-446655440000',
+    culqiOrderId: 'ord_culqi_abc123',
+    amount: '1500',
+    currency: 'PEN',
+    metadata: { productId: '660e8400-e29b-41d4-a716-446655440001' },
+    ...overrides,
+  };
+}
+
+function createOrderFlowPayload(overrides: Record<string, unknown> = {}) {
+  return createValidPayload({
+    token: undefined,
+    culqiOrderId: 'ord_culqi_abc123',
+    metadata: { shippingInfo: { phone: '999888777', courier: 'recojo' } },
+    ...overrides,
+  });
+}
+
+/**
+ * The real client always sends `Idempotency-Key: charge-${token || culqiOrderId}`
+ * (`paymentApi.ts:68`), so the order-flow request mirrors that deterministic key.
+ */
+function createOrderFlowRequest(payload: Record<string, unknown>) {
+  return new Request('http://localhost/api/payment/charge', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': 'charge-ord_culqi_abc123',
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
 function createCulqiChargeResponse(overrides: Record<string, unknown> = {}) {
   return {
     id: 'ch_abc123',
@@ -393,23 +436,6 @@ describe('POST /api/payment/charge', () => {
   // ============================================================
 
   describe('order flow - Culqi order verification gate', () => {
-    function createOrderFlowPayload(overrides: Record<string, unknown> = {}) {
-      return createValidPayload({
-        token: undefined,
-        culqiOrderId: 'ord_culqi_abc123',
-        metadata: { shippingInfo: { phone: '999888777', courier: 'recojo' } },
-        ...overrides,
-      });
-    }
-
-    function createOrderFlowRequest(payload: Record<string, unknown>) {
-      return new Request('http://localhost/api/payment/charge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-    }
-
     test('returns 404 when the culqiOrderId does not belong to this business', async () => {
       mockPaymentOrdersFindFirst.mockResolvedValue(null);
 
@@ -445,11 +471,7 @@ describe('POST /api/payment/charge', () => {
       ['expired', 'expired'],
       ['cancelled', 'cancelled'],
     ])('returns 402 with the buyer retry text when Culqi reports %s', async (marker) => {
-      mockPaymentOrdersFindFirst.mockResolvedValue({
-        id: 'po-1',
-        businessId: '550e8400-e29b-41d4-a716-446655440000',
-        culqiOrderId: 'ord_culqi_abc123',
-      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockGetCulqiOrder.mockResolvedValue({ id: 'ord_culqi_abc123', status: marker });
       mockIsCulqiOrderPaid.mockReturnValue(false);
 
@@ -475,11 +497,7 @@ describe('POST /api/payment/charge', () => {
     });
 
     test('maps an aborted Culqi read to 504 and reserves nothing', async () => {
-      mockPaymentOrdersFindFirst.mockResolvedValue({
-        id: 'po-1',
-        businessId: '550e8400-e29b-41d4-a716-446655440000',
-        culqiOrderId: 'ord_culqi_abc123',
-      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockGetCulqiOrder.mockRejectedValue(new CulqiReadErrorMock('timeout'));
 
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
@@ -490,11 +508,7 @@ describe('POST /api/payment/charge', () => {
     });
 
     test('maps a Culqi transport failure to 502 and reserves nothing', async () => {
-      mockPaymentOrdersFindFirst.mockResolvedValue({
-        id: 'po-1',
-        businessId: '550e8400-e29b-41d4-a716-446655440000',
-        culqiOrderId: 'ord_culqi_abc123',
-      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockGetCulqiOrder.mockRejectedValue(new CulqiReadErrorMock('transport'));
 
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
@@ -505,11 +519,7 @@ describe('POST /api/payment/charge', () => {
     });
 
     test('returns 500 without committing the flip when the payment_orders update affects no row', async () => {
-      mockPaymentOrdersFindFirst.mockResolvedValue({
-        id: 'po-1',
-        businessId: '550e8400-e29b-41d4-a716-446655440000',
-        culqiOrderId: 'ord_culqi_abc123',
-      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockTxUpdateReturning.mockResolvedValue([]);
 
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
@@ -526,11 +536,7 @@ describe('POST /api/payment/charge', () => {
     });
 
     test('scopes the payment_orders flip to BOTH culqiOrderId and businessId', async () => {
-      mockPaymentOrdersFindFirst.mockResolvedValue({
-        id: 'po-1',
-        businessId: '550e8400-e29b-41d4-a716-446655440000',
-        culqiOrderId: 'ord_culqi_abc123',
-      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
 
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
@@ -550,11 +556,7 @@ describe('POST /api/payment/charge', () => {
     });
 
     test('does not replay another tenant payment for the same culqiChargeId', async () => {
-      mockPaymentOrdersFindFirst.mockResolvedValue({
-        id: 'po-1',
-        businessId: '550e8400-e29b-41d4-a716-446655440000',
-        culqiOrderId: 'ord_culqi_abc123',
-      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
       // A single-column lookup WOULD return the other tenant's row. Scoping the
       // query by businessId means the params no longer identify that row.
@@ -587,11 +589,7 @@ describe('POST /api/payment/charge', () => {
     });
 
     test('returns a PII-free replay body on a same-tenant duplicate', async () => {
-      mockPaymentOrdersFindFirst.mockResolvedValue({
-        id: 'po-1',
-        businessId: '550e8400-e29b-41d4-a716-446655440000',
-        culqiOrderId: 'ord_culqi_abc123',
-      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockPaymentsFindFirst.mockResolvedValue({
         id: 'pay-existing',
         businessId: '550e8400-e29b-41d4-a716-446655440000',
@@ -628,6 +626,201 @@ describe('POST /api/payment/charge', () => {
       expect(body.payment).not.toHaveProperty('metadata');
       // No second write on a replay
       expect(mockTxInsert).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // Order flow: bind the verified payment to what gets recorded
+  // (R13 — amount/product binding, the W1 underpayment gap)
+  // ============================================================
+
+  describe('order flow - binding the verified payment to the recorded transaction', () => {
+    test('projects only the money and binding columns, never buyer PII', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(mockPaymentOrdersFindFirst).toHaveBeenCalledTimes(1);
+      const arg = mockPaymentOrdersFindFirst.mock.calls[0][0] as {
+        columns?: Record<string, boolean>;
+      };
+      expect(arg.columns).toEqual({
+        amount: true,
+        currency: true,
+        metadata: true,
+      });
+      // The gate is scoped to the caller's own tenant and reads money fields
+      // only — buyerEmail / buyerPhone are never pulled into memory.
+      expect(arg.columns).not.toHaveProperty('buyerEmail');
+      expect(arg.columns).not.toHaveProperty('buyerPhone');
+    });
+
+    test('accepts the exact decimal-string amount and rounds the float case (200)', async () => {
+      // `payment_orders.amount` is decimal(10,2) in soles; the request is in
+      // minor units. '1.00' must equal 100, and 10.99 * 100 = 1098.999... must
+      // round to 1099 rather than be rejected as a float artifact.
+      mockProductsSelectWhere.mockResolvedValue([
+        {
+          id: '660e8400-e29b-41d4-a716-446655440001',
+          price: '10.99',
+          secondPrice: null,
+        },
+      ]);
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ amount: '10.99' }));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload({ amount: 1099 })));
+
+      expect(response.status).toBe(200);
+      expect(mockTxInsert).toHaveBeenCalledTimes(1);
+      // The recorded amount is the request amount, not the order's.
+      const inserted = mockTxValues.mock.calls[0][0] as { amount: string };
+      expect(inserted.amount).toBe('10.99');
+    });
+
+    test('accepts a plain integer decimal-string amount (200)', async () => {
+      mockProductsSelectWhere.mockResolvedValue([
+        {
+          id: '660e8400-e29b-41d4-a716-446655440001',
+          price: '1.00',
+          secondPrice: null,
+        },
+      ]);
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ amount: '1' }));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload({ amount: 100 })));
+
+      expect(response.status).toBe(200);
+    });
+
+    test('denies with ORDER_AMOUNT_MISMATCH when the request amount is not the order amount', async () => {
+      // The underpayment attack: a Culqi order created for S/ 1.00, then
+      // charged with S/ 1000.00 of the same business. Without this binding the
+      // transaction would record S/ 1000.00 and decrement that product's stock.
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ amount: '1.00' }));
+
+      const response = await POST(
+        createOrderFlowRequest(createOrderFlowPayload({ amount: 150000 })),
+      );
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.success).toBe(false);
+      expect(body.error).toBe(
+        'El monto de la orden no coincide con el pago solicitado. Contactá al negocio para resolverlo.',
+      );
+      expect(body.code).toBe('ORDER_AMOUNT_MISMATCH');
+      expect(body).not.toHaveProperty('details');
+
+      // No upstream round-trip, no write, no key burned.
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['null', null],
+      ['a non-numeric string', 'not-a-number'],
+      ['an empty string', ''],
+      ['NaN-producing text', 'abc'],
+    ])('fails closed when the stored order amount is %s', async (_label, storedAmount) => {
+      // `amount` is `.notNull()` in the schema, but the comparison must not
+      // depend on that: a NaN would otherwise silently pass `!==`.
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({ amount: storedAmount as unknown as string }),
+      );
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.code).toBe('ORDER_AMOUNT_MISMATCH');
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('denies with ORDER_CURRENCY_MISMATCH when the request currency differs from the order', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ currency: 'USD' }));
+
+      const response = await POST(
+        createOrderFlowRequest(createOrderFlowPayload({ currency: 'PEN' })),
+      );
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.success).toBe(false);
+      expect(body.error).toBe(
+        'La moneda de la orden no coincide con el pago solicitado. Contactá al negocio para resolverlo.',
+      );
+      expect(body.code).toBe('ORDER_CURRENCY_MISMATCH');
+      expect(body).not.toHaveProperty('details');
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('denies with ORDER_PRODUCT_MISMATCH when the request product is not the ordered one', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({ metadata: { productId: '660e8400-e29b-41d4-a716-446655440009' } }),
+      );
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.success).toBe(false);
+      expect(body.error).toBe(
+        'La orden no corresponde a este producto. Contactá al negocio para resolverlo.',
+      );
+      expect(body.code).toBe('ORDER_PRODUCT_MISMATCH');
+      expect(body).not.toHaveProperty('details');
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['an empty object', {}],
+      ['a null value', null],
+      ['an absent key', { culqiRaw: { orderId: 'ord_culqi_abc123' } }],
+      ['a non-object value', 'productId'],
+      ['an array', [{ productId: 'x' }]],
+    ])('allows a product-less order whose metadata is %s (200)', async (_label, metadata) => {
+      // create-order permits a product-less order (createOrderRequestSchema
+      // productId is optional), so metadata.productId is legitimately absent
+      // and there is nothing to bind against.
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({ metadata: metadata as unknown }),
+      );
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+    });
+
+    test('denies a non-string metadata.productId rather than binding to it', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({
+          metadata: { productId: { toString: () => 'x' } },
+        }),
+      );
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // A non-string binding cannot be a real product id; fail closed.
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.code).toBe('ORDER_PRODUCT_MISMATCH');
+    });
+
+    test('keeps a matching binding on the happy path (200)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({ metadata: { productId: '660e8400-e29b-41d4-a716-446655440001' } }),
+      );
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      const inserted = mockTxValues.mock.calls[0][0] as { productId: string; amount: string };
+      expect(inserted.productId).toBe('660e8400-e29b-41d4-a716-446655440001');
+      expect(inserted.amount).toBe('1500');
     });
   });
 });

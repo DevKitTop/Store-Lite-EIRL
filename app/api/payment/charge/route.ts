@@ -40,6 +40,50 @@ const LOW_STOCK_THRESHOLD = 5;
 const ORDER_NOT_PAID_MESSAGE =
   'Tu pago todavía se está confirmando con la pasarela. Esperá unos segundos e intentá de nuevo.';
 
+// Buyer-facing copy for a charge whose amount/currency/product does not match the
+// Culqi order that was actually verified. Same R12 discipline: the text lives in
+// `error` (because `chargePayment` throws `data.details || data.error`) and the
+// response MUST NOT carry a `details` key.
+const ORDER_AMOUNT_MISMATCH_MESSAGE =
+  'El monto de la orden no coincide con el pago solicitado. Contactá al negocio para resolverlo.';
+const ORDER_CURRENCY_MISMATCH_MESSAGE =
+  'La moneda de la orden no coincide con el pago solicitado. Contactá al negocio para resolverlo.';
+const ORDER_PRODUCT_MISMATCH_MESSAGE =
+  'La orden no corresponde a este producto. Contactá al negocio para resolverlo.';
+
+/**
+ * `payment_orders.amount` is `decimal(10,2)` written in SOLES by create-order
+ * (`String(amount / 100)`), while the request amount is minor units. Returns the
+ * order amount in minor units, or `null` when the stored value is not a finite
+ * number — `null` is a DENY, never a pass: `NaN !== x` is true but a future
+ * `Number.isFinite`-free refactor must not be able to let it slip through.
+ */
+function orderAmountToMinorUnits(stored: unknown): number | null {
+  const soles = typeof stored === 'string' || typeof stored === 'number' ? Number(stored) : NaN;
+  if (!Number.isFinite(soles)) return null;
+  return Math.round(soles * 100);
+}
+
+/**
+ * `payment_orders` has NO productId column: the binding lives in
+ * `metadata.productId` (create-order writes it only when a product was given, so
+ * a product-less order legitimately has none).
+ *
+ * - `'absent'`  → nothing to bind against, the caller must ALLOW.
+ * - `{ id }`    → the order is bound to that product.
+ * - `'invalid'` → a binding is present but unusable (not a string). Fail closed:
+ *                 an attacker cannot skip the check with a non-string value.
+ */
+type OrderProductBinding = 'absent' | 'invalid' | { id: string };
+
+function readOrderProductBinding(metadata: unknown): OrderProductBinding {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return 'absent';
+  const bound = (metadata as { productId?: unknown }).productId;
+  if (bound === undefined || bound === null) return 'absent';
+  if (typeof bound !== 'string' || bound === '') return 'invalid';
+  return { id: bound };
+}
+
 /** Map a Culqi read failure: an abort is 504, anything else is a 502 transport fault. */
 function culqiReadErrorResponse(err: unknown): NextResponse {
   if (err instanceof CulqiReadError && err.kind === 'timeout') {
@@ -309,12 +353,65 @@ export async function POST(request: Request) {
           eq(paymentOrders.culqiOrderId, culqiOrderId as string),
           eq(paymentOrders.businessId, businessId),
         ),
+        // Projected on purpose: the gate needs the money fields and the product
+        // binding, never buyerEmail/buyerPhone. Reading the full row would pull
+        // buyer PII into memory for a check that never serialises it.
+        columns: {
+          amount: true,
+          currency: true,
+          metadata: true,
+        },
       });
 
       if (!orderRow) {
         return NextResponse.json(
           { success: false, error: 'Orden de pago no encontrada' },
           { status: 404 },
+        );
+      }
+
+      // ─── BINDING: the verified payment must be what gets recorded ───
+      // A paid Culqi order only authorises ITS OWN amount and product. Without
+      // this binding, a buyer can pay a S/ 1 order and have the transaction
+      // record + decrement stock for a S/ 1000 product of the same business
+      // (underpayment + fabricated financial record). Both checks run before the
+      // Culqi read (no upstream round-trip is wasted) and before
+      // reserveIdempotencyKey (no key is burned).
+      const orderAmountMinor = orderAmountToMinorUnits(orderRow.amount);
+      if (orderAmountMinor === null || orderAmountMinor !== amount) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: ORDER_AMOUNT_MISMATCH_MESSAGE,
+            code: 'ORDER_AMOUNT_MISMATCH',
+          },
+          { status: 402 },
+        );
+      }
+
+      if (currency !== orderRow.currency) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: ORDER_CURRENCY_MISMATCH_MESSAGE,
+            code: 'ORDER_CURRENCY_MISMATCH',
+          },
+          { status: 402 },
+        );
+      }
+
+      const productBinding = readOrderProductBinding(orderRow.metadata);
+      const productIsBound =
+        productBinding === 'invalid' ||
+        (productBinding !== 'absent' && productBinding.id !== productId);
+      if (productIsBound) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: ORDER_PRODUCT_MISMATCH_MESSAGE,
+            code: 'ORDER_PRODUCT_MISMATCH',
+          },
+          { status: 402 },
         );
       }
 
