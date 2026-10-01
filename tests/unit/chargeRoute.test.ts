@@ -6,6 +6,7 @@
 // =====================================================
 
 import { POST } from '@/app/api/payment/charge/route';
+import type * as CulqiOrdersModule from '@/core/payments/culqiOrders';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { NextResponse } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -18,7 +19,6 @@ const {
   mockPaymentsFindFirst,
   mockPaymentOrdersFindFirst,
   mockGetCulqiOrder,
-  mockIsCulqiOrderPaid,
   CulqiReadErrorMock,
   mockProductsFindFirst,
   mockProductsSelectWhere,
@@ -38,7 +38,6 @@ const {
   const mockPaymentsFindFirst = vi.fn();
   const mockPaymentOrdersFindFirst = vi.fn();
   const mockGetCulqiOrder = vi.fn();
-  const mockIsCulqiOrderPaid = vi.fn();
   const mockProductsFindFirst = vi.fn();
 
   class CulqiReadErrorMock extends Error {
@@ -76,7 +75,6 @@ const {
     mockPaymentsFindFirst,
     mockPaymentOrdersFindFirst,
     mockGetCulqiOrder,
-    mockIsCulqiOrderPaid,
     CulqiReadErrorMock,
     mockProductsFindFirst,
     mockProductsSelectWhere,
@@ -115,12 +113,19 @@ vi.mock('@/core/database/client', () => ({
   },
 }));
 
-vi.mock('@/core/payments/culqiOrders', () => ({
-  // original-impl form so restoreMocks keeps these resolved values across tests
-  getCulqiOrder: mockGetCulqiOrder,
-  isCulqiOrderPaid: mockIsCulqiOrderPaid,
-  CulqiReadError: CulqiReadErrorMock,
-}));
+// Only the READ is mocked. `isCulqiOrderPaid` is the real implementation, so
+// every route test proves the actual paid predicate gates the route — mocking it
+// would let a stubbed `{state:'paid'}` (or a fictional field) keep the whole
+// suite green, which is exactly how the original `status` bug went unnoticed.
+vi.mock('@/core/payments/culqiOrders', async (importOriginal) => {
+  const actual = await importOriginal<typeof CulqiOrdersModule>();
+  return {
+    ...actual,
+    // original-impl form so restoreMocks keeps these resolved values across tests
+    getCulqiOrder: mockGetCulqiOrder,
+    CulqiReadError: CulqiReadErrorMock,
+  };
+});
 
 vi.mock('@/core/entitlements/getBusinessEntitlements', () => ({
   // original-impl form so restoreMocks keeps this resolved value across tests
@@ -280,8 +285,10 @@ describe('POST /api/payment/charge', () => {
     // Default mock: no existing payment (not a replay)
     mockPaymentsFindFirst.mockResolvedValue(null);
     mockPaymentOrdersFindFirst.mockResolvedValue(null);
-    mockGetCulqiOrder.mockResolvedValue({ id: 'ord_culqi_abc123', status: 'paid', state: 'paid' });
-    mockIsCulqiOrderPaid.mockReturnValue(true);
+    // Real paid markers only: `state` / `paid_at`. There is no `status` on a Culqi
+    // ORDER — it belongs to the CHARGE object — so a fixture carrying it proves
+    // nothing and is deliberately absent here.
+    mockGetCulqiOrder.mockResolvedValue({ id: 'ord_culqi_abc123', state: 'paid' });
 
     // Default mock: product has stock above threshold (no low-stock alerts)
     mockProductsFindFirst.mockResolvedValue({
@@ -473,8 +480,9 @@ describe('POST /api/payment/charge', () => {
       ['cancelled', 'cancelled'],
     ])('returns 402 with the buyer retry text when Culqi reports %s', async (marker) => {
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
-      mockGetCulqiOrder.mockResolvedValue({ id: 'ord_culqi_abc123', status: marker });
-      mockIsCulqiOrderPaid.mockReturnValue(false);
+      // The REAL `isCulqiOrderPaid` reads this fixture: a non-`paid` `state`
+      // with no `paid_at` is the denial path, not a stubbed boolean.
+      mockGetCulqiOrder.mockResolvedValue({ id: 'ord_culqi_abc123', state: marker });
 
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
 
@@ -495,6 +503,39 @@ describe('POST /api/payment/charge', () => {
       expect(mockTxReturning).not.toHaveBeenCalled();
       expect(mockNotifyNewOrder).not.toHaveBeenCalled();
       expect(mockSendOrderStatusSms).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['a fictional charge-only status marker', { status: 'paid' }],
+      ['a paid marker contradicted by a pending state', { state: 'pending', status: 'paid' }],
+      ['no marker at all', {}],
+      ['a paid state contradicted by a null paid_at', { state: 'unpaid', paid_at: null }],
+    ])('denies through the route when the Culqi order carries only %s', async (_label, fixture) => {
+      // These rows depend on the REAL `isCulqiOrderPaid`. With the predicate
+      // mocked, a stub returning `true` would keep the whole suite green — this
+      // is the exact gap that let a fictional `status` reach the route.
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockGetCulqiOrder.mockResolvedValue(fixture);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.code).toBe('ORDER_NOT_PAID');
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('allows a stale pending state when paid_at is real money evidence', async () => {
+      // The OR rule, exercised end-to-end through the route: `state` can lag a
+      // few seconds behind an async capture, and denying there would hand a real
+      // payer a free-order rejection.
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockGetCulqiOrder.mockResolvedValue({ state: 'pending', paid_at: 1757000000 });
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
     });
 
     test('maps an aborted Culqi read to 504 and reserves nothing', async () => {
