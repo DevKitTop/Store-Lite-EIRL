@@ -44,6 +44,16 @@ export const env = {
   // En producción, debe ser un string aleatorio fuerte. Si no se configura,
   // se usa un fallback para dev — pero OJO, no es seguro para producción.
   otpHashSecret: process.env.OTP_HASH_SECRET || 'dev-fallback-otp-secret-not-for-production',
+  // ORDER_ACCESS_COOKIE_SECRET — HMAC secret for the signed `order_access_{token}`
+  //   cookie that upgrades an order page from its PII-free projection to the full
+  //   row (server-side only).
+  //   DELIBERATELY INVERTED from `otpHashSecret` above, which falls back to a
+  //   known dev string. An OTP hash is integrity-only, so a guessable fallback is
+  //   merely embarrassing; this secret gates an ACCESS DECISION, so a known
+  //   fallback would mean an unset PRODUCTION secret still verifies cookies —
+  //   i.e. it would silently AUTHORIZE instead of denying. Hence `''`, and
+  //   `verifyOrderAccessCookie` treats `''` as "nothing verifies".
+  orderAccessCookieSecret: process.env.ORDER_ACCESS_COOKIE_SECRET || '',
   // CRON_SECRET / cron_secret — protege los endpoints cron contra acceso público.
   //   Las llamadas desde Supabase pg_cron deben incluir este token.
   cronSecret: process.env.CRON_SECRET || process.env.cron_secret || '',
@@ -90,6 +100,16 @@ if (!process.env.OTP_HASH_SECRET) {
   console.warn(
     '[OTP] OTP_HASH_SECRET not set. Using DEV FALLBACK — DO NOT USE IN PRODUCTION. ' +
       'Set a strong random string in production.',
+  );
+}
+
+// Order access cookie secret: warn-if-missing beside the OTP precedent. Note the
+// asymmetry with the message above — here the unset state denies everything, it
+// does not fall back.
+if (!process.env.ORDER_ACCESS_COOKIE_SECRET) {
+  console.warn(
+    '[Orders] ORDER_ACCESS_COOKIE_SECRET not set. Order pages will serve the PII-free ' +
+      'projection and never grant full access. Set a strong random string in production.',
   );
 }
 
