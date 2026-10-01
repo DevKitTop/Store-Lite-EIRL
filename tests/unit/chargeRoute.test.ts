@@ -7,6 +7,7 @@
 
 import { POST } from '@/app/api/payment/charge/route';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { NextResponse } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // ── Mocks (must be before module imports — vi.mock is hoisted) ──
@@ -821,6 +822,172 @@ describe('POST /api/payment/charge', () => {
       const inserted = mockTxValues.mock.calls[0][0] as { productId: string; amount: string };
       expect(inserted.productId).toBe('660e8400-e29b-41d4-a716-446655440001');
       expect(inserted.amount).toBe('1500');
+    });
+  });
+
+  // ============================================================
+  // Idempotency: a failed transaction must never leave the reserved
+  // key at `processing` (R14 — the W2 permanent-lockout trap)
+  // ============================================================
+
+  describe('idempotency key completion on a failed transaction', () => {
+    interface KeyRow {
+      status: string;
+      responseBody?: unknown;
+      responseStatus?: number;
+    }
+
+    /**
+     * A minimal in-memory `payment_idempotency_keys` stand-in wired into the two
+     * route mocks, so a test can assert the KEY's end state and not only the HTTP
+     * response. Mirrors `reserveIdempotencyKey` / `completeIdempotencyKey`.
+     *
+     * A FRESH store per test is mandatory: `restoreMocks` restores the
+     * `vi.fn(originalImpl)` defaults but does NOT undo a later
+     * `mockImplementation`, so a shared store would leak across cases.
+     */
+    function useFakeKeyStore() {
+      const store = new Map<string, KeyRow>();
+
+      mockReserveIdempotencyKey.mockImplementation(async (key: string | null) => {
+        if (!key) return null;
+        const existing = store.get(key);
+        if (existing?.responseBody && existing.responseStatus) {
+          return {
+            type: 'replay',
+            response: NextResponse.json(existing.responseBody as Record<string, unknown>, {
+              status: existing.responseStatus,
+            }),
+          };
+        }
+        if (existing) {
+          return {
+            type: 'processing',
+            response: NextResponse.json({ error: 'processing' }, { status: 409 }),
+          };
+        }
+        store.set(key, { status: 'processing' });
+        return { type: 'reserved', key };
+      });
+
+      mockCompleteIdempotencyKey.mockImplementation(
+        async (key: string | null, body: Record<string, unknown>, status = 200) => {
+          if (!key) return;
+          store.set(key, {
+            status: status >= 200 && status < 300 ? 'succeeded' : 'failed',
+            responseBody: body,
+            responseStatus: status,
+          });
+        },
+      );
+
+      return store;
+    }
+
+    test('completes the reserved key with the failure when the transaction throws', async () => {
+      const store = useFakeKeyStore();
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      // The flip assertion fires: `flipped.length !== 1` throws inside the tx.
+      mockTxUpdateReturning.mockResolvedValue([]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.error).toBe('Error interno procesando el pago');
+
+      // The key must NOT be left dangling at `processing`.
+      const entry = store.get('charge-ord_culqi_abc123');
+      expect(entry).toBeDefined();
+      expect(entry?.status).toBe('failed');
+      expect(entry?.responseStatus).toBe(500);
+      expect(entry?.responseBody).toEqual({ error: 'Error interno procesando el pago' });
+    });
+
+    test('a second identical request after a failed transaction is not answered 409 processing', async () => {
+      const store = useFakeKeyStore();
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([]);
+
+      const first = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(first.status).toBe(500);
+
+      // The client key is deterministic per Culqi order, so the retry hits the
+      // same key. The recorded failure is replayed — never a 409 `processing`
+      // lockout, which is what a dangling key would produce.
+      const second = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(second.status).not.toBe(409);
+      expect(second.status).toBe(500);
+      expect(store.get('charge-ord_culqi_abc123')?.status).toBe('failed');
+      // A replay is a replay: it must not re-run the transaction.
+      expect(mockTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    test('a successful charge still completes the key once, with the 200 body', async () => {
+      const store = useFakeKeyStore();
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      const completions = mockCompleteIdempotencyKey.mock.calls.filter(
+        (call) => (call[2] as number) === 200,
+      );
+      expect(completions).toHaveLength(1);
+      const entry = store.get('charge-ord_culqi_abc123');
+      expect(entry?.status).toBe('succeeded');
+      expect(entry?.responseStatus).toBe(200);
+    });
+
+    test('does not complete a key that was never reserved', async () => {
+      useFakeKeyStore();
+      // No Idempotency-Key header ⇒ `reserveIdempotencyKey` returns null.
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(createOrderFlowPayload()),
+      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([]);
+
+      const response = await POST(request);
+
+      expect(response.status).toBe(500);
+      expect(mockReserveIdempotencyKey).toHaveBeenCalledWith(null);
+      // Strongest form: no completion at all, not merely no 500-status one.
+      expect(mockCompleteIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('never masks the original failure when completing the key also throws', async () => {
+      useFakeKeyStore();
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([]);
+      mockCompleteIdempotencyKey.mockRejectedValue(new Error('idempotency store is down'));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // The buyer still gets the 500 for the payment, not an unhandled rejection
+      // and not a 200.
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.error).toBe('Error interno procesando el pago');
+    });
+
+    test('never re-completes a key the success path already completed', async () => {
+      useFakeKeyStore();
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+      // The success-path completion itself fails AFTER the transaction committed.
+      mockCompleteIdempotencyKey.mockRejectedValue(new Error('response write timed out'));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // The payment committed, so a 500 is already the worst outcome; what must
+      // not happen is a SECOND completion rewriting the key to a 500 failure
+      // record for a payment that actually succeeded.
+      expect(response.status).toBe(500);
+      expect(mockCompleteIdempotencyKey).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -51,6 +51,11 @@ const ORDER_CURRENCY_MISMATCH_MESSAGE =
 const ORDER_PRODUCT_MISMATCH_MESSAGE =
   'La orden no corresponde a este producto. Contactá al negocio para resolverlo.';
 
+// Single source of truth for the buyer's 500 message: the response body and the
+// idempotency failure record must agree, or a replayed key would return a
+// different text than the original attempt.
+const INTERNAL_ERROR_MESSAGE = 'Error interno procesando el pago';
+
 /**
  * `payment_orders.amount` is `decimal(10,2)` written in SOLES by create-order
  * (`String(amount / 100)`), while the request amount is minor units. Returns the
@@ -241,9 +246,15 @@ async function executeCulqiCharge({
 
 // eslint-disable-next-line complexity, sonarjs/cognitive-complexity
 export async function POST(request: Request) {
+  // Declared OUTSIDE the try so the catch block can see them: a key that is
+  // reserved and then abandoned at `processing` locks the buyer out forever.
+  let reservedIdempotencyKey: string | null = null;
+  // Set the moment the success path reaches its own completion, so the catch
+  // block can never re-complete (and downgrade) a key for a committed payment.
+  let successPathCompletedKey = false;
+
   try {
     const idempotencyKey = request.headers.get('Idempotency-Key');
-    let reservedIdempotencyKey: string | null = null;
 
     const rawBody = await request.json();
 
@@ -651,12 +662,32 @@ export async function POST(request: Request) {
       },
     };
 
+    successPathCompletedKey = true;
     await completeIdempotencyKey(reservedIdempotencyKey, responseBody, 200);
 
     return NextResponse.json(responseBody);
   } catch (error) {
     console.error('[payment/charge] Critical Error:', error);
-    return NextResponse.json({ error: 'Error interno procesando el pago' }, { status: 500 });
+
+    // A key left at `processing` with a null body is a PERMANENT lockout: the
+    // client key is deterministic (`charge-${token || culqiOrderId}`,
+    // paymentApi.ts:68), `reserveIdempotencyKey` answers `{type:'processing'}`
+    // for it forever, and no reaper exists for `payment_idempotency_keys`. So a
+    // throw after the reservation must complete the key with the failure.
+    if (reservedIdempotencyKey && !successPathCompletedKey) {
+      try {
+        await completeIdempotencyKey(
+          reservedIdempotencyKey,
+          { error: INTERNAL_ERROR_MESSAGE },
+          500,
+        );
+      } catch (completeError) {
+        // Never let the cleanup mask the original failure.
+        console.error('[payment/charge] Idempotency completion error:', completeError);
+      }
+    }
+
+    return NextResponse.json({ error: INTERNAL_ERROR_MESSAGE }, { status: 500 });
   }
 }
 
