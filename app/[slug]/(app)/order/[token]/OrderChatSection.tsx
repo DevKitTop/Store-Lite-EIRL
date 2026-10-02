@@ -17,9 +17,12 @@ interface OrderChatSectionProps {
   businessName: string;
   businessId: string;
   paymentId: string;
-  buyerEmail: string;
+  // 🔒 SECURITY (R17): nullable because the order page serves a PII-free
+  // projection to anyone without a verified access cookie. `null` here is the
+  // normal case for an unverified visitor, not an error state.
+  buyerEmail: string | null;
   buyerName: string | null;
-  buyerDni: string;
+  buyerDni: string | null;
   trackingToken: string;
 }
 
@@ -50,7 +53,7 @@ export default function OrderChatSection({
       try {
         setIsLoading(true);
         const guestIdFromStorage = localStorage.getItem('chat_guest_id');
-        const name = buyerName || buyerEmail.split('@')[0];
+        const name = buyerName || buyerEmail?.split('@')[0] || 'Cliente';
 
         const res = await syncChatSession({
           guestIdFromStorage,
