@@ -118,6 +118,42 @@ vi.mock('@/lib/supabase/server', () => ({
 const SLUG = 'mi-tienda';
 const TOKEN = 'track-token-abc123';
 
+/**
+ * 🔒 Sentinel values planted in `paymentRow()` for EVERY PII/secret column the
+ * page is allowed to touch, keyed by column. A tree leaf that CONTAINS any of
+ * these is a leak, whichever column produced it — so an assertion never has to
+ * know the render site in order to catch it.
+ */
+const PII_SENTINELS = {
+  buyerEmail: 'leak@example.com',
+  buyerPhone: '999888777',
+  buyerDni: '12345678',
+  shippingAddress: 'Calle Falsa 123',
+  shippingDistrict: 'Distrito Leak',
+  shippingProvince: 'Provincia Leak',
+  shippingDepartment: 'Departamento Leak',
+  shippingAgency: 'Agencia Leak',
+  shippingReference: 'Referencia Leak',
+  shippingPhone: 'Telefono Envio Leak',
+  shippingUbigeo: 'Ubigeo Leak',
+  pickupCode: 'PICKUP-ABCD-9999',
+  ticketUrl: 'https://example.test/ticket.pdf',
+  ticketImageUrl: 'https://example.test/ticket.jpg',
+  deliveryCodeHash: 'hash-leak-0001',
+  deliveryCodeExpiresAt: '2031-03-03T00:00:00Z',
+  metadataAuthId: 'supabase-uuid-1',
+  metadataName: 'Ana Leak',
+} as const;
+
+const PII_VALUES: string[] = Object.values(PII_SENTINELS);
+
+/**
+ * The FULL row, PII included. Drizzle does not hand the page a PII-free object
+ * — `columns` decides what comes back from the DATABASE. Modelling that split
+ * explicitly (`applyProjection` below) is what lets this suite show the tree is
+ * PII-free for the right reason, and lets the hostile test show what happens
+ * when the projection stops working.
+ */
 function paymentRow(overrides: Record<string, unknown> = {}) {
   return {
     id: 'pay-1',
@@ -136,10 +172,109 @@ function paymentRow(overrides: Record<string, unknown> = {}) {
     createdAt: new Date('2026-01-01T10:00:00Z'),
     updatedAt: new Date('2026-01-02T10:00:00Z'),
     completedAt: null,
+    buyerEmail: PII_SENTINELS.buyerEmail,
+    buyerPhone: PII_SENTINELS.buyerPhone,
+    buyerDni: PII_SENTINELS.buyerDni,
+    shippingAddress: PII_SENTINELS.shippingAddress,
+    shippingDistrict: PII_SENTINELS.shippingDistrict,
+    shippingProvince: PII_SENTINELS.shippingProvince,
+    shippingDepartment: PII_SENTINELS.shippingDepartment,
+    shippingAgency: PII_SENTINELS.shippingAgency,
+    shippingReference: PII_SENTINELS.shippingReference,
+    shippingPhone: PII_SENTINELS.shippingPhone,
+    shippingUbigeo: PII_SENTINELS.shippingUbigeo,
+    pickupCode: PII_SENTINELS.pickupCode,
+    ticketUrl: PII_SENTINELS.ticketUrl,
+    ticketImageUrl: PII_SENTINELS.ticketImageUrl,
+    deliveryCodeHash: PII_SENTINELS.deliveryCodeHash,
+    deliveryCodeExpiresAt: PII_SENTINELS.deliveryCodeExpiresAt,
+    metadata: {
+      customerAuth: { authId: PII_SENTINELS.metadataAuthId, name: PII_SENTINELS.metadataName },
+    },
     business: { id: 'biz-1', name: 'Mi Tienda', slug: SLUG },
     product: { id: 'prod-1', name: 'Zapatos' },
     ...overrides,
   };
+}
+
+/**
+ * Faithful drizzle emulation: `columns` decides what the DATABASE returns, so a
+ * projected read yields only the selected scalars PLUS the `with` relations,
+ * and an unprojected read yields the whole row. Tests that need to bypass this
+ * (the hostile-row test below) install their own implementation instead.
+ */
+function applyProjection(
+  row: Record<string, unknown>,
+  arg?: { columns?: Record<string, unknown> },
+): Record<string, unknown> {
+  const columns = arg?.columns;
+  if (!columns) return row;
+
+  const selected = new Set(Object.keys(columns));
+  const projected = new Map<string, unknown>();
+  for (const [key, value] of Object.entries(row)) {
+    if (key === 'product' || key === 'business') continue;
+    if (selected.has(key)) projected.set(key, value);
+  }
+  projected.set('product', row.product);
+  projected.set('business', row.business);
+  return Object.fromEntries(projected);
+}
+
+/** Minimal React element shape — keeps this file free of a React type import. */
+interface ElementLike {
+  props?: Record<string, unknown> | null;
+}
+
+function isElementLike(value: unknown): value is ElementLike {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { props?: unknown }).props === 'object' &&
+    (value as { props?: unknown }).props !== null
+  );
+}
+
+/**
+ * Depth-first walk of an already-CONSTRUCTED React tree, collecting every
+ * string/number leaf. Awaiting the page runs its whole body, so the tree exists
+ * as plain objects; recursing into `props` reaches `children` plus every other
+ * prop (so PII handed to a child COMPONENT as a prop is caught too), while the
+ * child component functions are never invoked — which is exactly why no
+ * component mocks are needed here.
+ *
+ * Non-element objects (`style`, `dangerouslySetInnerHTML`) are traversed too;
+ * `seen` guards against a cyclic prop graph.
+ */
+function collectLeafStrings(node: unknown, out: string[] = [], seen = new WeakSet()): string[] {
+  if (typeof node === 'string') {
+    out.push(node);
+    return out;
+  }
+  if (typeof node === 'number' || typeof node === 'bigint') {
+    out.push(String(node));
+    return out;
+  }
+  if (node === null || node === undefined || typeof node === 'boolean') return out;
+  if (Array.isArray(node)) {
+    for (const child of node) collectLeafStrings(child, out, seen);
+    return out;
+  }
+  if (typeof node !== 'object') return out;
+  if (seen.has(node)) return out;
+  seen.add(node);
+
+  // An element: descend into its props, which is where `children` lives.
+  if (isElementLike(node)) return collectLeafStrings(node.props, out, seen);
+  for (const value of Object.values(node as Record<string, unknown>)) {
+    collectLeafStrings(value, out, seen);
+  }
+  return out;
+}
+
+/** Sentinel values from `PII_SENTINELS` that reached the tree, in `PII_VALUES` order. */
+function surfacedSentinels(leaves: string[]): string[] {
+  return PII_VALUES.filter((secret) => leaves.some((leaf) => leaf.includes(secret)));
 }
 
 /** The full argument object the page handed to `findFirst`, by call index. */
@@ -164,7 +299,7 @@ async function invokePage() {
 
 beforeEach(() => {
   // vitest.config.ts sets clearMocks/restoreMocks → impls are re-declared per test
-  mockFindFirstPayments.mockImplementation(async () => paymentRow());
+  mockFindFirstPayments.mockImplementation(async (arg) => applyProjection(paymentRow(), arg));
   mockVerifyOrderAccessCookie.mockImplementation(async () => false);
 });
 
@@ -177,6 +312,10 @@ describe('order page — PII-free public projection (R14)', () => {
     await invokePage();
 
     expect(mockVerifyOrderAccessCookie).toHaveBeenCalledWith(TOKEN);
+    // The page body must read the row EXACTLY ONCE. Without this, a second
+    // unprojected `payments.findFirst` added later would be invisible: every
+    // other assertion in this file reads `recordedArg(0)`, the first call.
+    expect(mockFindFirstPayments).toHaveBeenCalledTimes(1);
     expect(recordedColumns()).toEqual(PUBLIC_ORDER_COLUMNS);
   });
 
@@ -195,6 +334,57 @@ describe('order page — PII-free public projection (R14)', () => {
     // `with` as a column name and strip the relations from the row.
     expect(columns).not.toHaveProperty('with');
     expect(recordedArg().with).toEqual(PUBLIC_ORDER_RELATIONS);
+  });
+
+  it('renders no buyer PII or order secret into the tree without an access cookie', async () => {
+    mockVerifyOrderAccessCookie.mockImplementation(async () => false);
+
+    const tree = await OrderTrackingPage({ params: Promise.resolve({ slug: SLUG, token: TOKEN }) });
+
+    const leaves = collectLeafStrings(tree);
+    // Non-vacuous: the page must have produced content, otherwise "no PII"
+    // would pass on an empty walk.
+    expect(leaves.length).toBeGreaterThan(0);
+
+    // The DB applied the allowlist, so the page never held these values at all.
+    // This is the end-to-end proof that the projection works, complementing the
+    // structural `columns` assertions above.
+    expect(surfacedSentinels(leaves)).toEqual([]);
+  });
+
+  it('surfaces only already-known PII when the projection stops working', async () => {
+    // Hostile database: `columns` is ignored and the whole row comes back, so
+    // the page holds real PII with no cookie behind it.
+    mockFindFirstPayments.mockImplementation(async () => paymentRow());
+    mockVerifyOrderAccessCookie.mockImplementation(async () => false);
+
+    const tree = await OrderTrackingPage({ params: Promise.resolve({ slug: SLUG, token: TOKEN }) });
+    const leaves = collectLeafStrings(tree);
+    expect(leaves.length).toBeGreaterThan(0);
+
+    // Every PII read point in the page is a *conditional render*
+    // (`order.buyerPhone && (…)`, `order.shippingAddress || '—'`), never a
+    // suppression: given the value, it renders. So the ALLOWLIST IS THE ONLY
+    // CONTROL, and this set is the MEASURED size of that exposure. It is pinned
+    // so that any column which starts reaching the tree — an unguarded
+    // `order.<pii>` read — fails here instead of shipping.
+    expect(surfacedSentinels(leaves)).toEqual([
+      PII_SENTINELS.buyerEmail, // :1611 CONTACTO, and :1317 as an OrderChatSection prop
+      PII_SENTINELS.buyerPhone, // :1618 CONTACTO
+      PII_SENTINELS.buyerDni, // :1624 CONTACTO, and :1319 as an OrderChatSection prop
+      PII_SENTINELS.shippingAddress, // :1542 ENVÍO
+      PII_SENTINELS.shippingDistrict, // :1546 ENVÍO
+      PII_SENTINELS.shippingProvince, // :1547 ENVÍO
+      PII_SENTINELS.shippingDepartment, // :1548 ENVÍO
+      PII_SENTINELS.shippingAgency, // :1556 ENVÍO
+      PII_SENTINELS.shippingReference, // :1563 ENVÍO
+      PII_SENTINELS.ticketImageUrl, // :1167 / :1239 / :1354 / :1368 ticket modals
+      PII_SENTINELS.metadataName, // :1684 VERIFICACIÓN (metadata.customerAuth.name)
+    ]);
+    // Columns the page never reads, pinned so a future read of any of them fails
+    // above: `shippingPhone`, `shippingUbigeo`, `pickupCode` (gated on
+    // `env.orderFlowV2` + status, false for this fixture), `ticketUrl`,
+    // `deliveryCodeHash`, `deliveryCodeExpiresAt`, `metadata.customerAuth.authId`.
   });
 
   it('reads the full row when a valid access cookie is present', async () => {
