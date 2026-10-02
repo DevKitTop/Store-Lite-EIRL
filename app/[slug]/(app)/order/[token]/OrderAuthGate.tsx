@@ -196,9 +196,12 @@ export default function OrderAuthGate({
               newParams.delete('dni');
               const query = newParams.toString() ? `?${newParams.toString()}` : '';
               router.replace(`${pathname}${query}`);
+            } else {
+              setIsAuthenticated(false);
             }
           } catch (err) {
             console.error('[OrderAuthGate] Auto-auth error:', err);
+            setIsAuthenticated(false);
           } finally {
             setLoading(false);
           }
