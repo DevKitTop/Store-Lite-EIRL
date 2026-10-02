@@ -282,6 +282,59 @@ describe('verifyOrderAccess — verified access mints the order access cookie', 
   });
 });
 
+// ── Suite: real round-trip between mint and verify (R13) ─
+// A cookie value that matches a shape regex is not enough if mint and verify
+// disagree on the secret or payload layout. This asserts the real modules
+// agree.
+
+describe('verifyOrderAccess — mint/verify round-trip with known secret', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  test('a minted cookie verifies successfully for the same token', async () => {
+    vi.stubEnv('ORDER_ACCESS_COOKIE_SECRET', 'test-secret-key-32-chars-long!!');
+    vi.resetModules();
+
+    const { verifyOrderAccessCookie } = await import('@/lib/orderAccessCookie');
+    const { verifyOrderAccess: verifyOrderAccessFresh } =
+      await import('@/app/[slug]/(app)/order/[token]/actions');
+
+    useClientIp('203.0.113.200');
+    expect(await verifyOrderAccessFresh(TOKEN, '87654321', CORRECT_ORDER)).toEqual({
+      success: true,
+    });
+
+    expect(cookieWrites).toHaveLength(1);
+    expect(await verifyOrderAccessCookie(TOKEN)).toBe(true);
+    vi.unstubAllEnvs();
+  });
+
+  test('a cookie minted for token A does not verify for token B', async () => {
+    vi.stubEnv('ORDER_ACCESS_COOKIE_SECRET', 'test-secret-key-32-chars-long!!');
+    vi.resetModules();
+
+    const { verifyOrderAccessCookie } = await import('@/lib/orderAccessCookie');
+    const { verifyOrderAccess: verifyOrderAccessFresh } =
+      await import('@/app/[slug]/(app)/order/[token]/actions');
+
+    useClientIp('203.0.113.201');
+    const tokenA = TOKEN;
+    const tokenB = 'different-token-123';
+
+    expect(await verifyOrderAccessFresh(tokenA, '87654321', CORRECT_ORDER)).toEqual({
+      success: true,
+    });
+
+    expect(cookieWrites).toHaveLength(1);
+    expect(await verifyOrderAccessCookie(tokenA)).toBe(true);
+    expect(await verifyOrderAccessCookie(tokenB)).toBe(false);
+    vi.unstubAllEnvs();
+  });
+});
+
 // ── Suite: a refusal must not touch the cookie store (R13) ─
 //
 // "MUST NOT touch" is stronger than "must not set". A refusal that cleared the
@@ -369,6 +422,79 @@ describe('verifyOrderAccess — a refusal leaves the cookie store untouched', ()
     expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID)).toEqual({
       success: false,
       reason: 'no_google_link',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a Google flow with not_found leaves cookie store empty', async () => {
+    useClientIp('203.0.113.130');
+    mockFindFirst.mockResolvedValue(null);
+
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID)).toEqual({
+      success: false,
+      reason: 'not_found',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a Google flow with wrong_order leaves cookie store empty', async () => {
+    useClientIp('203.0.113.131');
+    mockFindFirst.mockResolvedValue({
+      id: 'pay-google-4',
+      orderNumber: CORRECT_ORDER,
+      metadata: { customerAuth: { authId: GOOGLE_UID } },
+    });
+
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID, '#WRONG')).toEqual({
+      success: false,
+      reason: 'wrong_order',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a Google flow with catch error leaves cookie store empty', async () => {
+    useClientIp('203.0.113.132');
+    mockFindFirst.mockRejectedValue(new Error('db error'));
+
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID)).toEqual({
+      success: false,
+      reason: 'error',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a Google flow with wrong_order when orderNumber matches after trim logic check', async () => {
+    useClientIp('203.0.113.133');
+    mockFindFirst.mockResolvedValue({
+      id: 'pay-google-5',
+      orderNumber: CORRECT_ORDER,
+      metadata: { customerAuth: { authId: GOOGLE_UID } },
+    });
+
+    // Case where provided orderNumber doesn't match after trimming
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID, '  #DIFFERENT  ')).toEqual({
+      success: false,
+      reason: 'wrong_order',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a Google flow with wrong_order when provided is falsy after trim', async () => {
+    useClientIp('203.0.113.134');
+    mockFindFirst.mockResolvedValue({
+      id: 'pay-google-6',
+      orderNumber: CORRECT_ORDER,
+      metadata: { customerAuth: { authId: GOOGLE_UID } },
+    });
+
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID, '   ')).toEqual({
+      success: false,
+      reason: 'wrong_order',
     });
 
     expect(cookieWrites).toEqual([]);
