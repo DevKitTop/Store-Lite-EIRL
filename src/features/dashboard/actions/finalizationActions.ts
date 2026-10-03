@@ -13,6 +13,11 @@ import {
 import { processOrderCompletion } from '@/lib/deactivation';
 import { checkIncompleteOrderDeactivation } from '@/lib/incompleteOrderRate';
 import { createBusinessNotification } from '@/lib/notifications';
+import {
+  ORDER_ACCESS_DENIED_ERROR,
+  requireOrderAccess,
+  type OrderAccessRefusalReason,
+} from '@/lib/orderAccessGate';
 import { checkPermission } from '@/lib/permissions';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { and, eq, lt } from 'drizzle-orm';
@@ -81,6 +86,8 @@ async function requireOrderManager(
 export interface FinalizationActionResult {
   success: boolean;
   error?: string;
+  /** R20: a refusal is never a bare boolean — the UI branches on this. */
+  reason?: OrderAccessRefusalReason;
   data?: {
     status: string;
     finalizationDeadline?: string;
@@ -268,6 +275,15 @@ export async function confirmFinalization(
   token: string,
 ): Promise<FinalizationActionResult> {
   try {
+    // R19: this action took NO proof parameter at all, so before the gate it was
+    // callable by anyone who knew (paymentId, token). The signed httpOnly cookie
+    // is the authorization decision and runs before the payment read, so an
+    // unauthorized caller never makes the server touch `payments`.
+    const access = await requireOrderAccess(token);
+    if (!access.ok) {
+      return { success: false, error: ORDER_ACCESS_DENIED_ERROR, reason: access.reason };
+    }
+
     // 1. Fetch payment and validate token + status
     const [payment] = await db
       .select()
@@ -277,7 +293,12 @@ export async function confirmFinalization(
 
     if (!payment) {
       console.error('[confirmFinalization] Payment not found or invalid token');
-      return { success: false, error: 'Pedido no encontrado o token inválido.' };
+      return {
+        success: false,
+        error: 'Pedido no encontrado o token inválido.',
+        // NOT reauth_required: re-minting the cookie cannot make a row appear.
+        reason: 'order_not_found',
+      };
     }
 
     const confirmableStatuses: readonly string[] = CONFIRMABLE_STATUSES;
@@ -286,6 +307,10 @@ export async function confirmFinalization(
       return {
         success: false,
         error: `El pedido no está en estado de espera de confirmación. Estado actual: ${payment.status}`,
+        // A verifying cookie already proves ownership, so the failure here is
+        // about the ORDER's state. Labelling it reauth_required would send the
+        // buyer round the re-mint loop for something re-auth cannot fix (R20).
+        reason: 'order_not_actionable',
       };
     }
 

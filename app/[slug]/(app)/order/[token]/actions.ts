@@ -6,6 +6,11 @@ import { transition } from '@/core/orders/orderService';
 import { ORDER_STATUS_V2, type OrderStatusV2 } from '@/core/orders/orderStatus';
 import { deleteOrderAccessCookie, setOrderAccessCookie } from '@/lib/orderAccessCookie';
 import {
+  ORDER_ACCESS_DENIED_ERROR,
+  requireOrderAccess,
+  type OrderAccessRefusalReason,
+} from '@/lib/orderAccessGate';
+import {
   checkOrderAccessRateLimitFor,
   resetOrderAccessRateLimit,
 } from '@/lib/orderAccessRateLimit';
@@ -64,6 +69,16 @@ export async function updateOrderStatus(
   options?: { rejectionReason?: string; callerProof?: CallerProof },
 ) {
   try {
+    // R19: the signed httpOnly cookie is the authorization decision. It runs
+    // BEFORE the callerProof check and BEFORE the first DB read, so an
+    // unauthorized caller never makes the server touch `payments`. `callerProof`
+    // stays below as defense-in-depth — it is a value the client keeps in
+    // `localStorage`, so it can never be the primary gate (R19).
+    const access = await requireOrderAccess(trackingToken);
+    if (!access.ok) {
+      return { success: false, error: ORDER_ACCESS_DENIED_ERROR, reason: access.reason };
+    }
+
     // Validate caller if callerProof is provided
     if (options?.callerProof) {
       await verifyCallerProof(paymentId, options.callerProof);
@@ -339,6 +354,8 @@ export async function clearOrderAccessCookie(trackingToken: string): Promise<voi
 export interface ReportIssueV2Result {
   success: boolean;
   error?: string;
+  /** R20: a refusal is never a bare boolean — the UI branches on this. */
+  reason?: OrderAccessRefusalReason;
 }
 
 /**
@@ -353,6 +370,13 @@ export async function reportIssueV2(
   callerProof?: CallerProof,
 ): Promise<ReportIssueV2Result> {
   try {
+    // R19: the signed httpOnly cookie is the authorization decision, checked
+    // before the callerProof block and before the first DB read.
+    const access = await requireOrderAccess(trackingToken);
+    if (!access.ok) {
+      return { success: false, error: ORDER_ACCESS_DENIED_ERROR, reason: access.reason };
+    }
+
     // Validate caller if callerProof is provided
     if (callerProof) {
       try {

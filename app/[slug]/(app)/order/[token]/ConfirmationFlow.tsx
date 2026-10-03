@@ -34,6 +34,22 @@ export default function ConfirmationFlow({
       if (result.success) {
         setState('success');
         router.refresh();
+      } else if (result.reason === 'reauth_required') {
+        // R20: the signed cookie lapsed mid-confirmation (1h TTL). This branch is
+        // RECOVERABLE, so the stale client session has to go: `OrderAuthGate`
+        // reads `order_session_{token}` and would pass on it, stranding the buyer
+        // on a gate that thinks it is authenticated while the server keeps
+        // refusing. Dropping the marker and refreshing hands the buyer back to the
+        // gate's own state machine, which re-mints via Google or the DNI form.
+        //
+        // The clear lives HERE, not in `OrderAuthGate`: `localStorage` is
+        // client-side, so a server action can never reach it. `OrderAuthGate`
+        // takes no change for R20 — its refusal string is for a failed form
+        // submit, not a reason renderer.
+        localStorage.removeItem(`order_session_${trackingToken}`);
+        setError(result.error || 'Necesitás volver a verificar tu acceso al pedido.');
+        setState('idle');
+        router.refresh();
       } else {
         setError(result.error || 'Error al confirmar');
         setState('idle');

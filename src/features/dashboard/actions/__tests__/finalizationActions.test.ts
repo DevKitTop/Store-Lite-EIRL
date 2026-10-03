@@ -26,6 +26,10 @@ const mocks = vi.hoisted(() => ({
   checkIncompleteOrderDeactivation: vi.fn(),
   processOrderCompletion: vi.fn(),
   revalidatePath: vi.fn(),
+  // R19: `confirmFinalization` is gated on the signed access cookie, so this
+  // harness has to hold a real one — minted through the production signer.
+  cookieStore: new Map<string, string>(),
+  mockCookiesFn: vi.fn(),
 }));
 
 vi.mock('@/core/database/client', () => ({
@@ -64,7 +68,15 @@ vi.mock('next/cache', () => ({
 vi.mock('@/config/env', () => ({
   env: {
     orderFlowV2: true,
+    // R19/R18: without a secret the gate fails closed and denies EVERY buyer.
+    orderAccessCookieSecret: 'finalization-actions-test-secret',
   },
+}));
+
+// R19: the cookie store `verifyOrderAccessCookie` reads through.
+vi.mock('next/headers', () => ({
+  cookies: mocks.mockCookiesFn,
+  headers: vi.fn(async () => ({ get: () => null })),
 }));
 
 vi.mock('@/lib/incompleteOrderRate', () => ({
@@ -77,7 +89,25 @@ vi.mock('@/lib/deactivation', () => ({
 
 // Import after mocks
 import { ORDER_STATUS_V2 } from '@/core/orders/orderStatus';
+import { setOrderAccessCookie } from '@/lib/orderAccessCookie';
 import { autoFinalizeExpiredPayments, confirmFinalization } from '../finalizationActions';
+
+const VALID_TOKEN = 'valid-token';
+const INVALID_TOKEN = 'invalid-token';
+
+/** Gives this harness a genuinely valid marker, minted by the production signer. */
+async function mintCookie(token: string) {
+  mocks.mockCookiesFn.mockImplementation(async () => ({
+    get: (name: string) =>
+      mocks.cookieStore.has(name)
+        ? { name, value: mocks.cookieStore.get(name) as string }
+        : undefined,
+    set: (opts: { name: string; value: string }) => {
+      mocks.cookieStore.set(opts.name, opts.value);
+    },
+  }));
+  await setOrderAccessCookie(token);
+}
 
 function resetMocks() {
   mocks.paymentsFindFirst.mockReset();
@@ -97,23 +127,39 @@ function resetMocks() {
 }
 
 describe('confirmFinalization', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     resetMocks();
     mocks.transition.mockResolvedValue({ success: true, error: undefined });
     process.env.ENABLE_AUTO_DEACTIVATION = 'true';
+    mocks.cookieStore.clear();
+    // R19: every case below needs an authorized buyer, so mint both tokens.
+    await mintCookie(VALID_TOKEN);
+    await mintCookie(INVALID_TOKEN);
   });
 
   afterEach(() => {
     delete process.env.ENABLE_AUTO_DEACTIVATION;
   });
 
+  it('refuses before the payment read when there is no access cookie (R19)', async () => {
+    mocks.cookieStore.clear();
+
+    const result = await confirmFinalization('payment-1', VALID_TOKEN);
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('reauth_required');
+    expect(mocks.selectLimit).not.toHaveBeenCalled();
+    expect(mocks.transition).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid token', async () => {
     mocks.selectLimit.mockResolvedValue([] as any);
 
-    const result = await confirmFinalization('payment-1', 'invalid-token');
+    const result = await confirmFinalization('payment-1', INVALID_TOKEN);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('token inválido');
+    expect(result.reason).toBe('order_not_found');
   });
 
   it('rejects invalid status', async () => {
