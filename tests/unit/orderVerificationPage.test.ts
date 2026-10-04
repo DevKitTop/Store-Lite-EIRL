@@ -8,7 +8,13 @@
 // =====================================================
 
 import OrderVerificationPage from '@/app/[slug]/(app)/order/verify/[orderNumber]/page';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  buildOrderVerifyIdentifier,
+  buildOrderVerifyIpIdentifier,
+  checkOrderVerifyRateLimits,
+} from '@/lib/orderAccessRateLimit';
+import { RATE_LIMITS, resetRateLimit } from '@/lib/rateLimit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── Mocks ────────────────────────────────────────────
 
@@ -90,8 +96,14 @@ vi.mock('next/headers', () => ({
 const SLUG = 'mi-tienda';
 const ORDER_NUMBER = 'ORD-123';
 const TRACKING_TOKEN = 'track-abc123';
+/** A second order, used by the cross-order cookie cases (Task: honest naming). */
+const OTHER_ORDER_NUMBER = 'ORD-OTHER';
+const OTHER_TRACKING_TOKEN = 'track-xyz789';
 // Constructed to avoid sonarjs/no-hardcoded-ip false positive on constant definition
 const CLIENT_IP = ['1', '2', '3', '4'].join('.');
+const OTHER_IP = ['5', '6', '7', '8'].join('.');
+/** RATE_LIMITS.orderVerifyIp — 30 requests / 60s. The coarse ceiling under test. */
+const COARSE_MAX = RATE_LIMITS.orderVerifyIp.maxRequests;
 
 const PAYMENT_ROW_PUBLIC = {
   id: 'pay-1',
@@ -122,11 +134,27 @@ const PAYMENT_ROW_GATED = {
   },
 };
 
+/** A DIFFERENT order: its own number and its own tracking token. */
+const PAYMENT_ROW_OTHER = {
+  ...PAYMENT_ROW_PUBLIC,
+  orderNumber: OTHER_ORDER_NUMBER,
+  trackingToken: OTHER_TRACKING_TOKEN,
+};
+
 const BUSINESS_ROW = {
   id: 'biz-1',
   name: 'Mi Tienda',
   slug: SLUG,
-  taxId: '20123456789',
+  // Deliberately disjoint from every PII sentinel below.
+  //
+  // This used to be '20123456789', which CONTAINS the raw-DNI sentinel '12345678'
+  // at offset 2. The business RUC is rendered verbatim by the page, so the PII
+  // guard below reported a false positive against a legitimately-rendered public
+  // field — and the previous fix "resolved" that by deleting the sentinel from
+  // the loop, leaving `PII_SENTINELS` declared and referenced nowhere. De-collide
+  // the FIXTURE instead: a guard that only passes because it was weakened is not a
+  // guard.
+  taxId: '20555666777',
   address: 'Av. Siempre Viva 123',
   logoUrl: null,
 };
@@ -222,6 +250,28 @@ function buildParams(slug = SLUG, orderNumber = ORDER_NUMBER) {
   return { slug, orderNumber };
 }
 
+/**
+ * Wipes the verify page's limiter buckets for an IP.
+ *
+ * The real limiter's store is module scope (`rateLimit.ts:32`), so every render
+ * in this file permanently charges the coarse per-IP bucket. Without this a case
+ * would inherit an already-exhausted budget and pass — or fail — for the wrong
+ * reason. Called from `afterEach`, so no case can leak state into the next one.
+ */
+function clearVerifyThrottle(ip = CLIENT_IP) {
+  resetRateLimit(buildOrderVerifyIpIdentifier(ip), RATE_LIMITS.orderVerifyIp);
+  resetRateLimit(buildOrderVerifyIdentifier(ip, ORDER_NUMBER), RATE_LIMITS.storefront);
+  resetRateLimit(buildOrderVerifyIpIdentifier(OTHER_IP), RATE_LIMITS.orderVerifyIp);
+}
+
+/** Burns the coarse per-IP budget so the next render for `ip` is refused. */
+function exhaustCoarseBudget(ip = CLIENT_IP) {
+  clearVerifyThrottle(ip);
+  for (let i = 0; i < COARSE_MAX; i += 1) {
+    checkOrderVerifyRateLimits(ip, `BURN-${i}`);
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 
@@ -242,6 +292,12 @@ beforeEach(() => {
     applyProjection(PAYMENT_ROW_GATED, args),
   );
   mockVerifyOrderAccessCookie.mockResolvedValue(false);
+});
+
+afterEach(() => {
+  // The coarse bucket is shared by every render in this file; leaving it charged
+  // would make later cases depend on execution order.
+  clearVerifyThrottle();
 });
 
 // ── Tests ────────────────────────────────────────────
@@ -271,13 +327,12 @@ describe('OrderVerificationPage — R22 surface split + R23 throttle', () => {
       expect(leaves.some((l) => l.includes('Ver seguimiento de la orden'))).toBe(false); // trackingToken link
       expect(leaves.some((l) => l.includes('Zapato Premium'))).toBe(false); // cart items
 
-      // PII NOT leaked — masked DNI is OK, raw PII must not appear in text leaves
-      // The collectLeafStrings walks the raw payment object before masking, so we check
-      // that the *rendered text* (masked DNI) is what appears, not raw PII.
-      // Since the walker sees the payment object in closure, we verify the masked
-      // form appears and the raw PII strings do not appear as standalone text.
+      // PII NOT leaked — the mask is what reaches the markup, never the raw value.
       expect(leaves.some((l) => l.includes('****5678'))).toBe(true); // masked DNI rendered
-      for (const pii of ['leak@example.com', '999888777', 'Calle Falsa 123']) {
+      // Wired back in from `PII_SENTINELS` so the list is the single source of
+      // truth. '12345678' is the load-bearing entry: it is the RAW `buyerDni`, and
+      // only the mask may render.
+      for (const pii of PII_SENTINELS) {
         expect(leaves.some((l) => l.includes(pii))).toBe(false);
       }
     });
@@ -335,14 +390,99 @@ describe('OrderVerificationPage — R22 surface split + R23 throttle', () => {
       expect(leaves.some((l) => l === 'x')).toBe(true);
     });
 
-    it("another order's cookie does NOT unlock this page", async () => {
-      mockVerifyOrderAccessCookie.mockResolvedValue(false);
+    // These two are a MATCHED PAIR on purpose.
+    //
+    // The old version of the cross-order case set the same
+    // `mockResolvedValue(false)` as the plain no-cookie case, so its name
+    // promised a cross-order assertion its body never made — it duplicated the
+    // no-cookie test under a misleading title.
+    //
+    // Both now run against a real cookie JAR: a set of tokens holding a valid
+    // cookie. `verifyOrderAccessCookie` is stubbed as "is THIS token in the jar",
+    // which is exactly the property the real signature has. The control case
+    // proves the jar can grant access at all — without it the cross-order case
+    // would still pass if the stub returned `false` unconditionally, making the
+    // whole thing vacuous. Cross-order enforcement itself is pinned
+    // cryptographically at `orderAccessCookie.test.ts:170` (a cookie minted for
+    // order A is rejected when pasted into order B's slot).
+    it('CONTROL: the cookie jar DOES unlock its OWN order (so the case below is not vacuous)', async () => {
+      const jar = new Set<string>([TRACKING_TOKEN]);
+      mockVerifyOrderAccessCookie.mockImplementation(async (token: string) => jar.has(token));
 
       const tree = await OrderVerificationPage({ params: Promise.resolve(buildParams()) });
 
       const leaves = collectLeafStrings(tree);
+      expect(leaves.some((l) => l.includes('Ver seguimiento de la orden'))).toBe(true);
+      expect(leaves.some((l) => l.includes('Zapato Premium'))).toBe(true);
+    });
+
+    it("another order's cookie does NOT unlock this page", async () => {
+      // The buyer holds a VALID cookie — for order A.
+      const jar = new Set<string>([TRACKING_TOKEN]);
+      mockVerifyOrderAccessCookie.mockImplementation(async (token: string) => jar.has(token));
+
+      // The page under test is order B, whose row carries B's own token.
+      mockFindFirstPaymentQa.mockImplementation(async (args: any) =>
+        applyProjection(PAYMENT_ROW_OTHER, args),
+      );
+
+      const tree = await OrderVerificationPage({
+        params: Promise.resolve(buildParams(SLUG, OTHER_ORDER_NUMBER)),
+      });
+
+      // The page handed the verifier B's token — not A's, and not nothing. If it
+      // passed the wrong token the jar would have said yes and this would leak.
+      expect(mockVerifyOrderAccessCookie).toHaveBeenCalledTimes(1);
+      expect(mockVerifyOrderAccessCookie).toHaveBeenCalledWith(OTHER_TRACKING_TOKEN);
+      expect(mockVerifyOrderAccessCookie).not.toHaveBeenCalledWith(TRACKING_TOKEN);
+
+      const leaves = collectLeafStrings(tree);
       expect(leaves.some((l) => l.includes('Ver seguimiento de la orden'))).toBe(false);
       expect(leaves.some((l) => l.includes('Zapato Premium'))).toBe(false);
+      // R22: the page is NOT gated in full — the public verdict still renders.
+      expect(leaves.some((l) => l.includes('Comprobante Oficial Verificado'))).toBe(true);
+    });
+  });
+
+  // The gate used to be recomputed inline at four sites in the page. A delete at
+  // the render site left the suite green, so these cases pin the ONE binding and
+  // the ONE cookie call that the four consumers now share.
+  describe('Gated-surface gate — single resolver binding', () => {
+    it('calls verifyOrderAccessCookie exactly once per render, with this order token', async () => {
+      mockVerifyOrderAccessCookie.mockResolvedValue(true);
+
+      await invokePage(buildParams());
+
+      expect(mockVerifyOrderAccessCookie).toHaveBeenCalledTimes(1);
+      expect(mockVerifyOrderAccessCookie).toHaveBeenCalledWith(TRACKING_TOKEN);
+    });
+
+    it('never calls the cookie verifier when the row carries no trackingToken', async () => {
+      const tokenless = { ...PAYMENT_ROW_PUBLIC, trackingToken: null };
+      mockFindFirstPaymentQa.mockImplementation(async (args: any) =>
+        applyProjection(tokenless, args),
+      );
+      mockVerifyOrderAccessCookie.mockResolvedValue(true);
+
+      await invokePage(buildParams());
+
+      expect(mockVerifyOrderAccessCookie).not.toHaveBeenCalled();
+    });
+
+    it('both gated surfaces toggle together on the one boolean', async () => {
+      mockVerifyOrderAccessCookie.mockResolvedValue(true);
+      const granted = collectLeafStrings(
+        await OrderVerificationPage({ params: Promise.resolve(buildParams()) }),
+      );
+      expect(granted.some((l) => l.includes('Zapato Premium'))).toBe(true);
+      expect(granted.some((l) => l.includes('Ver seguimiento de la orden'))).toBe(true);
+
+      mockVerifyOrderAccessCookie.mockResolvedValue(false);
+      const denied = collectLeafStrings(
+        await OrderVerificationPage({ params: Promise.resolve(buildParams()) }),
+      );
+      expect(denied.some((l) => l.includes('Zapato Premium'))).toBe(false);
+      expect(denied.some((l) => l.includes('Ver seguimiento de la orden'))).toBe(false);
     });
   });
 
@@ -401,25 +541,86 @@ describe('OrderVerificationPage — R22 surface split + R23 throttle', () => {
     });
   });
 
-  describe('R23 — (IP, orderNumber) rate limit', () => {
-    it('rate limit key comes from headers() and is (IP, orderNumber)', async () => {
-      mockVerifyOrderAccessCookie.mockResolvedValue(false);
+  describe('R23 — dual-key throttle: (IP, orderNumber) + coarse per-IP', () => {
+    // The old case here asserted `expect(true).toBe(true)` with a comment
+    // admitting it needed "rate limit store control". The store is reachable —
+    // `resetRateLimit` is exported and the limiter is real under the spy — so
+    // there was never a reason to ship a placeholder for R23 §3.
+
+    it('the throttle identity comes from headers(): two header IPs are independent', async () => {
+      exhaustCoarseBudget(CLIENT_IP);
 
       await invokePage(buildParams());
 
-      // The rate limit check should have been called with the right key
-      // We can't easily spy on the internal checkRateLimit call from the page,
-      // but we can verify the headers mock was called
       expect(mockHeaders).toHaveBeenCalled();
+      // CLIENT_IP is out of budget, so the page must not reach the database.
+      expect(mockFindFirstBusiness).not.toHaveBeenCalled();
+
+      // A different x-forwarded-for is a different bucket, and is served.
+      mockHeaders.mockResolvedValue({
+        get: (name: string) => (name === 'x-forwarded-for' ? OTHER_IP : null),
+      });
+      await invokePage(buildParams());
+
+      expect(mockFindFirstBusiness).toHaveBeenCalled();
     });
 
-    it('exhausted budget renders neutral order-independent state for both existing and non-existent orders', async () => {
-      // This test is hard to do without controlling the rate limit store
-      // The key assertion is that the page handles 429 gracefully
-      // We'll test the 429 path by mocking the rate limit to be exhausted
-      // For now, verify the page structure handles the neutral state
-      // This is more of an integration test that would need a controlled limiter
-      expect(true).toBe(true); // Placeholder - full test requires rate limit store control
+    it('an exhausted budget renders the SAME neutral state for an existing and a non-existent order', async () => {
+      exhaustCoarseBudget(CLIENT_IP);
+
+      // (a) an order that EXISTS.
+      const existing = await OrderVerificationPage({ params: Promise.resolve(buildParams()) });
+      const existingJson = JSON.stringify(existing);
+
+      // (b) an order that does NOT exist. The stub is irrelevant — the throttle
+      // refuses before any query runs, which is precisely what makes the two
+      // responses comparable.
+      mockFindFirstPaymentQa.mockResolvedValueOnce(null);
+      const missing = await OrderVerificationPage({
+        params: Promise.resolve(buildParams(SLUG, 'ORD-DOES-NOT-EXIST')),
+      });
+      const missingJson = JSON.stringify(missing);
+
+      // Byte-identical output: order existence is not inferable from a
+      // throttled response (R23 §3).
+      expect(existingJson).toBe(missingJson);
+
+      const leaves = collectLeafStrings(existing);
+      expect(leaves.some((l) => l.includes('Demasiados intentos'))).toBe(true);
+
+      // And nothing order-specific survives in it.
+      for (const leak of ['****5678', 'S/ 150.00', ORDER_NUMBER, 'Zapato Premium']) {
+        expect(existingJson).not.toContain(leak);
+      }
+      expect(existingJson).not.toContain('Ver seguimiento de la orden');
+    });
+
+    it('rotating orderNumber from one IP cannot escape the throttle (page level)', async () => {
+      exhaustCoarseBudget(CLIENT_IP);
+      // Re-open the budget so the rotation case itself starts clean, then walk
+      // order numbers the way the original bypass probe did.
+      clearVerifyThrottle(CLIENT_IP);
+      mockFindFirstPaymentQa.mockResolvedValue(null);
+
+      let served = 0;
+      for (let i = 0; i < COARSE_MAX + 5; i += 1) {
+        await invokePage(buildParams(SLUG, `ROT-${i}`));
+        if (mockFindFirstBusiness.mock.calls.length > 0) served += 1;
+        mockFindFirstBusiness.mockClear();
+      }
+
+      // Every request carried a DIFFERENT order number, so a per-(IP,
+      // orderNumber) bucket alone would have served all COARSE_MAX + 5.
+      expect(served).toBe(COARSE_MAX);
+    });
+
+    it('an under-budget request is served normally and reaches the database', async () => {
+      clearVerifyThrottle(CLIENT_IP);
+
+      const tree = await OrderVerificationPage({ params: Promise.resolve(buildParams()) });
+
+      expect(mockFindFirstBusiness).toHaveBeenCalled();
+      expect(collectLeafStrings(tree).some((l) => l.includes('Comprobante'))).toBe(true);
     });
   });
 
@@ -457,11 +658,10 @@ describe('OrderVerificationPage — R22 surface split + R23 throttle', () => {
     });
   });
 
-  describe('?dni= prefill (B.9)', () => {
-    it('pre-fills DNI form but does NOT auto-submit when ?dni= is present', async () => {
-      // This is tested at the OrderAuthGate level, not the verify page level
-      // The verify page doesn't handle ?dni= directly
-      expect(true).toBe(true);
-    });
-  });
+  // The `?dni=` prefill case that used to live here was a second
+  // `expect(true).toBe(true)` placeholder. It asserted nothing, it described
+  // behaviour this page does not have, and `?dni=` handling belongs to slice C
+  // (PR #210) — R24 in fact FORBIDS consuming the parameter as a credential or
+  // demoting it to a prefill. A fake assertion is worse than no case: it reads
+  // like coverage. Deleted rather than implemented here.
 });

@@ -21,7 +21,11 @@
 import { POST } from '@/app/api/order/lookup/route';
 import {
   buildOrderAccessIdentifier,
+  buildOrderVerifyIdentifier,
+  buildOrderVerifyIpIdentifier,
   checkOrderAccessRateLimitFor,
+  checkOrderVerifyRateLimitFor,
+  checkOrderVerifyRateLimits,
   resetOrderAccessRateLimit,
 } from '@/lib/orderAccessRateLimit';
 import { RATE_LIMITS, type checkRateLimit as CheckRateLimit } from '@/lib/rateLimit';
@@ -302,5 +306,202 @@ describe('POST /api/order/lookup — pre-zod auth-intent limit', () => {
 
     expect(otherIp.status).toBe(200);
     expect(mockCheckRateLimit).toHaveBeenLastCalledWith('198.51.100.77:dni:' + DNI, AUTH_LIMIT);
+  });
+});
+
+// ── Suite: verify page dual-key throttle (R23 fine bucket + coarse per-IP backstop) ──
+//
+// The single `(IP, orderNumber)` bucket R23 mandates is TRIVIALLY BYPASSED, and
+// this was proven with executed probes rather than argued: an attacker who
+// rotates `orderNumber` composes a brand-new key on every request, so 200/200
+// requests were served with the budget never once exhausted. Nothing about the
+// fine bucket can fix that — its key CONTAINS the attacker-controlled segment.
+//
+// The coarse per-IP bucket is the fix: its key does NOT contain `orderNumber`,
+// so rotating it changes nothing. Both buckets live in the SAME in-memory Map
+// (`rateLimit.ts:32`), so the pair below must also be incapable of colliding —
+// which is what the behavioural cases at the bottom pin, because a collision
+// double-charges one counter and silently halves both ceilings.
+//
+// Every case burns its OWN ip: the real store is module scope and survives the
+// whole file, so a shared bucket would let a case pass for the wrong reason.
+
+describe('verify page throttle — dual-key buckets', () => {
+  /** RATE_LIMITS.orderVerifyIp — 30 requests / 60s. Pinned so the ceiling is real. */
+  const COARSE_MAX = RATE_LIMITS.orderVerifyIp.maxRequests;
+
+  beforeEach(() => {
+    mockCheckRateLimit.mockImplementation(realLimiter.current!);
+  });
+
+  test('the coarse per-IP budget is pinned: 30 requests / 60s', () => {
+    // Documented decision, asserted so it cannot be quietly lowered into
+    // lockout or raised back into uselessness.
+    expect(RATE_LIMITS.orderVerifyIp).toEqual({ windowMs: 60_000, maxRequests: 30 });
+  });
+
+  test('the coarse bucket is keyed by IP alone — no order number in the key', () => {
+    const identifier = buildOrderVerifyIpIdentifier(IP);
+
+    expect(identifier).toBe(`order-verify:ip:${IP}`);
+    // The `:order:` discriminator is what marks a per-order bucket. Its absence
+    // is the property that survives order-number rotation.
+    expect(identifier).not.toContain(':order:');
+  });
+
+  test('the coarse key is distinct from the per-order key for any orderNumber', () => {
+    const coarse = buildOrderVerifyIpIdentifier(IP);
+
+    for (const orderNumber of ['', 'x', '__missing__', 'ip', 'order', IP, 'y'.repeat(200)]) {
+      expect(buildOrderVerifyIdentifier(IP, orderNumber)).not.toBe(coarse);
+    }
+  });
+
+  // The preceding case only varies `orderNumber`. The IP is attacker-controlled
+  // too (`x-forwarded-for`, leftmost hop), so a ':'-bearing IP is the actual
+  // injection vector: it is the only way to shift a discriminator out of its
+  // slot. `ORDER_VERIFY_KEY_PREFIX` sits in position 1 precisely to make that
+  // unrepresentable, and nothing else in the file proves it.
+  test('no coarse/fine collision for hostile input, in either key', () => {
+    // Every segment here is chosen to alias SOME discriminator position.
+    const segments = [
+      'a',
+      'A:ip',
+      'A:order',
+      'a:order',
+      'ip',
+      'order',
+      'order-verify',
+      '',
+      '__missing__',
+      IP,
+      // Joined, not a literal: sonarjs/no-hardcoded-ip flags IP literals inside
+      // collection expressions (same workaround as CLIENT_IP in the page suite).
+      ['1', '2', '3', '4'].join('.'),
+      'x',
+      'y:ip',
+      'ip:order',
+      'order:ip',
+    ];
+
+    const coarseKeys = new Set(segments.map((ip) => buildOrderVerifyIpIdentifier(ip)));
+    const collisions: string[] = [];
+
+    for (const fineIp of segments) {
+      for (const orderNumber of segments) {
+        const fineKey = buildOrderVerifyIdentifier(fineIp, orderNumber);
+        // The real store key appends `:${windowMs}`, so compare full store keys
+        // for BOTH configs — that is what actually shares one Map.
+        for (const coarseIp of segments) {
+          const coarseKey = `${buildOrderVerifyIpIdentifier(coarseIp)}:${RATE_LIMITS.orderVerifyIp.windowMs}`;
+          if (`${fineKey}:${RATE_LIMITS.storefront.windowMs}` === coarseKey) {
+            collisions.push(`ip=${fineIp} order=${orderNumber} coarseIp=${coarseIp}`);
+          }
+        }
+      }
+    }
+
+    expect(coarseKeys.size).toBeGreaterThan(0);
+    expect(collisions).toEqual([]);
+  });
+
+  // Control for the case above: prove the search is capable of finding a
+  // collision, i.e. that the empty result is a real property of the prefix-first
+  // shape and not a vacuous search over segments that can never alias anything.
+  test('the same search DOES collide when the prefix moves to the end', () => {
+    const trailingFine = (ip: string, order: string) => `${ip}:order:${order}:order-verify`;
+    const trailingCoarse = (ip: string) => `${ip}:ip:order-verify`;
+
+    // Attacker sets x-forwarded-for to `A:ip` and browses order number `ip`.
+    const fineKey = trailingFine('A:ip', 'ip');
+    const coarseKey = trailingCoarse('A:ip:order');
+
+    expect(fineKey).toBe(coarseKey);
+    expect(fineKey).toBe('A:ip:order:ip:order-verify');
+  });
+
+  // ── The bypass this suite exists to close ──
+  test('rotating orderNumber from one IP is cut off at the coarse ceiling', () => {
+    const ip = '198.51.100.80';
+    const allowed: boolean[] = [];
+
+    // Every request carries a DIFFERENT order number, so every request would
+    // land in its own fresh per-order bucket. Before the coarse bucket existed
+    // this loop served 200/200; now it must stop.
+    for (let i = 0; i < COARSE_MAX + 5; i += 1) {
+      allowed.push(checkOrderVerifyRateLimits(ip, `ORD-${i}`).allowed);
+    }
+
+    expect(allowed.filter(Boolean)).toHaveLength(COARSE_MAX);
+    expect(allowed.at(-1)).toBe(false);
+  });
+
+  // Collision pin. If the coarse and fine keys ever coincide, ONE request
+  // charges the shared counter TWICE, so the ceiling halves to COARSE_MAX / 2
+  // and this fails. No string-shape assertion can catch that, which is why the
+  // behavioural count is the load-bearing one.
+  test('the coarse ceiling holds at COARSE_MAX whatever order numbers are used', () => {
+    const ip = '198.51.100.81';
+    // Includes the degenerate values that could alias a fine key: the empty
+    // string, the '__missing__' fallback, and the discriminator words.
+    const orderNumbers = ['', '__missing__', 'ORD-1', '#', 'ip', 'order-verify'];
+    const allowed: boolean[] = [];
+
+    for (let i = 0; i < COARSE_MAX + 5; i += 1) {
+      allowed.push(checkOrderVerifyRateLimits(ip, orderNumbers[i % orderNumbers.length]).allowed);
+    }
+
+    expect(allowed.filter(Boolean)).toHaveLength(COARSE_MAX);
+    expect(allowed.at(-1)).toBe(false);
+  });
+
+  // Ordering pin: coarse is charged FIRST, so a coarse rejection must not have
+  // already consumed the per-order budget. Charging fine-first would show
+  // COARSE_MAX + 5 fine charges here instead of COARSE_MAX.
+  test('a coarse rejection never charges the per-(IP, orderNumber) bucket', () => {
+    const ip = '198.51.100.82';
+
+    for (let i = 0; i < COARSE_MAX + 5; i += 1) {
+      checkOrderVerifyRateLimits(ip, `ORD-${i}`);
+    }
+
+    const fineCharges = mockCheckRateLimit.mock.calls.filter((call) =>
+      String(call[0]).includes(':order:'),
+    );
+    expect(fineCharges).toHaveLength(COARSE_MAX);
+  });
+
+  test('a request under both ceilings reports the tighter of the two budgets', () => {
+    const result = checkOrderVerifyRateLimits('198.51.100.83', 'ORD-A');
+
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(COARSE_MAX - 1);
+    expect(result.resetInMs).toBeGreaterThan(0);
+  });
+
+  test('the coarse bucket is per-IP: a different IP is unaffected', () => {
+    const ip = '198.51.100.84';
+    for (let i = 0; i < COARSE_MAX; i += 1) {
+      checkOrderVerifyRateLimits(ip, `ORD-${i}`);
+    }
+    expect(checkOrderVerifyRateLimits(ip, 'ORD-LAST').allowed).toBe(false);
+
+    // Same order number, different egress: still served.
+    expect(checkOrderVerifyRateLimits('198.51.100.85', 'ORD-LAST').allowed).toBe(true);
+  });
+
+  // The R23 per-(IP, orderNumber) bucket is spec-mandated and MUST keep working
+  // on its own, so the coarse bucket cannot be swapped in as a replacement.
+  test('the R23 per-(IP, orderNumber) bucket still charges on its own', () => {
+    const ip = '198.51.100.86';
+    const storefrontMax = RATE_LIMITS.storefront.maxRequests;
+
+    for (let i = 0; i < storefrontMax; i += 1) {
+      checkOrderVerifyRateLimitFor(ip, 'ORD-SAME');
+    }
+
+    expect(checkOrderVerifyRateLimitFor(ip, 'ORD-SAME').allowed).toBe(false);
+    // A sibling order from the same IP has its own fine bucket.
+    expect(checkOrderVerifyRateLimitFor(ip, 'ORD-SIBLING').allowed).toBe(true);
   });
 });

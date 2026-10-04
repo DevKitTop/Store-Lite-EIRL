@@ -1,10 +1,8 @@
 import { db } from '@/core/database/client';
 import { businesses, payments, products } from '@/core/database/schema';
-import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
-import {
-  buildOrderVerifyIdentifier,
-  checkOrderVerifyRateLimitFor,
-} from '@/lib/orderAccessRateLimit';
+import { checkOrderVerifyRateLimits } from '@/lib/orderAccessRateLimit';
+import { resolveOrderVerificationAccess } from '@/lib/orderVerificationAccess';
+import { getClientIdentifierFromHeaders } from '@/lib/rateLimit';
 import { and, eq, inArray } from 'drizzle-orm';
 import { headers } from 'next/headers';
 import Link from 'next/link';
@@ -24,7 +22,25 @@ function formatCurrency(amount: string | number, currency = 'PEN'): string {
 
 /**
  * Public columns for the verification page verdict (Q_A).
- * Excludes all PII and sensitive fields per R22.
+ *
+ * The projection boundary is NOT "no PII" — it is "no PII that is never
+ * rendered". Three things are deliberately in here:
+ *
+ *   * `buyerDni` — R22 REQUIRES the public verdict to carry a masked DNI last-4
+ *     (`maskDni`, below). Masking needs the value, so the column is selected and
+ *     only the mask reaches the markup. The raw DNI is never rendered; the
+ *     anonymous render is pinned by `orderVerificationPage.test.ts`.
+ *   * `trackingToken` — selected SERVER-LOCALLY only, per design.md D2
+ *     ("Q_A returns trackingToken (server-local only)"). It is needed to derive
+ *     the cookie name `order_access_{token}`, which cannot be named before the row
+ *     is read. The gate is on RENDERING the link, not on selecting the column:
+ *     the value stays in this module, is never returned, never logged, and never
+ *     passed to a component prop (D2 leak table).
+ *   * `id` — carried through for the Q_A/Q_B fallback merge below.
+ *
+ * The genuine MUST-NOT-be-selected boundary is `buyerEmail` and `ticketUrl`
+ * (R22): neither is rendered on any path, so selecting them would put data in
+ * the query result that no gate governs.
  */
 const PUBLIC_VERIFICATION_COLUMNS = {
   id: true,
@@ -78,13 +94,19 @@ export default async function OrderVerificationPage({
   const { slug, orderNumber } = await params;
   const cleanOrderNumber = orderNumber.startsWith('#') ? orderNumber.slice(1) : orderNumber;
 
-  // ── R23: Rate limit keyed by (IP, orderNumber) ─────────────────────
-  // Runs BEFORE any database access. Key derived from headers().
-  const clientIp = buildOrderVerifyIdentifier(
-    (await headers()).get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown',
-    cleanOrderNumber,
-  );
-  const rateLimit = checkOrderVerifyRateLimitFor(clientIp, cleanOrderNumber);
+  // ── R23: Rate limit keyed by (IP, orderNumber) + coarse per-IP backstop ──
+  // Runs BEFORE any database access, so a refused request costs nothing and
+  // cannot leak order existence. Identity comes from headers() because a Server
+  // Component has no NextRequest; `getClientIdentifierFromHeaders` is the shared
+  // resolution so this page cannot drift from proxy.ts on hop priority.
+  //
+  // `checkOrderVerifyRateLimits` charges BOTH buckets atomically — the spec's
+  // per-(IP, orderNumber) bucket AND a coarse per-IP bucket that contains no order
+  // number. The second one is what stops enumeration: rotating `orderNumber`
+  // mints a fresh fine bucket every request, which measured 200/200 served. The
+  // RAW ip is passed here — this call composes the key itself.
+  const clientIp = getClientIdentifierFromHeaders(await headers());
+  const rateLimit = checkOrderVerifyRateLimits(clientIp, cleanOrderNumber);
   if (!rateLimit.allowed) {
     // Render neutral throttled state instead of 429 to preserve printed-ticket UX
     return renderThrottledState();
@@ -115,10 +137,10 @@ export default async function OrderVerificationPage({
   }
 
   // ── 3. Cookie gate for gated surface ────────────────────────────────
-  let hasFullAccess = false;
-  if (trackingToken) {
-    hasFullAccess = await verifyOrderAccessCookie(trackingToken);
-  }
+  // ONE resolver, ONE binding. Every gated site below (Q_B read, cart build,
+  // cart render, tracking link) reads `hasFullAccess` — none of them re-derives
+  // it, and `verifyOrderAccessCookie` is not called anywhere in this module.
+  const hasFullAccess = await resolveOrderVerificationAccess(trackingToken);
 
   // ── 4. Q_B: Gated surface read (only if cookie verifies) ────────────
   let paymentQb:
@@ -137,7 +159,9 @@ export default async function OrderVerificationPage({
       }
     | null
     | undefined = null;
-  if (hasFullAccess && trackingToken) {
+  // `hasFullAccess === true` already implies a non-empty `trackingToken`: the
+  // resolver returns false without one. No second guard needed here.
+  if (hasFullAccess) {
     paymentQb = await db.query.payments.findFirst({
       where: and(eq(payments.businessId, business.id), eq(payments.orderNumber, cleanOrderNumber)),
       columns: GATED_VERIFICATION_COLUMNS,
