@@ -80,3 +80,59 @@ export function checkOrderAccessRateLimit(
 ): OrderAccessRateLimitResult {
   return checkOrderAccessRateLimitFor(getClientIdentifier(request), rawBody);
 }
+
+// =====================================================
+// R23 — RATE LIMIT FOR VERIFY PAGE (IP, orderNumber)
+// =====================================================
+// The verify page is a Server Component with no `NextRequest`, so the client
+// identity MUST come from `await headers()`. The key is `(IP, orderNumber)`
+// through the established primitive `RATE_LIMITS.storefront` (60/min).
+// No second counter store is introduced.
+// =====================================================
+
+/** Bounds the limiter store key — `orderNumber` is attacker-controlled from the URL. */
+const MAX_ORDER_NUMBER_KEY_LENGTH = 64;
+
+/**
+ * Composes the limiter identifier for a verify page request.
+ * `orderNumber` is read from the URL params and truncated to 64 chars.
+ */
+export function buildOrderVerifyIdentifier(clientIp: string, orderNumber: string): string {
+  const segment =
+    typeof orderNumber === 'string' && orderNumber.length > 0
+      ? orderNumber.slice(0, MAX_ORDER_NUMBER_KEY_LENGTH)
+      : '__missing__';
+
+  return `${clientIp}:order:${segment}`;
+}
+
+/** Result of a verify page rate limit check — reuses the shared primitive's shape. */
+export interface OrderVerifyRateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  resetInMs: number;
+}
+
+/**
+ * Counts a verify page request against the `(clientIp, orderNumber)` bucket
+ * using the shared `RATE_LIMITS.storefront` primitive (60/min).
+ * No second counter store is introduced.
+ */
+export function checkOrderVerifyRateLimitFor(
+  clientIp: string,
+  orderNumber: string,
+): OrderVerifyRateLimitResult {
+  return checkRateLimit(buildOrderVerifyIdentifier(clientIp, orderNumber), RATE_LIMITS.storefront);
+}
+
+/**
+ * Counts the request against the `(IP, orderNumber)` bucket.
+ * `NextRequest`-only entry point — delegates so the identifier is composed in
+ * exactly one place.
+ */
+export function checkOrderVerifyRateLimit(
+  request: NextRequest,
+  orderNumber: string,
+): OrderVerifyRateLimitResult {
+  return checkOrderVerifyRateLimitFor(getClientIdentifier(request), orderNumber);
+}
