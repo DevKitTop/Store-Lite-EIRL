@@ -113,7 +113,7 @@ describe('useCulqiCallback', () => {
     mockChargePayment.mockResolvedValue({
       success: true,
       charge: { id: 'ch_123', status: 'paid' },
-      payment: { trackingToken: 'tt_abc' },
+      payment: { trackingToken: 'tt_abc', orderNumber: 'ORD-TEST12345678' },
     });
 
     const { useCulqiCallback } = await import('@/features/payment/hooks/useCulqiCallback');
@@ -231,7 +231,7 @@ describe('useCulqiCallback', () => {
     mockChargePayment.mockResolvedValue({
       success: true,
       charge: { id: 'ch_456', status: 'paid' },
-      payment: { trackingToken: 'tt_def' },
+      payment: { trackingToken: 'tt_def', orderNumber: 'ORD-TEST12345678' },
     });
 
     const { useCulqiCallback } = await import('@/features/payment/hooks/useCulqiCallback');
@@ -265,7 +265,7 @@ describe('useCulqiCallback', () => {
     mockChargePayment.mockResolvedValue({
       success: true,
       charge: { id: 'ch_789', status: 'paid' },
-      payment: { trackingToken: 'tt_ghi' },
+      payment: { trackingToken: 'tt_ghi', orderNumber: 'ORD-TEST12345678' },
     });
 
     const { useCulqiCallback } = await import('@/features/payment/hooks/useCulqiCallback');
@@ -290,6 +290,140 @@ describe('useCulqiCallback', () => {
         'payment_completed',
         expect.objectContaining({ method: 'Yape' }),
       );
+    });
+  });
+
+  // ============================================================
+  // W-P4: Client drops local generation, consumes server orderNumber
+  // ============================================================
+
+  describe('order number integrity (W-P4)', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+
+      delete (window as any).Culqi;
+      delete (window as any).culqi;
+    });
+
+    afterEach(() => {
+      delete (window as any).Culqi;
+      delete (window as any).culqi;
+    });
+
+    test('P4-1/P4-8: token flow does NOT send metadata.orderNumber; onOrderPaid receives server-generated orderNumber', async () => {
+      // This test will FAIL until useCulqiCallback:
+      // 1. Removes local orderNumber generation
+      // 2. Does NOT include orderNumber in metadata sent to chargePayment
+      // 3. Reads paymentResult.payment.orderNumber from server response
+      // 4. Passes server orderNumber to onOrderPaid and analytics
+
+      const serverOrderNumber = 'ORD-3F9A2B1C4D5E';
+      mockChargePayment.mockResolvedValue({
+        success: true,
+        charge: { id: 'ch_123', status: 'paid' },
+        payment: { trackingToken: 'tt_abc', orderNumber: serverOrderNumber },
+      });
+
+      const { useCulqiCallback } = await import('@/features/payment/hooks/useCulqiCallback');
+      const options = createDefaultOptions();
+      renderHook(() => useCulqiCallback(options));
+
+      (window as any).Culqi = {
+        token: { id: 'tok_test_abc', type: 'card' },
+        close: vi.fn(),
+      };
+
+      await act(async () => {
+        await (window.culqi as () => Promise<void>)();
+      });
+
+      // Verify chargePayment was called
+      await waitFor(() => {
+        expect(mockChargePayment).toHaveBeenCalled();
+      });
+
+      // Verify NO orderNumber in the metadata sent to chargePayment
+      const chargeCall = mockChargePayment.mock.calls[0][0] as Record<string, unknown>;
+      expect(chargeCall.metadata).not.toHaveProperty('orderNumber');
+
+      // Verify onOrderPaid received the SERVER-generated orderNumber
+      await waitFor(() => {
+        expect(options.onOrderPaid).toHaveBeenCalledWith(
+          expect.objectContaining({
+            orderNumber: serverOrderNumber,
+            paymentMethod: 'Tarjeta',
+          }),
+        );
+      });
+
+      // Verify analytics uses server orderNumber
+      await waitFor(() => {
+        expect(mockPosthogCapture).toHaveBeenCalledWith(
+          'order_created',
+          expect.objectContaining({ orderId: serverOrderNumber }),
+        );
+        expect(mockPosthogCapture).toHaveBeenCalledWith(
+          'payment_completed',
+          expect.objectContaining({ paymentId: 'ch_123' }),
+        );
+      });
+    });
+
+    test('P4-1/P4-8: order flow (paid) does NOT send metadata.orderNumber; onOrderPaid receives server orderNumber', async () => {
+      const serverOrderNumber = 'ORD-A1B2C3D4E5F6';
+      mockChargePayment.mockResolvedValue({
+        success: true,
+        charge: { id: 'ch_456', status: 'paid' },
+        payment: { trackingToken: 'tt_def', orderNumber: serverOrderNumber },
+      });
+
+      const { useCulqiCallback } = await import('@/features/payment/hooks/useCulqiCallback');
+      const options = createDefaultOptions();
+      renderHook(() => useCulqiCallback(options));
+
+      (window as any).Culqi = {
+        order: {
+          id: 'ord_culqi_paid',
+          status: 'paid',
+          amount: 50000,
+        },
+        close: vi.fn(),
+      };
+
+      await act(async () => {
+        await (window.culqi as () => Promise<void>)();
+      });
+
+      // Verify chargePayment was called
+      await waitFor(() => {
+        expect(mockChargePayment).toHaveBeenCalled();
+      });
+
+      // Verify NO orderNumber in the metadata sent to chargePayment
+      const chargeCall = mockChargePayment.mock.calls[0][0] as Record<string, unknown>;
+      expect(chargeCall.metadata).not.toHaveProperty('orderNumber');
+
+      // Verify onOrderPaid received the SERVER-generated orderNumber
+      await waitFor(() => {
+        expect(options.onOrderPaid).toHaveBeenCalledWith(
+          expect.objectContaining({
+            orderNumber: serverOrderNumber,
+            paymentMethod: 'Tarjeta',
+          }),
+        );
+      });
+
+      // Verify analytics uses server orderNumber
+      await waitFor(() => {
+        expect(mockPosthogCapture).toHaveBeenCalledWith(
+          'order_created',
+          expect.objectContaining({ orderId: serverOrderNumber }),
+        );
+        expect(mockPosthogCapture).toHaveBeenCalledWith(
+          'payment_completed',
+          expect.objectContaining({ paymentId: 'ord_culqi_paid' }),
+        );
+      });
     });
   });
 });

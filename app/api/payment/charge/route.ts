@@ -16,6 +16,7 @@ import {
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { CulqiReadError, getCulqiOrder, isCulqiOrderPaid } from '@/core/payments/culqiOrders';
 import { completeIdempotencyKey, reserveIdempotencyKey } from '@/core/payments/idempotency';
+import { generateOrderNumber } from '@/core/payments/orderNumber';
 import { paymentRateLimiter } from '@/core/payments/rateLimiter';
 import { generateTrackingToken } from '@/core/utils/trackingToken';
 import { validateAmount } from '@/features/billing/validateAmount';
@@ -500,101 +501,144 @@ export async function POST(request: Request) {
       }
     }
 
-    // 🔥 ATOMICITY: Transacción de Base de Datos
-    const result = await db.transaction(
-      // eslint-disable-next-line complexity
-      async (tx) => {
-        // 4. Guardar Pago
+    // 🔥 ATOMICITY: Transacción de Base de Datos con reintento por conflicto único
+    // El reintento debe envolver TODA la transacción (no solo el INSERT) porque
+    // una violación de unique constraint (23505) aborta la transacción completa.
+    // Máximo 3 intentos, regenerando orderNumber en cada reintento.
+    const MAX_RETRY_ATTEMPTS = 3;
+    let result: typeof payments.$inferSelect;
+    let lastError: Error | null = null;
 
-        // Mapear tipo de courier
-        let shippingType: 'agencia' | 'domicilio' | 'recojo';
-        if (rawShipping.courier === 'urbano_agencia') {
-          shippingType = 'agencia';
-        } else if (rawShipping.courier === 'urbano_domicilio') {
-          shippingType = 'domicilio';
-        } else {
-          shippingType = 'recojo';
+    for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+      try {
+        // Generar orderNumber del lado del servidor en cada intento
+        // (si el intento anterior falló por 23505, este será un valor nuevo)
+        const serverOrderNumber = generateOrderNumber();
+
+        // Preparar metadata sin el orderNumber del cliente (P4-1: cliente no controla order_number)
+        const { orderNumber: _clientOrderNumber, ...metadataWithoutOrderNumber } = metadata || {};
+
+        result = await db.transaction(
+          // eslint-disable-next-line complexity
+          async (tx) => {
+            // 4. Guardar Pago
+
+            // Mapear tipo de courier
+            let shippingType: 'agencia' | 'domicilio' | 'recojo';
+            if (rawShipping.courier === 'urbano_agencia') {
+              shippingType = 'agencia';
+            } else if (rawShipping.courier === 'urbano_domicilio') {
+              shippingType = 'domicilio';
+            } else {
+              shippingType = 'recojo';
+            }
+
+            let pm: 'card' | 'yape';
+            if (isOrderFlow) {
+              pm = 'card';
+            } else if (token?.startsWith('ype_')) {
+              pm = 'yape';
+            } else {
+              pm = 'card';
+            }
+            const culqiChargeId = culqiOrderId || culqiData?.id || null;
+            const culqiRefCode = culqiData?.reference_code || null;
+
+            const [payment] = await tx
+              .insert(payments)
+              .values({
+                businessId,
+                productId,
+                sellerUserId: business.ownerId,
+                amount: String(amount / 100),
+                currency,
+                paymentMethod: pm,
+                culqiChargeId,
+                culqiReferenceCode: culqiRefCode,
+                buyerEmail: email || 'cliente@culqi.com',
+                buyerPhone: rawShipping.phone ?? null,
+                buyerDni: rawShipping.dni ?? null,
+                status: 'paid',
+                orderNumber: serverOrderNumber,
+                shippingType,
+                shippingDepartment: rawShipping.department ?? null,
+                shippingProvince: rawShipping.province ?? null,
+                shippingDistrict: rawShipping.district ?? null,
+                shippingAddress: rawShipping.address ?? null,
+                shippingAgency: rawShipping.agency ?? null,
+                shippingPhone: rawShipping.phone ?? null,
+                shippingReference: rawShipping.reference ?? null,
+                shippingUbigeo: rawShipping.ubigeo ?? null,
+                metadata: {
+                  ...metadataWithoutOrderNumber,
+                  culqiId: culqiChargeId,
+                  ...(customerAuth ? { customerAuth } : {}),
+                },
+                trackingToken: generateTrackingToken(),
+              })
+              .returning();
+
+            // 5b. Si es pago contra orden, marcar la orden como pagada
+            if (culqiOrderId) {
+              const flipped = await tx
+                .update(paymentOrders)
+                .set({ status: 'paid', updatedAt: sql`now()` })
+                .where(
+                  and(
+                    eq(paymentOrders.culqiOrderId, culqiOrderId),
+                    eq(paymentOrders.businessId, businessId),
+                  ),
+                )
+                .returning({ id: paymentOrders.id });
+
+              // Fail closed: a 0-row flip (or an undefined result) means the order we
+              // verified is not the row we would mark paid, so abort the transaction.
+              if (flipped?.length !== 1) {
+                throw new Error('payment_orders flip affected no row');
+              }
+            }
+
+            // 5. Actualizar Stock
+            const cartItems =
+              (metadataWithoutOrderNumber?.cartItems as { id: string; quantity: number }[]) || [];
+            const itemsToUpdate =
+              cartItems.length > 0 ? cartItems : [{ id: productId, quantity: 1 }];
+
+            for (const item of itemsToUpdate) {
+              await tx
+                .update(products)
+                .set({ stock: sql`GREATEST(${products.stock} - ${Math.max(1, item.quantity)}, 0)` })
+                .where(eq(products.id, item.id));
+            }
+
+            return payment;
+          },
+        );
+
+        // Si llegamos aquí, la transacción tuvo éxito
+        break;
+      } catch (error) {
+        lastError = error as Error;
+
+        // Verificar si es un error de violación de unique constraint (PostgreSQL 23505)
+        const pgError = error as { code?: string };
+        if (pgError.code === '23505' && attempt < MAX_RETRY_ATTEMPTS) {
+          // Conflicto de order_number único: reintentar con nuevo valor
+          console.warn(
+            `[payment/charge] Unique constraint violation on attempt ${attempt}, retrying...`,
+          );
+          continue;
         }
 
-        let pm: 'card' | 'yape';
-        if (isOrderFlow) {
-          pm = 'card';
-        } else if (token?.startsWith('ype_')) {
-          pm = 'yape';
-        } else {
-          pm = 'card';
-        }
-        const culqiChargeId = culqiOrderId || culqiData?.id || null;
-        const culqiRefCode = culqiData?.reference_code || null;
+        // Cualquier otro error, o agotados los reintentos: propagar
+        throw error;
+      }
+    }
 
-        const [payment] = await tx
-          .insert(payments)
-          .values({
-            businessId,
-            productId,
-            sellerUserId: business.ownerId,
-            amount: String(amount / 100),
-            currency,
-            paymentMethod: pm,
-            culqiChargeId,
-            culqiReferenceCode: culqiRefCode,
-            buyerEmail: email || 'cliente@culqi.com',
-            buyerPhone: rawShipping.phone ?? null,
-            buyerDni: rawShipping.dni ?? null,
-            status: 'paid',
-            orderNumber: (metadata?.orderNumber as string) ?? null,
-            shippingType,
-            shippingDepartment: rawShipping.department ?? null,
-            shippingProvince: rawShipping.province ?? null,
-            shippingDistrict: rawShipping.district ?? null,
-            shippingAddress: rawShipping.address ?? null,
-            shippingAgency: rawShipping.agency ?? null,
-            shippingPhone: rawShipping.phone ?? null,
-            shippingReference: rawShipping.reference ?? null,
-            shippingUbigeo: rawShipping.ubigeo ?? null,
-            metadata: {
-              ...metadata,
-              culqiId: culqiChargeId,
-              ...(customerAuth ? { customerAuth } : {}),
-            },
-            trackingToken: generateTrackingToken(),
-          })
-          .returning();
-
-        // 5b. Si es pago contra orden, marcar la orden como pagada
-        if (culqiOrderId) {
-          const flipped = await tx
-            .update(paymentOrders)
-            .set({ status: 'paid', updatedAt: sql`now()` })
-            .where(
-              and(
-                eq(paymentOrders.culqiOrderId, culqiOrderId),
-                eq(paymentOrders.businessId, businessId),
-              ),
-            )
-            .returning({ id: paymentOrders.id });
-
-          // Fail closed: a 0-row flip (or an undefined result) means the order we
-          // verified is not the row we would mark paid, so abort the transaction.
-          if (flipped?.length !== 1) {
-            throw new Error('payment_orders flip affected no row');
-          }
-        }
-
-        // 5. Actualizar Stock
-        const cartItems = (metadata?.cartItems as { id: string; quantity: number }[]) || [];
-        const itemsToUpdate = cartItems.length > 0 ? cartItems : [{ id: productId, quantity: 1 }];
-
-        for (const item of itemsToUpdate) {
-          await tx
-            .update(products)
-            .set({ stock: sql`GREATEST(${products.stock} - ${Math.max(1, item.quantity)}, 0)` })
-            .where(eq(products.id, item.id));
-        }
-
-        return payment;
-      },
-    );
+    // Si el bucle terminó sin éxito (no debería pasar por el break, pero TypeScript no lo sabe)
+    if (!result!) {
+      throw lastError ?? new Error('Transaction failed after max retries');
+    }
 
     // ─── Notificar al negocio ───
     // Fire-and-forget: no fallar si la notificación falla

@@ -9,6 +9,7 @@ import { db } from '@/core/database/client';
 import { businesses, businessSettings, paymentOrders } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { completeIdempotencyKey, reserveIdempotencyKey } from '@/core/payments/idempotency';
+import { generateOrderNumber } from '@/core/payments/orderNumber';
 import { validateAmount } from '@/features/billing/validateAmount';
 import { captureEvent } from '@/lib/analytics/capture';
 import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
@@ -156,7 +157,11 @@ export async function POST(request: Request) {
     }
 
     // 2. Build Culqi Order payload
-    const orderNumber = `ORD-${crypto.randomUUID().slice(0, 8)}`;
+    // Use shared generator for Culqi-side label only (P4-8).
+    // This value is NOT written to payments.order_number — it is only the
+    // display label sent to Culqi. The authoritative order_number is generated
+    // at the charge/route.ts insert site.
+    const culqiOrderLabel = generateOrderNumber();
     const now = new Date();
     const expirationDate = new Date(now);
     expirationDate.setDate(expirationDate.getDate() + 3);
@@ -164,8 +169,8 @@ export async function POST(request: Request) {
     const culqiOrderBody: Record<string, unknown> = {
       amount,
       currency_code: currency,
-      description: description || `Orden Store Lite - ${orderNumber}`,
-      order_number: orderNumber,
+      description: description || `Orden Store Lite - ${culqiOrderLabel}`,
+      order_number: culqiOrderLabel,
       client_details: {
         email,
         ...(phone ? { phone } : {}),

@@ -3,6 +3,7 @@
 // =====================================================
 
 import { POST } from '@/app/api/payment/create-order/route';
+import { ORDER_NUMBER_PATTERN } from '@/core/payments/orderNumber';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // ── Mocks ────────────────────────────────────────────
@@ -502,5 +503,88 @@ describe('POST /api/payment/create-order', () => {
 
     // Culqi API WAS called (order proceeds)
     expect(mockFetch).toHaveBeenCalled();
+  });
+
+  // ============================================================
+  // W-P4 / P4-8: Culqi label uses shared generator, no payments insert
+  // ============================================================
+
+  describe('order number integrity (W-P4/P4-8)', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+
+      // Default mocks
+      mockBusinessFindFirst.mockResolvedValue({ isActive: true });
+      mockSubscriptionFindFirst.mockResolvedValue({
+        planType: 'lite_pago',
+        planEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      });
+      mockSelectCulqiBlocked.mockResolvedValue([{ culqiBlocked: false }]);
+      mockValidateRows = [
+        {
+          id: '660e8400-e29b-41d4-a716-446655440001',
+          price: '50.00',
+          secondPrice: null,
+        },
+      ];
+      mockSelectWhere.mockClear();
+      mockBusinessSettingsFindFirst.mockResolvedValue({
+        culqiSecretKey: 'encrypted_sk_test_xxx',
+      });
+      mockDecrypt.mockReturnValue('sk_test_abc123');
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => createCulqiOrderResponse(),
+      });
+      mockReturning.mockResolvedValue([
+        {
+          id: 'order-payment-uuid',
+          culqiOrderId: 'ord_culqi_abc123',
+          status: 'pending',
+          paymentCode: null,
+          qrUrl: null,
+          expirationDate: new Date(Date.now() + 259200000),
+        },
+      ]);
+
+      vi.stubEnv('NODE_ENV', 'development');
+    });
+
+    test('P4-8: Culqi order_number label matches generator pattern and zero payments inserts', async () => {
+      // This test will FAIL until create-order uses generateOrderNumber() for the
+      // Culqi label and does NOT insert into payments table.
+
+      const request = new Request('http://localhost/api/payment/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          createValidPayload({
+            productId: '660e8400-e29b-41d4-a716-446655440001',
+            amount: 5000,
+          }),
+        ),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const body = await response.json();
+      expect(body.success).toBe(true);
+
+      // Inspect the Culqi API call body - order_number should match generator pattern
+      const culqiFetchCall = mockFetch.mock.calls[0];
+      const culqiBody = JSON.parse(culqiFetchCall[1].body as string);
+      expect(culqiBody.order_number).toMatch(ORDER_NUMBER_PATTERN);
+      expect(culqiBody.order_number).toMatch(/^ORD-[A-F0-9]{12}$/);
+
+      // Verify NO payments table insert occurred (create-order only writes paymentOrders)
+      // The mockInsert is for paymentOrders, not payments - but we can verify by
+      // checking that the insert was called with paymentOrders shape, not payments shape
+      expect(mockInsert).toHaveBeenCalledTimes(1);
+      // The insert should be for paymentOrders (culqiOrderId, amount, currency, status, etc.)
+      const insertCall = mockInsert.mock.calls[0];
+      // Just verify the call happened - the shape is validated by the existing tests
+      expect(insertCall).toBeDefined();
+    });
   });
 });

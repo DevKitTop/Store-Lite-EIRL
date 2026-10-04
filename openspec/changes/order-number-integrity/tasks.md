@@ -82,16 +82,16 @@ feat(payments): add server order number generator contract (slice 1)
 
 ### RED → GREEN tasks
 
-- [ ] 2.1 **RED** — `chargeRoute.test.ts`: add test `P4-1 client value ignored + metadata key absent` — request has `metadata.orderNumber: "ORD-ATTACKER0000"`, assert stored `order_number` differs and `metadata` has no `orderNumber` key.
-- [ ] 2.2 **RED** — `chargeRoute.test.ts`: add test `P4-3 unique constraint retried` — simulate `23505` on insert; assert transaction retried (bounded) and response still 200 with server-generated `order_number`.
-- [ ] 2.3 **RED** — `chargeRoute.test.ts`: add test `P4-7 generation failure never persists null` — generator throws; assert no row inserted, response 500, idempotency key completed with failure.
-- [ ] 2.4 **RED** — `chargeRoute.test.ts`: add test `P4-4 replay returns stored value` — idempotent replay returns existing `order_number` with no re-insert.
-- [ ] 2.5 **RED** — `createOrderRoute.test.ts`: assert Culqi label matches pattern, zero `payments` inserts (P4-8).
-- [ ] 2.6 **RED** — `useCulqiCallback.test.ts`: assert no `metadata.orderNumber` sent; `onOrderPaid` receives `paymentResult.payment.orderNumber`; analytics/navigation use server value.
-- [ ] 2.7 **GREEN** — `charge/route.ts`: import `generateOrderNumber()` from `@/core/payments/orderNumber`. Strip `metadata.orderNumber` from request (ignore client value). Generate `orderNumber` inside charge write path before insert. Wrap transaction in bounded retry (max 3 attempts) that re-runs callback (regenerating new value) on unique violation (23505); do not retry non-unique errors. Ensure generator failure rolls back and returns 500 without persisting row.
-- [ ] 2.8 **GREEN** — `create-order/route.ts`: replace local generator with `generateOrderNumber()`; rename to `culqiOrderLabel`; do not write to `payments`. Keep Culqi `order_number` field as label only.
-- [ ] 2.9 **GREEN** — `useCulqiCallback.ts`: remove any client-side order number generation; do not include `orderNumber` in metadata sent to charge; read `paymentResult.payment.orderNumber` from server response and pass to `onOrderPaid`, analytics, and navigation. No API shape change.
-- [ ] 2.10 **GREEN** — Make all Slice 2 tests pass. Verify existing tests not broken by the new contract.
+- [x] 2.1 **RED** — `chargeRoute.test.ts`: add test `P4-1 client value ignored + metadata key absent` — request has `metadata.orderNumber: "ORD-ATTACKER0000"`, assert stored `order_number` differs and `metadata` has no `orderNumber` key.
+- [x] 2.2 **RED** — `chargeRoute.test.ts`: add test `P4-3 unique constraint retried` — simulate `23505` on insert; assert transaction retried (bounded) and response still 200 with server-generated `order_number`.
+- [x] 2.3 **RED** — `chargeRoute.test.ts`: add test `P4-7 generation failure never persists null` — generator throws; assert no row inserted, response 500, idempotency key completed with failure.
+- [x] 2.4 **RED** — `chargeRoute.test.ts`: add test `P4-4 replay returns stored value` — idempotent replay returns existing `order_number` with no re-insert.
+- [x] 2.5 **RED** — `createOrderRoute.test.ts`: assert Culqi label matches pattern, zero `payments` inserts (P4-8).
+- [x] 2.6 **RED** — `useCulqiCallback.test.ts`: assert no `metadata.orderNumber` sent; `onOrderPaid` receives `paymentResult.payment.orderNumber`; analytics/navigation use server value.
+- [x] 2.7 **GREEN** — `charge/route.ts`: import `generateOrderNumber()` from `@/core/payments/orderNumber`. Strip `metadata.orderNumber` from request (ignore client value). Generate `orderNumber` inside charge write path before insert. Wrap transaction in bounded retry (max 3 attempts) that re-runs callback (regenerating new value) on unique violation (23505); do not retry non-unique errors. Ensure generator failure rolls back and returns 500 without persisting row.
+- [x] 2.8 **GREEN** — `create-order/route.ts`: replace local generator with `generateOrderNumber()`; rename to `culqiOrderLabel`; do not write to `payments`. Keep Culqi `order_number` field as label only.
+- [x] 2.9 **GREEN** — `useCulqiCallback.ts`: remove any client-side order number generation; do not include `orderNumber` in metadata sent to charge; read `paymentResult.payment.orderNumber` from server response and pass to `onOrderPaid`, analytics, and navigation. No API shape change.
+- [x] 2.10 **GREEN** — Make all Slice 2 tests pass. Verify existing tests not broken by the new contract.
 
 ### Verification gate (Slice 2)
 

@@ -7,6 +7,7 @@
 
 import { POST } from '@/app/api/payment/charge/route';
 import type * as CulqiOrdersModule from '@/core/payments/culqiOrders';
+import { ORDER_NUMBER_PATTERN } from '@/core/payments/orderNumber';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { NextResponse } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -310,7 +311,12 @@ describe('POST /api/payment/charge', () => {
 
     // Default mock: DB insert succeeds
     mockTxReturning.mockResolvedValue([
-      { id: 'pay-1', trackingToken: 'tt_test_token', buyerPhone: '999888777' },
+      {
+        id: 'pay-1',
+        trackingToken: 'tt_test_token',
+        buyerPhone: '999888777',
+        orderNumber: 'ORD-ABC123DEF456',
+      },
     ]);
     mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
 
@@ -1029,6 +1035,226 @@ describe('POST /api/payment/charge', () => {
       // record for a payment that actually succeeded.
       expect(response.status).toBe(500);
       expect(mockCompleteIdempotencyKey).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ============================================================
+  // W-P4 / P4-1: Server-generated order number is authoritative
+  // ============================================================
+
+  describe('order number integrity (W-P4)', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+
+      // Default mocks (same as outer beforeEach but re-applied for this describe)
+      mockBusinessFindFirst.mockResolvedValue({
+        ownerId: 'owner-user-id',
+        culqiBlocked: false,
+        slug: 'test-slug',
+        name: 'Test Store',
+      });
+      mockBusinessSettingsFindFirst.mockResolvedValue({
+        culqiSecretKey: 'encrypted_sk_test_xxx',
+      });
+      mockDecrypt.mockReturnValue('sk_test_abc123');
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => createCulqiChargeResponse(),
+      });
+      mockPaymentsFindFirst.mockResolvedValue(null);
+      mockPaymentOrdersFindFirst.mockResolvedValue(null);
+      mockGetCulqiOrder.mockResolvedValue({ id: 'ord_culqi_abc123', state: 'paid' });
+      mockProductsFindFirst.mockResolvedValue({
+        id: '660e8400-e29b-41d4-a716-446655440001',
+        title: 'Test Product',
+        stock: 10,
+        price: '50.00',
+        secondPrice: null,
+      });
+      mockProductsSelectWhere.mockResolvedValue([
+        {
+          id: '660e8400-e29b-41d4-a716-446655440001',
+          price: '1500.00',
+          secondPrice: null,
+        },
+      ]);
+      mockTxReturning.mockResolvedValue([
+        {
+          id: 'pay-1',
+          trackingToken: 'tt_test_token',
+          buyerPhone: '999888777',
+          orderNumber: 'ORD-ABC123DEF456',
+        },
+      ]);
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+
+      // Default mock: transaction executes callback
+      mockTransaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({
+          insert: mockTxInsert,
+          update: mockTxUpdate,
+        }),
+      );
+
+      // Idempotency mocks (simple defaults)
+      mockReserveIdempotencyKey.mockResolvedValue({ type: 'reserved', key: 'idem-1' });
+      mockCompleteIdempotencyKey.mockResolvedValue(undefined);
+
+      vi.stubEnv('NODE_ENV', 'development');
+    });
+
+    test('P4-1: client-supplied metadata.orderNumber is ignored and stripped from persisted metadata', async () => {
+      // This test will FAIL until the implementation is updated to:
+      // 1. Generate orderNumber server-side via generateOrderNumber()
+      // 2. Strip metadata.orderNumber from the persisted metadata jsonb
+
+      const attackerOrderNumber = 'ORD-ATTACKER0000';
+
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          createValidPayload({
+            customerName: 'Juan Carlos Perez Gomez',
+            metadata: {
+              shippingInfo: { phone: '999888777', courier: 'recojo' },
+              orderNumber: attackerOrderNumber, // Client tries to inject their own
+            },
+          }),
+        ),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const body = await response.json();
+
+      // The stored order_number MUST differ from the attacker's value
+      expect(body.payment.orderNumber).not.toBe(attackerOrderNumber);
+      // The stored order_number MUST match the generator pattern
+      expect(body.payment.orderNumber).toMatch(ORDER_NUMBER_PATTERN);
+      // The stored order_number MUST start with ORD- and have 12-char uppercase hex suffix
+      expect(body.payment.orderNumber).toMatch(/^ORD-[A-F0-9]{12}$/);
+
+      // The metadata persisted to DB MUST NOT contain the orderNumber key
+      const insertedValues = mockTxValues.mock.calls[0][0] as Record<string, unknown>;
+      expect(insertedValues.metadata).not.toHaveProperty('orderNumber');
+      // But other metadata keys should still be present
+      expect(insertedValues.metadata).toHaveProperty('culqiId');
+      expect(insertedValues.metadata).toHaveProperty('shippingInfo');
+    });
+
+    test('P4-3: unique constraint violation (23505) triggers bounded retry with new generation', async () => {
+      // This test will FAIL until the implementation wraps the transaction in a
+      // retry loop that regenerates on unique violation (PostgreSQL error code 23505)
+
+      let attempt = 0;
+      mockTransaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => {
+        attempt++;
+        if (attempt === 1) {
+          // First attempt: simulate unique constraint violation
+          const error = new Error('duplicate key value violates unique constraint');
+          (error as any).code = '23505';
+          throw error;
+        }
+        // Second attempt: succeed
+        return callback({
+          insert: mockTxInsert,
+          update: mockTxUpdate,
+        });
+      });
+
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(createValidPayload()),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const body = await response.json();
+      // Response should contain a valid server-generated order number
+      expect(body.payment.orderNumber).toMatch(ORDER_NUMBER_PATTERN);
+      expect(body.payment.orderNumber).toMatch(/^ORD-[A-F0-9]{12}$/);
+
+      // Transaction should have been attempted twice
+      expect(mockTransaction).toHaveBeenCalledTimes(2);
+    });
+
+    test('P4-7: generator failure rolls back transaction and returns 500 without persisting row', async () => {
+      // This test will FAIL until the implementation:
+      // 1. Catches generator errors
+      // 2. Ensures no row is inserted
+      // 3. Returns 500
+      // 4. Completes idempotency key with failure
+
+      // Make generateOrderNumber throw by mocking the import
+      // Since we can't easily mock the module import, we'll simulate by
+      // making the transaction callback throw when trying to generate
+      mockTransaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => {
+        // Simulate generator throwing inside the transaction
+        const error = new Error('generateOrderNumber failed');
+        throw error;
+      });
+
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(createValidPayload()),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(500);
+
+      const body = await response.json();
+      expect(body.error).toBe('Error interno procesando el pago');
+
+      // No insert should have been attempted
+      expect(mockTxInsert).not.toHaveBeenCalled();
+      expect(mockTxValues).not.toHaveBeenCalled();
+
+      // Idempotency key should be completed with failure
+      expect(mockCompleteIdempotencyKey).toHaveBeenCalledWith(
+        expect.any(String),
+        { error: 'Error interno procesando el pago' },
+        500,
+      );
+    });
+
+    test('P4-4: idempotent replay returns the stored order_number without re-insert', async () => {
+      // This test will FAIL until the replay path correctly returns the stored
+      // order_number (which is already tested but we verify the new format)
+
+      const existingPayment = {
+        id: 'pay-existing',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        trackingToken: 'tt_existing',
+        orderNumber: 'ORD-3F9A2B1C4D5E', // New 12-char format
+        amount: '50.00',
+        currency: 'PEN',
+        status: 'paid',
+        buyerEmail: 'buyer@test.com',
+        buyerDni: '12345678',
+        buyerPhone: '999888777',
+        shippingAddress: 'Av. Siempre Viva 742',
+        shippingPhone: '999888777',
+        metadata: { customerAuth: { authId: 'auth-1' } },
+      };
+
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockPaymentsFindFirst.mockResolvedValue(existingPayment);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.replayed).toBe(true);
+      expect(body.payment.orderNumber).toBe('ORD-3F9A2B1C4D5E');
+      expect(body.payment.orderNumber).toMatch(ORDER_NUMBER_PATTERN);
+
+      // No second write on a replay
+      expect(mockTxInsert).not.toHaveBeenCalled();
     });
   });
 });

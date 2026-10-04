@@ -29,7 +29,15 @@ export interface ChargePaymentParams {
 
 export interface ChargePaymentResponse {
   success: boolean;
-  payment?: Record<string, unknown>;
+  payment?: {
+    id: string;
+    trackingToken: string;
+    orderNumber: string;
+    amount: string;
+    currency: string;
+    status: string;
+    [key: string]: unknown;
+  };
   charge?: { id: string; status: string; [key: string]: unknown };
   error?: string;
   details?: string;

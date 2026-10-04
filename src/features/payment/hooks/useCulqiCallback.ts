@@ -63,9 +63,12 @@ export interface UseCulqiCallbackOptions {
 }
 
 // ─── Metadata builder ───────────────────────────────────────────────────────
+// NOTE: orderNumber is NO longer included here. The server (charge/route.ts) is
+// the authoritative source for payments.order_number. The client must not send
+// a client-generated value. The server response contains the generated orderNumber
+// in paymentResult.payment.orderNumber.
 
 interface BuildMetadataPayloadParams {
-  orderNumber: string;
   shippingInfo: ShippingInfo;
   cartItems: [CartItem, ...CartItem[]];
   businessAddress?: string;
@@ -73,14 +76,12 @@ interface BuildMetadataPayloadParams {
 }
 
 function buildMetadataPayload({
-  orderNumber,
   shippingInfo,
   cartItems,
   businessAddress,
   businessCity,
 }: BuildMetadataPayloadParams): Record<string, unknown> {
   return {
-    orderNumber,
     dni: shippingInfo.dni,
     cartItems: cartItems.map((item) => ({
       id: item.id,
@@ -150,7 +151,6 @@ export function useCulqiCallback({
     if (order.status === 'paid') {
       // Card payment completed through the order
       const paymentMethod = 'Tarjeta';
-      const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
       onPaymentProcessingChange(true);
       if (window.Culqi?.close) window.Culqi.close();
 
@@ -166,7 +166,6 @@ export function useCulqiCallback({
           productId: primaryProduct.id,
           ...buildCustomerAuthPayload(customerAuth),
           metadata: buildMetadataPayload({
-            orderNumber,
             shippingInfo,
             cartItems,
             businessAddress,
@@ -174,14 +173,20 @@ export function useCulqiCallback({
           }),
         });
 
+        // Server is authoritative for orderNumber (W-P4). Read from response.
+        const serverOrderNumber = paymentResult?.payment?.orderNumber;
+        if (!serverOrderNumber) {
+          throw new Error('Server did not return orderNumber');
+        }
+
         onOrderPaid({
-          orderNumber,
+          orderNumber: serverOrderNumber,
           paymentMethod,
           trackingToken: paymentResult?.payment?.trackingToken as string | undefined,
         });
 
         trackPaymentAnalytics({
-          orderId: orderNumber,
+          orderId: serverOrderNumber,
           paymentId: order.id,
           amount: finalTotal,
           businessSlug: slug,
@@ -221,7 +226,6 @@ export function useCulqiCallback({
 
   async function handleCulqiToken(token: string, tokenType: string): Promise<void> {
     const paymentMethod = tokenType === 'yape' || token.startsWith('ype_') ? 'Yape' : 'Tarjeta';
-    const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
 
     onPaymentProcessingChange(true);
     if (window.Culqi?.close) window.Culqi.close();
@@ -238,7 +242,6 @@ export function useCulqiCallback({
         productId: primaryProduct.id,
         ...buildCustomerAuthPayload(customerAuth),
         metadata: buildMetadataPayload({
-          orderNumber,
           shippingInfo,
           cartItems,
           businessAddress,
@@ -256,14 +259,20 @@ export function useCulqiCallback({
         throw new Error('No se recibió confirmación del pago');
       }
 
+      // Server is authoritative for orderNumber (W-P4). Read from response.
+      const serverOrderNumber = paymentResult?.payment?.orderNumber;
+      if (!serverOrderNumber) {
+        throw new Error('Server did not return orderNumber');
+      }
+
       onOrderPaid({
-        orderNumber,
+        orderNumber: serverOrderNumber,
         paymentMethod,
         trackingToken: paymentResult?.payment?.trackingToken as string | undefined,
       });
 
       trackPaymentAnalytics({
-        orderId: orderNumber,
+        orderId: serverOrderNumber,
         paymentId: paymentResult?.charge?.id ?? token,
         amount: finalTotal,
         businessSlug: slug,
