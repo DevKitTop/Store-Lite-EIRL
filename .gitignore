@@ -100,6 +100,13 @@ opencode.json
 !SOUL.md
 !AGENTS.md
 
+# OpenSpec change artifacts must stay committable, otherwise SDD writes
+# proposal/spec/design/tasks that git silently drops and the PR loses its
+# decision trail.
+# NOTE: openspec/specs/ is owned by PR #206 (chore/openspec-spec-tracking) and
+# deliberately NOT duplicated here - one PR, one concern.
+!openspec/changes/**/*.md
+
 # Explicitly ignore analysis files created in the workspace
 informe_detallado_archivos_grandes.md
 tareas_prs_prioritizadas.md
