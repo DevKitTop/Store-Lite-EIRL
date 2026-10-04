@@ -2,31 +2,34 @@
 // C11 / D2 / R8 — auth-intent rate limit on POST /api/order/lookup
 //
 // The storefront surface `LookupOrderModal.tsx:199` POSTs
-// `{ dni, orderNumber, businessSlug }` with no session, so the endpoint is a
-// guessing oracle: 8-digit DNI + order number → tracking token. The limiter
-// MUST therefore run BEFORE zod, keyed `(IP, dni)` (design.md D2), because:
-//   * keying by IP alone lets one attacker lock out a whole NAT/egress
-//   * keying by dni alone is meaningless — dni is attacker-supplied
-//   * running after zod would mean the brute-forcer pays only for well-formed
-//     guesses, i.e. the limit would never bite
+// `{ dni, orderNumber, businessSlug, trackingToken }` with a signed access cookie,
+// so the endpoint is now gated on the cookie (R21). The limiter runs AFTER the
+// cookie gate, keyed `(paymentId, businessId)` from the verified cookie (10 req/min).
 //
-// `RATE_LIMITS.auth` (10 requests / 15 min, src/lib/rateLimit.ts:25) is the
+// `LOOKUP_RATE_LIMIT` (10 requests / 1 min, src/lib/rateLimit.ts) is the
 // reused primitive; the 429 mirrors `proxy.ts:46-59`.
-//
-// `/api/order/track` is deliberately NOT covered here: it had zero callers
-// once WU1 deleted TrackOrderModal, so it was deleted instead of limited
-// (R7 became a REMOVED requirement, proven by this slice's git diff).
 // =====================================================
 
 import { POST } from '@/app/api/order/lookup/route';
+import { env } from '@/config/env';
+import { orderAccessCookieName, sign } from '@/lib/orderAccessCookie';
 import {
   buildOrderAccessIdentifier,
   checkOrderAccessRateLimitFor,
   resetOrderAccessRateLimit,
 } from '@/lib/orderAccessRateLimit';
-import { RATE_LIMITS, type checkRateLimit as CheckRateLimit } from '@/lib/rateLimit';
+import {
+  RATE_LIMITS,
+  resetRateLimit,
+  type checkRateLimit as CheckRateLimit,
+} from '@/lib/rateLimit';
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+
+// Mock env
+vi.mock('@/config/env', () => ({
+  env: { orderAccessCookieSecret: 'test-secret', orderFlowV2: true },
+}));
 
 // ── Mocks ────────────────────────────────────────────
 // 3 module-level doubles, all of them preserving the real logic that matters:
@@ -37,13 +40,37 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 //     the database" is observable (repo pattern: penaltyStatusRoute.test.ts:31).
 //   * `@/lib/supabase/server` answers the seller self-confirmation probe with an
 //     anonymous session — the storefront case under test.
+//   * `next/headers` cookies mock for minting/verifying cookies
 
-const { mockCheckRateLimit, realLimiter, mockPaymentsFindFirst, mockGetUser } = vi.hoisted(() => ({
-  mockCheckRateLimit: vi.fn(),
-  realLimiter: { current: null as null | typeof CheckRateLimit },
-  mockPaymentsFindFirst: vi.fn(),
-  mockGetUser: vi.fn(),
-}));
+const {
+  mockCheckRateLimit,
+  realLimiter,
+  mockPaymentsFindFirst,
+  mockGetUser,
+  mockFindFirstBusiness,
+  cookieStore,
+  cookiesApi,
+  mockCookiesFn,
+} = vi.hoisted(() => {
+  const cookiesMap = new Map<string, string>();
+  const cookiesApi = {
+    get: (name: string) =>
+      cookiesMap.has(name) ? { name, value: cookiesMap.get(name) as string } : undefined,
+    set: (opts: { name: string; value: string }) => {
+      cookiesMap.set(opts.name, opts.value);
+    },
+  };
+  return {
+    mockCheckRateLimit: vi.fn(),
+    realLimiter: { current: null as null | typeof CheckRateLimit },
+    mockPaymentsFindFirst: vi.fn(),
+    mockGetUser: vi.fn(),
+    mockFindFirstBusiness: vi.fn(),
+    cookieStore: cookiesMap,
+    cookiesApi,
+    mockCookiesFn: vi.fn(),
+  };
+});
 
 vi.mock('@/lib/rateLimit', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -55,9 +82,7 @@ vi.mock('@/core/database/client', () => ({
   db: {
     query: {
       payments: { findFirst: mockPaymentsFindFirst },
-      // The anonymous path never reaches the seller checks, but the route
-      // reaches these tables for authenticated callers — keep them callable.
-      businesses: { findFirst: vi.fn() },
+      businesses: { findFirst: mockFindFirstBusiness },
       businessTeamMembers: { findFirst: vi.fn() },
     },
   },
@@ -67,60 +92,65 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => ({ auth: { getUser: mockGetUser } })),
 }));
 
+vi.mock('next/headers', () => ({
+  cookies: mockCookiesFn,
+  headers: vi.fn(async () => ({ get: () => null })),
+}));
+
+vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+
 // ── Fixtures ─────────────────────────────────────────
 
 const IP = '203.0.113.10';
 const DNI = '12345678';
 const BUSINESS_SLUG = 'acme-store';
-/** RATE_LIMITS.auth — 10 requests / 15 min. Pinned so the spec ceiling is real. */
-const AUTH_MAX = 10;
-
-// The real limiter's store lives in module scope, so its buckets survive every
-// test in this file for the whole 15-min window. Each route test therefore
-// burns its OWN ip bucket — otherwise a test would inherit an exhausted one and
-// pass (or fail) for the wrong reason.
-const IP_UNDER_LIMIT = '203.0.113.20';
-const IP_CEILING = '203.0.113.30';
-const IP_PRE_ZOD = '203.0.113.40';
-const IP_NO_DNI = '203.0.113.50';
-const IP_OTHER_DNI = '203.0.113.60';
-const IP_OTHER_IP = '203.0.113.70';
-
-// The route must reuse the existing bucket config, not a bespoke one; naming it
-// here pins that wiring in the assertions below.
-const AUTH_LIMIT = RATE_LIMITS.auth;
+const TRACKING_TOKEN = 'tok-abc123';
+const PAYMENT_ID = 'pay-1';
+const BUSINESS_ID = 'biz-1';
+/** LOOKUP_RATE_LIMIT — 10 requests / 1 min. Pinned so the spec ceiling is real. */
+const LOOKUP_MAX = 10;
 
 const PAYMENT = {
-  trackingToken: 'tok-abc123',
-  businessId: 'biz-1',
+  id: PAYMENT_ID,
+  trackingToken: TRACKING_TOKEN,
+  businessId: BUSINESS_ID,
+  orderNumber: '1001',
   business: { slug: BUSINESS_SLUG },
+  buyerDni: DNI,
 };
 
-function validBody(dni: string = DNI) {
-  return { dni, orderNumber: '#1001', businessSlug: BUSINESS_SLUG };
+function validBody(trackingToken = TRACKING_TOKEN, orderNumber = '#1001', dni = DNI) {
+  return { dni, orderNumber, businessSlug: BUSINESS_SLUG, trackingToken };
 }
 
-function lookupRequest(body: unknown = validBody(), ip: string = IP): NextRequest {
+function lookupRequest(body: unknown = validBody(), cookie?: string): NextRequest {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'x-forwarded-for': IP,
+  };
+  if (cookie) {
+    headers['cookie'] = cookie;
+  }
   return new NextRequest('http://localhost/api/order/lookup', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+    headers,
     body: JSON.stringify(body),
   });
 }
 
-/** Runs `count` sequential lookups and returns their statuses. */
-async function lookupStatuses(count: number, body?: unknown, ip?: string): Promise<number[]> {
-  const statuses: number[] = [];
-  for (let i = 0; i < count; i += 1) {
-    const res = await POST(lookupRequest(body, ip));
-    statuses.push(res.status);
-  }
-  return statuses;
+async function mintValidCookie(trackingToken: string) {
+  const cookieName = orderAccessCookieName(trackingToken);
+  const expMs = Date.now() + 60 * 60 * 1000; // 1 hour
+  const secret = env.orderAccessCookieSecret || 'r21-test-secret';
+  const signature = sign(secret, trackingToken, expMs);
+  const value = `${expMs}.${signature}`;
+  cookieStore.set(cookieName, value);
 }
 
 // ── Suite: pure identifier builder (no mocks needed) ─
+// These test the OLD identifier builder used by verifyOrderAccess action
 
-describe('buildOrderAccessIdentifier', () => {
+describe('buildOrderAccessIdentifier (legacy - used by verifyOrderAccess)', () => {
   test('composes ip + dni so the bucket is per (IP, dni) pair', () => {
     expect(buildOrderAccessIdentifier(IP, { dni: DNI })).toBe(`${IP}:dni:${DNI}`);
   });
@@ -160,14 +190,14 @@ describe('buildOrderAccessIdentifier', () => {
 
 // ── Suite: identifier-level entry points (R9 / R10, design D2) ──
 //
-// `checkOrderAccessRateLimit(request, body)` can only be used from a route that
+// `checkOrderAccessRateLimitFor(clientId, body)` can only be used from a route that
 // HAS a `NextRequest`. The buyer order gate is a `'use server'` action, so it
 // reaches the same bucket through `(clientId, rawBody)` instead. These cases pin
 // that the two entry points are the SAME bucket, not a parallel one: same
 // identifier composition, same config, and a reset that cancels what a charge
 // created.
 
-describe('checkOrderAccessRateLimitFor / resetOrderAccessRateLimit', () => {
+describe('checkOrderAccessRateLimitFor / resetOrderAccessRateLimit (legacy - used by verifyOrderAccess)', () => {
   beforeEach(() => {
     // The REAL limiter: the point is that the composition reaches the real store.
     mockCheckRateLimit.mockImplementation(realLimiter.current!);
@@ -178,12 +208,12 @@ describe('checkOrderAccessRateLimitFor / resetOrderAccessRateLimit', () => {
 
     const result = checkOrderAccessRateLimitFor(clientId, { dni: '44556677' });
 
-    expect(mockCheckRateLimit).toHaveBeenCalledWith(`${clientId}:dni:44556677`, AUTH_LIMIT);
+    expect(mockCheckRateLimit).toHaveBeenCalledWith(`${clientId}:dni:44556677`, RATE_LIMITS.auth);
     // Real sliding-window math, not a stub echo.
     expect(result).toEqual({
       allowed: true,
-      remaining: AUTH_LIMIT.maxRequests - 1,
-      resetInMs: AUTH_LIMIT.windowMs,
+      remaining: RATE_LIMITS.auth.maxRequests - 1,
+      resetInMs: RATE_LIMITS.auth.windowMs,
     });
   });
 
@@ -192,7 +222,7 @@ describe('checkOrderAccessRateLimitFor / resetOrderAccessRateLimit', () => {
     const body = { dni: '44556678' };
     const siblingBody = { dni: '44556679' };
 
-    for (let attempt = 1; attempt <= AUTH_MAX; attempt += 1) {
+    for (let attempt = 1; attempt <= RATE_LIMITS.auth.maxRequests; attempt += 1) {
       checkOrderAccessRateLimitFor(clientId, body);
       checkOrderAccessRateLimitFor(clientId, siblingBody);
     }
@@ -203,104 +233,129 @@ describe('checkOrderAccessRateLimitFor / resetOrderAccessRateLimit', () => {
 
     expect(checkOrderAccessRateLimitFor(clientId, body)).toMatchObject({
       allowed: true,
-      remaining: AUTH_MAX - 1,
+      remaining: RATE_LIMITS.auth.maxRequests - 1,
     });
     // The reset is scoped: a sibling dni on the same client stays exhausted.
     expect(checkOrderAccessRateLimitFor(clientId, siblingBody).allowed).toBe(false);
   });
 });
 
-// ── Suite: route behavior ────────────────────────────
+// ── Suite: NEW route behavior (cookie-gated lookup, R21) ────────────────────────
 
-describe('POST /api/order/lookup — 429 response contract', () => {
+describe('POST /api/order/lookup — NEW: cookie-gated lookup with rate limit (R21)', () => {
+  const LOOKUP_RATE_LIMIT = { windowMs: 60 * 1000, maxRequests: 10 };
+  const LOOKUP_KEY = `${PAYMENT_ID}:${BUSINESS_ID}`;
+
   beforeEach(() => {
-    mockCheckRateLimit.mockReturnValue({ allowed: false, remaining: 0, resetInMs: 30_500 });
-    mockGetUser.mockResolvedValue({ data: { user: null } });
-    mockPaymentsFindFirst.mockResolvedValue(PAYMENT);
-  });
+    cookieStore.clear();
+    vi.clearAllMocks();
 
-  test('mirrors proxy.ts:46-59 and never touches the database', async () => {
-    const res = await POST(lookupRequest());
+    // Reset rate limit store for the lookup key
+    resetRateLimit(LOOKUP_KEY, LOOKUP_RATE_LIMIT);
 
-    expect(res.status).toBe(429);
-    // ceil(30_500 / 1000) = 31, not 30 — the header must round UP.
-    expect(res.headers.get('retry-after')).toBe('31');
-    expect(res.headers.get('x-ratelimit-remaining')).toBe('0');
-    expect(res.headers.get('x-ratelimit-reset')).toBe('31');
-    expect(res.headers.get('content-type')).toContain('application/json');
-    expect(await res.json()).toEqual({ error: 'Too many requests. Please try again later.' });
-
-    // Keyed (IP, dni) and reusing the existing RATE_LIMITS.auth primitive.
-    expect(mockCheckRateLimit).toHaveBeenCalledWith(`${IP}:dni:${DNI}`, AUTH_LIMIT);
-    // A refused request must not reveal whether the order exists.
-    expect(mockPaymentsFindFirst).not.toHaveBeenCalled();
-  });
-});
-
-describe('POST /api/order/lookup — pre-zod auth-intent limit', () => {
-  beforeEach(() => {
-    // Real limiter by default: these tests must exercise the actual bucket.
     mockCheckRateLimit.mockImplementation(realLimiter.current!);
     mockGetUser.mockResolvedValue({ data: { user: null } });
-    mockPaymentsFindFirst.mockResolvedValue(PAYMENT);
+    mockFindFirstBusiness.mockResolvedValue({ id: BUSINESS_ID, slug: BUSINESS_SLUG });
+
+    // Mock cookies() to return our cookie store
+    mockCookiesFn.mockImplementation(async () => cookiesApi);
+
+    mockPaymentsFindFirst.mockImplementation(async (args: unknown) => {
+      const columns = (args as { columns?: Record<string, unknown> })?.columns;
+      // Always return a valid payment with the requested columns
+      const row = {
+        ...PAYMENT,
+        id: PAYMENT_ID,
+        trackingToken: TRACKING_TOKEN,
+        orderNumber: '1001',
+      };
+      if (columns) {
+        const projected: Record<string, unknown> = {};
+        if (columns.id) projected.id = row.id;
+        if (columns.businessId) projected.businessId = row.businessId;
+        if (columns.orderNumber) projected.orderNumber = row.orderNumber;
+        if (columns.trackingToken) projected.trackingToken = row.trackingToken;
+        return projected;
+      }
+      return row;
+    });
   });
 
-  test('a request under the limit is served normally with no rate-limit headers', async () => {
-    const res = await POST(lookupRequest(validBody(), IP_UNDER_LIMIT));
+  test('no cookie → 401 reauth_required, no DB hit', async () => {
+    const res = await POST(lookupRequest(validBody()));
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({
+      success: false,
+      error: 'Necesitás volver a verificar tu acceso al pedido.',
+      reason: 'reauth_required',
+    });
+    expect(mockPaymentsFindFirst).not.toHaveBeenCalled();
+  });
+
+  test('valid cookie → 200 with token, DB hit', async () => {
+    // Mint a valid cookie
+    await mintValidCookie(TRACKING_TOKEN);
+
+    const res = await POST(lookupRequest(validBody()));
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true, token: 'tok-abc123' });
-    expect(res.headers.get('retry-after')).toBeNull();
-    expect(res.headers.get('x-ratelimit-remaining')).toBeNull();
-    expect(res.headers.get('x-ratelimit-reset')).toBeNull();
+    expect(await res.json()).toEqual({ success: true, token: TRACKING_TOKEN });
+    expect(mockPaymentsFindFirst).toHaveBeenCalledTimes(2); // First by token, then by dni+orderNumber
   });
 
-  test('RATE_LIMITS.auth is enforced: 10 lookups served, the 11th refused', async () => {
-    const statuses = await lookupStatuses(AUTH_MAX + 1, validBody(), IP_CEILING);
+  test('rate limit: 10 requests allowed, 11th refused with 429', async () => {
+    await mintValidCookie(TRACKING_TOKEN);
 
-    expect(statuses).toEqual([...Array(AUTH_MAX).fill(200), 429]);
+    // Make 10 requests
+    for (let i = 0; i < LOOKUP_MAX; i++) {
+      const res = await POST(lookupRequest(validBody()));
+      expect(res.status).toBe(200);
+    }
+
+    // 11th request should be rate limited
+    const res = await POST(lookupRequest(validBody()));
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBeDefined();
   });
 
-  test('the limit bites BEFORE zod: a zod-invalid body is refused with 429, not 400', async () => {
-    // Same body for every request, so the ONLY variable is the bucket:
-    // under the limit → 400 from zod, exhausted → 429 from the limiter.
-    const malformed = { ...validBody(), orderNumber: '' };
-    const statuses = await lookupStatuses(AUTH_MAX + 1, malformed, IP_PRE_ZOD);
+  test('rate limit returns proper 429 headers', async () => {
+    await mintValidCookie(TRACKING_TOKEN);
 
-    expect(statuses.slice(0, AUTH_MAX)).toEqual(Array(AUTH_MAX).fill(400));
-    expect(statuses.at(-1)).toBe(429);
+    // Exhaust the bucket
+    for (let i = 0; i < LOOKUP_MAX; i++) {
+      await POST(lookupRequest(validBody()));
+    }
+
+    const res = await POST(lookupRequest(validBody()));
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBeDefined();
+    expect(res.headers.get('X-RateLimit-Remaining')).toBe('0');
+    expect(res.headers.get('X-RateLimit-Reset')).toBeDefined();
+    expect(res.headers.get('content-type')).toContain('application/json');
+    expect(await res.json()).toEqual({ error: 'Too many requests. Please try again later.' });
   });
 
-  test('a body with no dni still lands in a per-ip bucket (__missing__)', async () => {
-    const noDni = { orderNumber: '#1001', businessSlug: BUSINESS_SLUG };
-    const statuses = await lookupStatuses(AUTH_MAX + 1, noDni, IP_NO_DNI);
+  test('cross-order attempt (cookie for A, body asks for B) → 404 order_not_found', async () => {
+    await mintValidCookie(TRACKING_TOKEN);
 
-    expect(statuses.slice(0, AUTH_MAX)).toEqual(Array(AUTH_MAX).fill(400));
-    expect(statuses.at(-1)).toBe(429);
-    expect(mockCheckRateLimit).toHaveBeenCalledWith(`${IP_NO_DNI}:dni:__missing__`, AUTH_LIMIT);
+    const res = await POST(lookupRequest(validBody(TRACKING_TOKEN, '#9999')));
+
+    expect(res.status).toBe(404);
+    const json = await res.json();
+    expect(json.success).toBe(false);
+    expect(json.reason).toBe('order_not_found');
   });
 
-  test('a different dni from the same ip is unaffected by the exhausted bucket', async () => {
-    const statuses = await lookupStatuses(AUTH_MAX + 1, validBody(), IP_OTHER_DNI);
+  test('forged cookie → 401 reauth_required', async () => {
+    // Set a forged cookie directly in the mock store
+    cookieStore.set(`order_access_${TRACKING_TOKEN}`, 'invalid.signature');
 
-    // The 10 lookups were really served before the refusal — the bucket was
-    // live, not already exhausted by an earlier test.
-    expect(statuses).toEqual([...Array(AUTH_MAX).fill(200), 429]);
+    const req = lookupRequest(validBody(), `order_access_${TRACKING_TOKEN}=invalid.signature`);
+    const res = await POST(req);
 
-    const otherDni = await POST(lookupRequest(validBody('87654321'), IP_OTHER_DNI));
-
-    expect(otherDni.status).toBe(200);
-    expect(mockCheckRateLimit).toHaveBeenLastCalledWith(`${IP_OTHER_DNI}:dni:87654321`, AUTH_LIMIT);
-  });
-
-  test('a different ip with the same dni is unaffected by the exhausted bucket', async () => {
-    const statuses = await lookupStatuses(AUTH_MAX + 1, validBody(), IP_OTHER_IP);
-
-    expect(statuses).toEqual([...Array(AUTH_MAX).fill(200), 429]);
-
-    const otherIp = await POST(lookupRequest(validBody(), '198.51.100.77'));
-
-    expect(otherIp.status).toBe(200);
-    expect(mockCheckRateLimit).toHaveBeenLastCalledWith('198.51.100.77:dni:' + DNI, AUTH_LIMIT);
+    expect(res.status).toBe(401);
+    const json = await res.json();
+    expect(json.reason).toBe('reauth_required');
   });
 });
