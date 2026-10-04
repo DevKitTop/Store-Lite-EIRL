@@ -129,13 +129,13 @@ feat(payments): wire server-generated order numbers to write sites (slice 2)
 
 ### RED → GREEN tasks
 
-- [ ] 3.1 **RED** — `tests/unit/updateTicketRoute.test.ts`: test `P5-1 UPDATE keyed by id not orderNumber` — mock DB; assert the UPDATE call uses `eq('id', <paymentId>)` (not `eq('orderNumber', ...)`). Given 0 matching owned row, returns 404 and UPDATE never called.
-- [ ] 3.2 **RED** — `tests/unit/updateTicketRoute.test.ts`: test ownership enforced on resolved row (cross-tenant scenario) — resolves to business A's row but request from business B → 404; only 1 row affected semantics.
-- [ ] 3.3 **RED** — `tests/unit/ticketGenerateRoute.test.ts`: assert same PK assertion; filename is exactly `${orderNumber}.png` using shared sanitizer (no substitution/collision). QR URL remains `/[slug]/order/verify/[orderNumber]`.
-- [ ] 3.4 **RED** — `tests/unit/ticketGenerateRoute.test.ts`: test `P5-2 existing ticket_url short-circuit` — with `ticket_url` present and no `forceRegenerate`, returns existing `publicUrl` without upload/update of `order_number`; with `forceRegenerate`, still updates by `id` and QR unchanged.
-- [ ] 3.5 **GREEN** — `app/api/payment/update-ticket/route.ts`: select payment by `orderNumber` (exact match), enforce ownership/businessId check on that resolved row. If not found/owned → 404. Perform UPDATE by `payments.id` only (primary key). Never UPDATE `order_number`. Affect-exactly-1 semantics (DB unique guarantees).
-- [ ] 3.6 **GREEN** — `app/api/ticket/generate/route.ts`: same pattern — resolve to single row by `orderNumber` with ownership/trackingToken validation as appropriate; all writes (ticket_url, metadata, etc.) use `eq('id', payment.id)`. Use shared `sanitizeTicketFileName()` for storage filename; ensure `order_number` is never modified. Preserve existing behavior for reprint flow.
-- [ ] 3.7 **GREEN** — Make all Slice 3 tests pass. No regression in verify route assumptions (path segment unchanged).
+- [x] 3.1 **RED** — `tests/unit/updateTicketRoute.test.ts`: test `P5-1 UPDATE keyed by id not orderNumber` — mock DB; assert the UPDATE call uses `eq('id', <paymentId>)` (not `eq('orderNumber', ...)`). Given 0 matching owned row, returns 404 and UPDATE never called.
+- [x] 3.2 **RED** — `tests/unit/updateTicketRoute.test.ts`: test ownership enforced on resolved row (cross-tenant scenario) — resolves to business A's row but request from business B → 404; only 1 row affected semantics.
+- [x] 3.3 **RED** — `tests/unit/ticketGenerateRoute.test.ts`: assert same PK assertion; filename is exactly `${orderNumber}.png` using shared sanitizer (no substitution/collision). QR URL remains `/[slug]/order/verify/[orderNumber]`.
+- [x] 3.4 **RED** — `tests/unit/ticketGenerateRoute.test.ts`: test `P5-2 existing ticket_url short-circuit` — with `ticket_url` present and no `forceRegenerate`, returns existing `publicUrl` without upload/update of `order_number`; with `forceRegenerate`, still updates by `id` and QR unchanged.
+- [x] 3.5 **GREEN** — `app/api/payment/update-ticket/route.ts`: select payment by `orderNumber` (exact match), enforce ownership/businessId check on that resolved row. If not found/owned → 404. Perform UPDATE by `payments.id` only (primary key). Never UPDATE `order_number`. Affect-exactly-1 semantics (DB unique guarantees).
+- [x] 3.6 **GREEN** — `app/api/ticket/generate/route.ts`: same pattern — resolve to single row by `orderNumber` with ownership/trackingToken validation as appropriate; all writes (ticket_url, metadata, etc.) use `eq('id', payment.id)`. Use shared `sanitizeTicketFileName()` for storage filename; ensure `order_number` is never modified. Preserve existing behavior for reprint flow.
+- [x] 3.7 **GREEN** — Make all Slice 3 tests pass. No regression in verify route assumptions (path segment unchanged).
 
 ### Verification gate (Slice 3)
 

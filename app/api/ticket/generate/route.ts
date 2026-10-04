@@ -1,6 +1,7 @@
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, payments, products } from '@/core/database/schema';
+import { sanitizeTicketFileName } from '@/core/payments/orderNumber';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
 import { safeTokenEqual } from '@/lib/tokenCompare';
 import type { ServerTicketData, ServerTicketItem } from '@/shared/payments/serverTicketRenderer';
@@ -42,6 +43,7 @@ function formatPaymentMethod(method: string): string {
  * POST /api/ticket/generate
  *
  * Generates an authoritative ticket PNG server-side using Postgres data.
+ * W-P5 fix: Resolves by orderNumber with ownership/proof on that row, then UPDATEs by payments.id only.
  */
 export async function POST(req: Request) {
   try {
@@ -117,7 +119,7 @@ export async function POST(req: Request) {
       effectiveForceRegenerate = false;
     }
 
-    // If ticket already exists and regeneration not forced, return it
+    // If ticket already exists and regeneration not forced, return it (P5-2 short-circuit)
     if (payment.ticketUrl && !effectiveForceRegenerate) {
       return NextResponse.json({ success: true, publicUrl: payment.ticketUrl });
     }
@@ -185,7 +187,8 @@ export async function POST(req: Request) {
     const host = req.headers.get('x-forwarded-host') || req.headers.get('host');
     const proto = req.headers.get('x-forwarded-proto') || 'http';
     const baseUrl = host ? `${proto}://${host}` : env.nextPublicAppUrl;
-    const verificationUrl = `${baseUrl}/${payment.businessSlug}/order/verify/${orderNumber}`;
+    // Use the resolved orderNumber from the payment row (not the request param)
+    const verificationUrl = `${baseUrl}/${payment.businessSlug}/order/verify/${payment.orderNumber}`;
 
     let qrCodeDataUrl: string | null = null;
     try {
@@ -225,12 +228,15 @@ export async function POST(req: Request) {
     }
 
     // ── 5. Build ticket data ────────────────────────────────────────────
+    // payment.orderNumber is guaranteed to exist since we queried for it and checked !payment
+    const resolvedOrderNumber = payment.orderNumber!;
+    const resolvedShippingAddress = shippingAddress ?? undefined;
     const ticketData: ServerTicketData = {
       businessName: payment.businessName,
       businessRuc: payment.businessRuc,
       businessAddress: payment.businessAddress,
       businessLogoUrl: payment.businessLogoUrl,
-      orderNumber: payment.orderNumber || orderNumber,
+      orderNumber: resolvedOrderNumber,
       date: payment.createdAt,
       items,
       totalAmount: Number(payment.amount),
@@ -240,7 +246,7 @@ export async function POST(req: Request) {
       customerPhone: payment.buyerPhone,
       customerEmail: payment.buyerEmail,
       shippingType: shippingType === 'recojo' ? 'pickup' : 'delivery',
-      shippingAddress,
+      shippingAddress: resolvedShippingAddress,
       qrCodeDataUrl,
     };
 
@@ -261,7 +267,8 @@ export async function POST(req: Request) {
 
     // ── 7. Upload to Supabase ───────────────────────────────────────────
     const supabase = createAdminClient();
-    const fileName = `${orderNumber.replace(/[^a-zA-Z0-9_-]/g, '_')}.png`;
+    // Use shared sanitizer for filename (W-P5 / D1-D2)
+    const fileName = `${sanitizeTicketFileName(resolvedOrderNumber)}.png`;
 
     const { error: uploadError } = await supabase.storage
       .from(BUCKET_NAME)
@@ -276,11 +283,13 @@ export async function POST(req: Request) {
       data: { publicUrl },
     } = supabase.storage.from(BUCKET_NAME).getPublicUrl(fileName);
 
-    // ── 8. Update payment record with ticket URL ────────────────────────
+    // ── 8. Update payment record with ticket URL by primary key (W-P5 fix) ──────────────────
+    // Never UPDATE order_number. Ownership/proof was already checked on the resolved row above.
     await db
       .update(payments)
       .set({ ticketUrl: publicUrl, updatedAt: new Date() })
-      .where(eq(payments.orderNumber, orderNumber));
+      .where(eq(payments.id, payment.id))
+      .returning();
 
     return NextResponse.json({ success: true, publicUrl });
   } catch (error) {

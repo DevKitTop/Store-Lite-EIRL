@@ -1,5 +1,5 @@
 import { db } from '@/core/database/client';
-import { payments } from '@/core/database/schema';
+import { payments } from '@/core/database/schema/orders';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
 import { createClient } from '@/lib/supabase/server';
 import { eq } from 'drizzle-orm';
@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server';
 /**
  * API: /api/payment/update-ticket
  * Description: Updates a payment record with the generated ticket image URL.
+ * W-P5 fix: Resolves by orderNumber with ownership check on that row, then UPDATEs by payments.id only.
  */
 export async function POST(req: Request) {
   // ── Auth check ──────────────────────────────────────────
@@ -26,9 +27,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Falta orderNumber o ticketUrl' }, { status: 400 });
     }
 
-    // ── Auth: lookup businessId from payment ────────────────
+    // ── Validate ticketUrl early (before any DB calls) ──────────────────
+    if (typeof ticketUrl !== 'string' || ticketUrl.trim().length === 0) {
+      return NextResponse.json({ error: 'ticketUrl debe ser un texto válido' }, { status: 400 });
+    }
+
+    // ── Auth: lookup payment by orderNumber (includes id for primary-key update) ────────────────
     const [payment] = await db
-      .select({ businessId: payments.businessId })
+      .select({ id: payments.id, businessId: payments.businessId })
       .from(payments)
       .where(eq(payments.orderNumber, orderNumber))
       .limit(1);
@@ -49,16 +55,12 @@ export async function POST(req: Request) {
       );
     }
 
-    // ── Validate ticketUrl ──────────────────────────────────
-    if (typeof ticketUrl !== 'string' || ticketUrl.trim().length === 0) {
-      return NextResponse.json({ error: 'ticketUrl debe ser un texto válido' }, { status: 400 });
-    }
-
-    // Update payment where orderNumber matches
+    // ── Update payment by primary key (payments.id) — W-P5 fix ──────────────────────────
+    // Never UPDATE order_number. Ownership was already checked on the resolved row above.
     const result = await db
       .update(payments)
       .set({ ticketUrl: ticketUrl.trim(), updatedAt: new Date() })
-      .where(eq(payments.orderNumber, orderNumber))
+      .where(eq(payments.id, payment.id))
       .returning();
 
     if (!result || result.length === 0) {
