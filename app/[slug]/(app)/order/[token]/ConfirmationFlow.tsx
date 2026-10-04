@@ -5,6 +5,7 @@ import { Icon } from '@/shared/components/ui';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import './FlowModals.css';
+import { beginOrderReauthentication } from './orderReauth';
 
 interface ConfirmationFlowProps {
   paymentId: string;
@@ -36,20 +37,13 @@ export default function ConfirmationFlow({
         router.refresh();
       } else if (result.reason === 'reauth_required') {
         // R20: the signed cookie lapsed mid-confirmation (1h TTL). This branch is
-        // RECOVERABLE, so the stale client session has to go: `OrderAuthGate`
-        // reads `order_session_{token}` and would pass on it, stranding the buyer
-        // on a gate that thinks it is authenticated while the server keeps
-        // refusing. Dropping the marker and refreshing hands the buyer back to the
-        // gate's own state machine, which re-mints via Google or the DNI form.
-        //
-        // The clear lives HERE, not in `OrderAuthGate`: `localStorage` is
-        // client-side, so a server action can never reach it. `OrderAuthGate`
-        // takes no change for R20 — its refusal string is for a failed form
-        // submit, not a reason renderer.
-        localStorage.removeItem(`order_session_${trackingToken}`);
+        // RECOVERABLE, so the stale client session has to go and the page has to be
+        // reloaded for `OrderAuthGate` to re-check. Both live in `orderReauth`
+        // because `refresh` alone cannot do it — see the comment there for why the
+        // gate's effect never re-runs on an in-place refresh.
+        beginOrderReauthentication(trackingToken, () => router.refresh());
         setError(result.error || 'Necesitás volver a verificar tu acceso al pedido.');
         setState('idle');
-        router.refresh();
       } else {
         setError(result.error || 'Error al confirmar');
         setState('idle');

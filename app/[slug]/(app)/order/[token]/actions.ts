@@ -91,7 +91,9 @@ export async function updateOrderStatus(
       .limit(1);
 
     if (!current) {
-      return { success: false, error: 'Pedido no encontrado' };
+      // R20: the cookie verified, so a missing row is about the ORDER — and
+      // re-minting cannot conjure one, so it must never read as reauth_required.
+      return { success: false, error: 'Pedido no encontrado', reason: 'order_not_found' };
     }
 
     const expectedVersion = current.version ?? 0;
@@ -113,18 +115,28 @@ export async function updateOrderStatus(
     });
 
     if (!result.success) {
-      return { success: false, error: result.error };
+      // The cookie verified, so a refused transition is about the ORDER's state.
+      return { success: false, error: result.error, reason: 'order_not_actionable' };
     }
 
     revalidatePath('/[slug]/order/[token]', 'page');
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Error al actualizar el estado';
-    if (message === 'No autorizado' || message === 'Pedido no encontrado') {
-      return { success: false, error: message };
+    if (message === 'No autorizado') {
+      // The access cookie verified; it is the `localStorage` proof that belongs
+      // to somebody else (a shared device, a stale marker). Re-minting the
+      // cookie would not change that, so this is NOT reauth_required — and the
+      // order is fine, so it is NOT order_not_actionable either (R20).
+      return { success: false, error: message, reason: 'caller_proof_mismatch' };
+    }
+    if (message === 'Pedido no encontrado') {
+      return { success: false, error: message, reason: 'order_not_found' };
     }
     console.error('[Action Error] updateOrderStatus:', error);
-    return { success: false, error: 'Error al actualizar el estado' };
+    // Unclassified: a dead socket is not an authorization decision, and telling
+    // the buyer to re-verify would be a loop that cannot help.
+    return { success: false, error: 'Error al actualizar el estado', reason: 'generic' };
   }
 }
 
@@ -382,7 +394,9 @@ export async function reportIssueV2(
       try {
         await verifyCallerProof(paymentId, callerProof);
       } catch {
-        return { success: false, error: 'No autorizado' };
+        // Cookie verified, proof does not belong to this buyer — see the twin
+        // branch in `updateOrderStatus` (R20).
+        return { success: false, error: 'No autorizado', reason: 'caller_proof_mismatch' };
       }
     }
 
@@ -393,7 +407,7 @@ export async function reportIssueV2(
       .limit(1);
 
     if (!payment) {
-      return { success: false, error: 'Pedido no encontrado' };
+      return { success: false, error: 'Pedido no encontrado', reason: 'order_not_found' };
     }
 
     const result = await transition({
@@ -405,13 +419,15 @@ export async function reportIssueV2(
     });
 
     if (!result.success) {
-      return { success: false, error: result.error };
+      // The cookie verified, so a refused transition is about the ORDER's state.
+      return { success: false, error: result.error, reason: 'order_not_actionable' };
     }
 
     revalidatePath('/[slug]/order/[token]', 'page');
     return { success: true };
   } catch (error) {
     console.error('[reportIssueV2] Error:', error);
-    return { success: false, error: 'Error al reportar el problema' };
+    // Unclassified: a thrown error is not an authorization decision (R20).
+    return { success: false, error: 'Error al reportar el problema', reason: 'generic' };
   }
 }

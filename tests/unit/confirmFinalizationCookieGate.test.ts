@@ -224,6 +224,28 @@ describe('confirmFinalization — a non-authentication failure is NOT mislabelle
     expect(result.reason).not.toBe('reauth_required');
     expect(mockTransition).not.toHaveBeenCalled();
   });
+
+  // W2: the two remaining refusal paths of this action. Both are reachable with
+  // a VERIFYING cookie, so neither may be reported as `reauth_required`.
+  test('a transition the state machine rejects is order_not_actionable', async () => {
+    await setOrderAccessCookie(TOKEN);
+    mockTransition.mockResolvedValue({ success: false, error: 'Transición no permitida' });
+
+    const result = await confirmFinalization(PAYMENT_ID, TOKEN);
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('order_not_actionable');
+  });
+
+  test('an unexpected throw is generic, not mislabelled as re-authentication', async () => {
+    await setOrderAccessCookie(TOKEN);
+    mockLimit.mockRejectedValue(new Error('socket hang up'));
+
+    const result = await confirmFinalization(PAYMENT_ID, TOKEN);
+
+    expect(result.reason).toBe('generic');
+    expect(result.reason).not.toBe('reauth_required');
+  });
 });
 
 describe('ConfirmationFlow — the reauth handoff (R20 / A.8)', () => {

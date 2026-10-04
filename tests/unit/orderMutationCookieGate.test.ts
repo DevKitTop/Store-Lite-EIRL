@@ -228,6 +228,7 @@ describe('R19 — a tampered cookie is refused', () => {
     const result = await updateOrderStatus(PAYMENT_ID, TOKEN_A, 'delivered');
 
     expect(result.success).toBe(false);
+    expect(result.reason).toBe('reauth_required');
     expect(mockTransition).not.toHaveBeenCalled();
   });
 
@@ -238,6 +239,7 @@ describe('R19 — a tampered cookie is refused', () => {
     const result = await updateOrderStatus(PAYMENT_ID, TOKEN_A, 'delivered');
 
     expect(result.success).toBe(false);
+    expect(result.reason).toBe('reauth_required');
     expect(mockTransition).not.toHaveBeenCalled();
   });
 
@@ -248,6 +250,7 @@ describe('R19 — a tampered cookie is refused', () => {
     const result = await reportIssueV2(PAYMENT_ID, TOKEN_A, 'se rompió');
 
     expect(result.success).toBe(false);
+    expect(result.reason).toBe('reauth_required');
     expect(mockTransition).not.toHaveBeenCalled();
   });
 });
@@ -372,5 +375,110 @@ describe('R19 — a lapsed cookie reads as re-authentication, not a generic deni
 
     expect(result.reason).toBe('reauth_required');
     expect(mockTransition).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * W2 — a refusal MUST carry a truthful reason, not just `success: false`.
+ *
+ * Every branch here is a copy of the same decision in both actions, so a
+ * regression that reverts ONE copy has to be caught by a test on THAT action.
+ * The three classes, and why each label is the honest one:
+ *
+ *   * the row is gone for this token → `order_not_found`; re-minting cannot
+ *     conjure a row, so it must NOT read as re-authentication.
+ *   * the row exists but the state machine / the optimistic lock refuses the
+ *     write → `order_not_actionable`; the cookie already proved ownership.
+ *   * a valid cookie plus a `callerProof` that belongs to somebody else →
+ *     `caller_proof_mismatch`. It is NOT `reauth_required`: the access cookie
+ *     verified fine, so sending the buyer round the re-mint loop would be a
+ *     story that never converges. And it is NOT `order_not_actionable`: nothing
+ *     about the ORDER is wrong — the marker in localStorage is stale.
+ *   * a thrown error (dead socket, schema drift) → `generic`. Unclassified is a
+ *     fact; claiming any of the specific reasons would be a lie the UI acts on.
+ */
+describe('W2 — every refusal path carries a truthful reason', () => {
+  test('updateOrderStatus: no row for this token is order_not_found', async () => {
+    await mintValidCookie(TOKEN_A);
+    mockLimit.mockResolvedValue([]);
+
+    const result = await updateOrderStatus(PAYMENT_ID, TOKEN_A, 'delivered');
+
+    expect(result.reason).toBe('order_not_found');
+    expect(mockTransition).not.toHaveBeenCalled();
+  });
+
+  test('updateOrderStatus: a refused transition is order_not_actionable', async () => {
+    await mintValidCookie(TOKEN_A);
+    mockTransition.mockResolvedValue({ success: false, error: 'Transición no permitida' });
+
+    const result = await updateOrderStatus(PAYMENT_ID, TOKEN_A, 'delivered');
+
+    expect(result.reason).toBe('order_not_actionable');
+  });
+
+  test('updateOrderStatus: a callerProof for another buyer is caller_proof_mismatch', async () => {
+    await mintValidCookie(TOKEN_A);
+    mockFindFirst.mockResolvedValue({ id: PAYMENT_ID, buyerDni: '99999999', metadata: null });
+
+    const result = await updateOrderStatus(PAYMENT_ID, TOKEN_A, 'delivered', {
+      callerProof: { dni: DNI },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('caller_proof_mismatch');
+    expect(result.reason).not.toBe('reauth_required');
+    expect(mockTransition).not.toHaveBeenCalled();
+  });
+
+  test('updateOrderStatus: an unexpected throw is generic, not mislabelled', async () => {
+    await mintValidCookie(TOKEN_A);
+    mockLimit.mockRejectedValue(new Error('socket hang up'));
+
+    const result = await updateOrderStatus(PAYMENT_ID, TOKEN_A, 'delivered');
+
+    expect(result.reason).toBe('generic');
+    expect(result.reason).not.toBe('reauth_required');
+  });
+
+  test('reportIssueV2: no row for this token is order_not_found', async () => {
+    await mintValidCookie(TOKEN_A);
+    mockLimit.mockResolvedValue([]);
+
+    const result = await reportIssueV2(PAYMENT_ID, TOKEN_A, 'se rompió');
+
+    expect(result.reason).toBe('order_not_found');
+    expect(mockTransition).not.toHaveBeenCalled();
+  });
+
+  test('reportIssueV2: a refused transition is order_not_actionable', async () => {
+    await mintValidCookie(TOKEN_A);
+    mockTransition.mockResolvedValue({ success: false, error: 'Transición no permitida' });
+
+    const result = await reportIssueV2(PAYMENT_ID, TOKEN_A, 'se rompió');
+
+    expect(result.reason).toBe('order_not_actionable');
+  });
+
+  test('reportIssueV2: a callerProof for another buyer is caller_proof_mismatch', async () => {
+    await mintValidCookie(TOKEN_A);
+    mockFindFirst.mockResolvedValue({ id: PAYMENT_ID, buyerDni: '99999999', metadata: null });
+
+    const result = await reportIssueV2(PAYMENT_ID, TOKEN_A, 'se rompió', { dni: DNI });
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('caller_proof_mismatch');
+    expect(result.reason).not.toBe('reauth_required');
+    expect(mockTransition).not.toHaveBeenCalled();
+  });
+
+  test('reportIssueV2: an unexpected throw is generic, not mislabelled', async () => {
+    await mintValidCookie(TOKEN_A);
+    mockLimit.mockRejectedValue(new Error('socket hang up'));
+
+    const result = await reportIssueV2(PAYMENT_ID, TOKEN_A, 'se rompió');
+
+    expect(result.reason).toBe('generic');
+    expect(result.reason).not.toBe('reauth_required');
   });
 });

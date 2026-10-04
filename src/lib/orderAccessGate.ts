@@ -18,14 +18,14 @@
 // `requireOrderManager` (`finalizationActions.ts:67-69`): a discriminated
 // result, no throwing, and a module-level neutral error constant.
 //
-// WHY `reauth_required` IS THE ONLY REASON THIS GATE EMITS. Every way
+// WHY `reauth_required` IS THE ONLY REASON *THIS GATE* EMITS. Every way
 // `verifyOrderAccessCookie` can fail — absent, malformed, tampered, expired,
 // bound to another order's token, or signed with an unset secret — is the same
 // situation from the buyer's side: this browser no longer holds proof it owns
-// this order, and re-minting with DNI + order number fixes all of them. The two
-// remaining reasons in the vocabulary (`order_not_found`,
-// `order_not_actionable`) describe the ORDER, not the caller, so they are the
-// caller's to emit after it has read the row (design D4).
+// this order, and re-minting with DNI + order number fixes all of them. The
+// other reasons in the vocabulary describe something the GATE cannot see — the
+// row, the state machine, the caller's own localStorage marker, or nothing at
+// all — so they are the caller's to emit once it has looked (design D4).
 //
 // Server-only by way of `orderAccessCookie`'s `node:crypto` import, which makes
 // any client bundle fail at build — the intended failure mode.
@@ -36,14 +36,26 @@ import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
 /**
  * Machine-readable refusal vocabulary (R20). `reauth_required` is RECOVERABLE —
  * the client clears its session marker and hands off to `OrderAuthGate`, which
- * re-mints. The other two are generic and must never be shown as a re-auth
- * prompt, or a buyer chasing a non-auth problem gets sent into a loop of
- * re-minting that can never succeed.
+ * re-mints. Every other member must never be shown as a re-auth prompt, or a
+ * buyer chasing a non-auth problem gets sent into a loop of re-minting that can
+ * never succeed.
+ *
+ * The vocabulary is deliberately TRUTHFUL rather than small. A member that
+ * over-claims is worse than `undefined`, because the client branches on it: the
+ * first four describe exactly what the server knows at that point, and
+ * `generic` is the honest label for "something threw and we could not classify
+ * it" — which is a fact, not a gap.
  */
 export type OrderAccessRefusalReason =
   | 'reauth_required'
+  /** The cookie does not verify — the caller's to re-mint. */
   | 'order_not_found'
-  | 'order_not_actionable';
+  /** The row exists but its state refuses this write. */
+  | 'order_not_actionable'
+  /** A verifying cookie, but the localStorage `callerProof` belongs to somebody else. */
+  | 'caller_proof_mismatch'
+  /** Unclassified failure (thrown error, dead socket, schema drift). */
+  | 'generic';
 
 /** Discriminated gate outcome — never a bare boolean, so R20 can be honoured. */
 export type OrderAccessDecision = { ok: true } | { ok: false; reason: OrderAccessRefusalReason };

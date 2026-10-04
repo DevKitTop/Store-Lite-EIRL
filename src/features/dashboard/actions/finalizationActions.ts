@@ -329,7 +329,8 @@ export async function confirmFinalization(
       });
 
       if (!result.success) {
-        return { success: false, error: result.error };
+        // The cookie verified, so a refused transition is about the ORDER.
+        return { success: false, error: result.error, reason: 'order_not_actionable' };
       }
     } else {
       const [updated] = await db
@@ -348,6 +349,7 @@ export async function confirmFinalization(
         return {
           success: false,
           error: 'El estado del pedido fue modificado. Recargá la página e intentá de nuevo.',
+          reason: 'order_not_actionable',
         };
       }
     }
@@ -415,6 +417,8 @@ export async function confirmFinalization(
     return {
       success: false,
       error: 'Error al confirmar la finalización del pedido.',
+      // Unclassified: a thrown error is not an authorization decision.
+      reason: 'generic',
     };
   }
 }
@@ -433,6 +437,19 @@ export async function rejectFinalization(
   reason: string,
 ): Promise<FinalizationActionResult> {
   try {
+    // R19: this action took NO proof parameter either, so before the gate it was
+    // callable — and a full customer mutation — by anyone who knew
+    // (paymentId, token). The token IS the order page's URL segment, so that is
+    // not a secret: holding it was enough to flip the buyer's order out of a
+    // confirmable state, clear `completedAt`, notify the seller and inject a
+    // chat message into the buyer's own session. The signed httpOnly cookie is
+    // the authorization decision and runs before the payment read, mirroring
+    // `confirmFinalization`.
+    const access = await requireOrderAccess(token);
+    if (!access.ok) {
+      return { success: false, error: ORDER_ACCESS_DENIED_ERROR, reason: access.reason };
+    }
+
     // 1. Fetch payment and validate token + status
     const [payment] = await db
       .select()
@@ -442,7 +459,12 @@ export async function rejectFinalization(
 
     if (!payment) {
       console.error('[rejectFinalization] Payment not found or invalid token');
-      return { success: false, error: 'Pedido no encontrado o token inválido.' };
+      return {
+        success: false,
+        error: 'Pedido no encontrado o token inválido.',
+        // NOT reauth_required: re-minting the cookie cannot make a row appear.
+        reason: 'order_not_found',
+      };
     }
 
     if (!CONFIRMABLE_STATUSES.includes(payment.status as string)) {
@@ -450,6 +472,9 @@ export async function rejectFinalization(
       return {
         success: false,
         error: `El pedido no está en estado de espera de confirmación. Estado actual: ${payment.status}`,
+        // A verifying cookie already proves ownership, so this is about the
+        // ORDER's state, and re-minting cannot fix a status (R20).
+        reason: 'order_not_actionable',
       };
     }
 
@@ -468,7 +493,8 @@ export async function rejectFinalization(
       });
 
       if (!result.success) {
-        return { success: false, error: result.error };
+        // The cookie verified, so a refused transition is about the ORDER.
+        return { success: false, error: result.error, reason: 'order_not_actionable' };
       }
     } else {
       const [updated] = await db
@@ -487,6 +513,7 @@ export async function rejectFinalization(
         return {
           success: false,
           error: 'El estado del pedido fue modificado. Recargá la página e intentá de nuevo.',
+          reason: 'order_not_actionable',
         };
       }
     }
@@ -539,6 +566,9 @@ export async function rejectFinalization(
     return {
       success: false,
       error: 'Error al reportar el problema del pedido.',
+      // Unclassified: a thrown error is not an authorization decision, and
+      // claiming one would push the buyer into a re-mint loop that cannot help.
+      reason: 'generic',
     };
   }
 }
