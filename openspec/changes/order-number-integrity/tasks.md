@@ -172,10 +172,10 @@ fix(payments): scope ticket updates to primary key (W-P5) (slice 3)
 
 ### RED → GREEN tasks
 
-- [ ] 4.1 **RED** — `tests/unit/orderNumberMigration.test.ts`: assert migration is exactly one segment with `BEGIN` and `COMMIT`; no `--` line inside dollar-quoted body; ordering is backfill < format scan < duplicate scan < SET NOT NULL < CREATE UNIQUE INDEX < trigger function+CREATE TRIGGER < post-conditions; uses `pg_advisory_xact_lock(4800048)`.
-- [ ] 4.2 **GREEN** — `migrations/0048_payments_order_number_integrity.sql`: implement with phases 0–7 as specified. Backfill only `WHERE order_number IS NULL` using `gen_random_uuid()` (no pgcrypto). Format scan `!~ '^ORD-[A-Za-z0-9_-]{8,20}$'` fails closed. Duplicate scan lists offending values and fails closed. Trigger `BEFORE UPDATE OF order_number` raises `restrict_violation`. Post-conditions verify notnull, unique index exists, trigger exists. All DDL uses `IF NOT EXISTS` where appropriate. Transaction wrapped in single `BEGIN; ... COMMIT;`. Idempotent (re-run affects 0 rows).
-- [ ] 4.3 **GREEN** — `scripts/verify-order-number-integrity.sql`: read-only checks (post-apply proof). Count NULL = 0; all match pattern; duplicate count 0; NOT NULL true; unique index present; trigger present. Returns pass/fail markers. Designed for operator to run independently (success message of apply script is untrustworthy per design).
-- [ ] 4.4 **GREEN** — Make migration test pass.
+- [x] 4.1 **RED** — `tests/unit/orderNumberMigration.test.ts`: assert migration is exactly one segment with `BEGIN` and `COMMIT`; no `--` line inside dollar-quoted body; ordering is backfill < format scan < duplicate scan < SET NOT NULL < CREATE UNIQUE INDEX < trigger function+CREATE TRIGGER < post-conditions; uses `pg_advisory_xact_lock(4800048)`.
+- [x] 4.2 **GREEN** — `migrations/0048_payments_order_number_integrity.sql`: implement with phases 0–7 as specified. Backfill only `WHERE order_number IS NULL` using `gen_random_uuid()` (no pgcrypto). Format scan `!~ '^ORD-[A-Za-z0-9_-]{8,20}$'` fails closed. Duplicate scan lists offending values and fails closed. Trigger `BEFORE UPDATE OF order_number` raises `restrict_violation`. Post-conditions verify notnull, unique index exists, trigger exists. All DDL uses `IF NOT EXISTS` where appropriate. Transaction wrapped in single `BEGIN; ... COMMIT;`. Idempotent (re-run affects 0 rows).
+- [x] 4.3 **GREEN** — `scripts/verify-order-number-integrity.sql`: read-only checks (post-apply proof). Count NULL = 0; all match pattern; duplicate count 0; NOT NULL true; unique index present; trigger present. Returns pass/fail markers. Designed for operator to run independently (success message of apply script is untrustworthy per design).
+- [x] 4.4 **GREEN** — Make migration test pass.
 
 ### CRITICAL ordering hazard (must be encoded/documented)
 
