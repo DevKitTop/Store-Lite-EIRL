@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { reportIssueV2 } from './actions';
 import './FlowModals.css';
+import { beginOrderReauthentication } from './orderReauth';
 import type { CallerProof } from './types';
 
 function getCallerProof(token: string): CallerProof | undefined {
@@ -61,6 +62,14 @@ export default function ReportV2Flow({ paymentId, trackingToken }: ReportV2FlowP
       if (result.success) {
         setState('success');
         router.refresh();
+      } else if (result.reason === 'reauth_required') {
+        // W3/R20: `res.reason` used to be ignored here, so a lapsed cookie only
+        // showed an error inside a form that could never succeed again. The
+        // handoff drops the stale marker and reloads, which hands the buyer back
+        // to `OrderAuthGate` to re-mint.
+        beginOrderReauthentication(trackingToken, () => router.refresh());
+        setError(result.error || 'Necesitás volver a verificar tu acceso al pedido.');
+        setState('form');
       } else {
         setError(result.error || 'Error al enviar el reporte');
         setState('form');

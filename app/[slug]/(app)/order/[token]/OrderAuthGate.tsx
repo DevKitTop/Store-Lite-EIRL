@@ -2,16 +2,14 @@
 
 import { createClient } from '@/lib/supabase/client';
 import { Icon } from '@/shared/components/ui';
-import { useParams } from 'next/navigation';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { verifyOrderAccess, verifyOrderByGoogleIdentity } from './actions';
 
 interface OrderAuthGateProps {
   token: string;
   businessName: string;
-  orderNumber: string | null;
-  /** Business slug for storefront link in NULL orderNumber state */
-  businessSlug: string;
+  orderNumber: string;
   /** When true, the server has already verified the user's identity
    * (Google customer auth match) — skip the client-side auth gate entirely,
    * unless a logout intent marker is present in sessionStorage. */
@@ -25,10 +23,13 @@ export default function OrderAuthGate({
   token,
   businessName,
   orderNumber,
-  businessSlug,
   serverPreAuth = false,
   children,
 }: OrderAuthGateProps) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [dni, setDni] = useState('');
   const [inputOrderNumber, setInputOrderNumber] = useState('');
@@ -176,11 +177,44 @@ export default function OrderAuthGate({
         }
       }
 
+      // 2. Si no hay sesión, verificar si el DNI viene por URL (Auto-Auth)
+      const dniFromUrl = searchParams.get('dni');
+      if (dniFromUrl && dniFromUrl.length >= 8) {
+        const performAutoAuth = async () => {
+          setLoading(true);
+          try {
+            const res = await verifyOrderAccess(token, dniFromUrl);
+            if (res.success) {
+              const sessionData = {
+                dni: dniFromUrl,
+                expiresAt: Date.now() + SESSION_TTL,
+              };
+              localStorage.setItem(storageKey, JSON.stringify(sessionData));
+              setIsAuthenticated(true);
+
+              const newParams = new URLSearchParams(searchParams.toString());
+              newParams.delete('dni');
+              const query = newParams.toString() ? `?${newParams.toString()}` : '';
+              router.replace(`${pathname}${query}`);
+            } else {
+              setIsAuthenticated(false);
+            }
+          } catch (err) {
+            console.error('[OrderAuthGate] Auto-auth error:', err);
+            setIsAuthenticated(false);
+          } finally {
+            setLoading(false);
+          }
+        };
+        performAutoAuth();
+        return;
+      }
+
       setIsAuthenticated(false);
     };
 
     checkAuth();
-  }, [storageKey, token]);
+  }, [storageKey, searchParams, token, pathname, router]);
 
   // ─── Listen for auth tokens from popup ───
   useEffect(() => {
@@ -352,110 +386,6 @@ export default function OrderAuthGate({
       setLoading(false);
     }
   };
-
-  // R25: Explicit non-submittable state for orders with no orderNumber
-  if (orderNumber === null) {
-    return (
-      <div
-        style={{
-          minHeight: '100vh',
-          backgroundColor: 'var(--md-sys-color-surface)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '2rem',
-        }}
-      >
-        <div
-          style={{
-            maxWidth: '480px',
-            width: '100%',
-            backgroundColor: 'var(--md-sys-color-error-container)',
-            borderRadius: '32px',
-            padding: '3rem 2rem',
-            textAlign: 'center',
-            border: '1px solid var(--md-sys-color-outline-variant)',
-          }}
-        >
-          <div
-            style={{
-              width: 64,
-              height: 64,
-              borderRadius: '20px',
-              backgroundColor: 'var(--md-sys-color-error)',
-              color: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 1.5rem',
-              fontSize: 32,
-            }}
-          >
-            📭
-          </div>
-          <h2
-            style={{
-              margin: '0 0 1rem',
-              fontSize: '1.5rem',
-              fontWeight: 950,
-              color: 'var(--md-sys-color-on-error-container)',
-            }}
-          >
-            Orden no encontrada
-          </h2>
-          <p
-            style={{
-              margin: '0 0 0.5rem',
-              fontSize: '0.95rem',
-              lineHeight: 1.5,
-              color: 'var(--md-sys-color-on-error-container)',
-              opacity: 0.8,
-            }}
-          >
-            Este número de orden no existe en nuestros registros.
-          </p>
-          <p
-            style={{
-              margin: '0 0 0.5rem',
-              fontSize: '0.9rem',
-              lineHeight: 1.5,
-              color: 'var(--md-sys-color-on-error-container)',
-              opacity: 0.7,
-            }}
-          >
-            Si realizaste una compra reciente, contactá al vendedor para obtener tu comprobante.
-          </p>
-          <p
-            style={{
-              margin: '0 0 1.5rem',
-              fontSize: '0.9rem',
-              lineHeight: 1.5,
-              color: 'var(--md-sys-color-on-error-container)',
-              opacity: 0.7,
-            }}
-          >
-            O verificá tu identidad con Google si compraste con esa cuenta.
-          </p>
-          <a
-            href={`/${businessSlug}`}
-            style={{
-              display: 'inline-block',
-              backgroundColor: 'var(--md-sys-color-primary)',
-              color: 'white',
-              padding: '12px 24px',
-              borderRadius: '12px',
-              textDecoration: 'none',
-              fontWeight: 600,
-              fontSize: '1rem',
-            }}
-          >
-            Volver a la tienda
-          </a>
-        </div>
-      </div>
-    );
-  }
 
   if (isAuthenticated === null || (loading && !isAuthenticated)) {
     return (
