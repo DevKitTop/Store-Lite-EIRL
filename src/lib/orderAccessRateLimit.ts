@@ -14,7 +14,7 @@
 // only pay for well-formed guesses and the limit would never bite.
 // =====================================================
 
-import { checkRateLimit, getClientIdentifier, RATE_LIMITS, resetRateLimit } from '@/lib/rateLimit';
+import { checkRateLimit, getClientIdentifier, RATE_LIMITS } from '@/lib/rateLimit';
 import { type NextRequest } from 'next/server';
 
 /** Bucket segment used when the body carries no usable `dni`. */
@@ -36,47 +36,18 @@ export function buildOrderAccessIdentifier(clientIp: string, rawBody: unknown): 
   return `${clientIp}:dni:${segment}`;
 }
 
-/** Result of an auth-intent limiter check — the shared primitive's own shape. */
-export interface OrderAccessRateLimitResult {
-  allowed: boolean;
-  remaining: number;
-  resetInMs: number;
-}
-
 /**
- * Counts a lookup against the `(clientId, dni)` bucket using the existing
+ * Counts the request against the `(IP, dni)` bucket using the existing
  * `RATE_LIMITS.auth` primitive (src/lib/rateLimit.ts:25,53).
  * `checkRateLimit` appends `:${windowMs}` internally, so composite keys compose
  * safely.
- *
- * Takes the already-resolved client id so callers WITHOUT a `NextRequest` (a
- * `'use server'` action reads `await headers()`) can charge the SAME bucket the
- * route charges, instead of growing a second counter store.
- */
-export function checkOrderAccessRateLimitFor(
-  clientId: string,
-  rawBody: unknown,
-): OrderAccessRateLimitResult {
-  return checkRateLimit(buildOrderAccessIdentifier(clientId, rawBody), RATE_LIMITS.auth);
-}
-
-/**
- * Refunds the `(clientId, dni)` bucket charged by `checkOrderAccessRateLimitFor`.
- * Scoped by construction: a different `dni` composes a different key, so a
- * verified buyer never clears somebody else's budget.
- */
-export function resetOrderAccessRateLimit(clientId: string, rawBody: unknown): void {
-  resetRateLimit(buildOrderAccessIdentifier(clientId, rawBody), RATE_LIMITS.auth);
-}
-
-/**
- * Counts the request against the `(IP, dni)` bucket.
- * `NextRequest`-only entry point — delegates so the identifier is composed in
- * exactly one place.
  */
 export function checkOrderAccessRateLimit(
   request: NextRequest,
   rawBody: unknown,
-): OrderAccessRateLimitResult {
-  return checkOrderAccessRateLimitFor(getClientIdentifier(request), rawBody);
+): { allowed: boolean; remaining: number; resetInMs: number } {
+  return checkRateLimit(
+    buildOrderAccessIdentifier(getClientIdentifier(request), rawBody),
+    RATE_LIMITS.auth,
+  );
 }

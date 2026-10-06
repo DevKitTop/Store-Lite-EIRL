@@ -6,11 +6,6 @@ import { transition } from '@/core/orders/orderService';
 import { ORDER_STATUS_V2, type OrderStatusV2 } from '@/core/orders/orderStatus';
 import { deleteOrderAccessCookie, setOrderAccessCookie } from '@/lib/orderAccessCookie';
 import {
-  ORDER_ACCESS_DENIED_ERROR,
-  requireOrderAccess,
-  type OrderAccessRefusalReason,
-} from '@/lib/orderAccessGate';
-import {
   checkOrderAccessRateLimitFor,
   resetOrderAccessRateLimit,
 } from '@/lib/orderAccessRateLimit';
@@ -69,16 +64,6 @@ export async function updateOrderStatus(
   options?: { rejectionReason?: string; callerProof?: CallerProof },
 ) {
   try {
-    // R19: the signed httpOnly cookie is the authorization decision. It runs
-    // BEFORE the callerProof check and BEFORE the first DB read, so an
-    // unauthorized caller never makes the server touch `payments`. `callerProof`
-    // stays below as defense-in-depth — it is a value the client keeps in
-    // `localStorage`, so it can never be the primary gate (R19).
-    const access = await requireOrderAccess(trackingToken);
-    if (!access.ok) {
-      return { success: false, error: ORDER_ACCESS_DENIED_ERROR, reason: access.reason };
-    }
-
     // Validate caller if callerProof is provided
     if (options?.callerProof) {
       await verifyCallerProof(paymentId, options.callerProof);
@@ -91,9 +76,7 @@ export async function updateOrderStatus(
       .limit(1);
 
     if (!current) {
-      // R20: the cookie verified, so a missing row is about the ORDER — and
-      // re-minting cannot conjure one, so it must never read as reauth_required.
-      return { success: false, error: 'Pedido no encontrado', reason: 'order_not_found' };
+      return { success: false, error: 'Pedido no encontrado' };
     }
 
     const expectedVersion = current.version ?? 0;
@@ -115,28 +98,18 @@ export async function updateOrderStatus(
     });
 
     if (!result.success) {
-      // The cookie verified, so a refused transition is about the ORDER's state.
-      return { success: false, error: result.error, reason: 'order_not_actionable' };
+      return { success: false, error: result.error };
     }
 
     revalidatePath('/[slug]/order/[token]', 'page');
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Error al actualizar el estado';
-    if (message === 'No autorizado') {
-      // The access cookie verified; it is the `localStorage` proof that belongs
-      // to somebody else (a shared device, a stale marker). Re-minting the
-      // cookie would not change that, so this is NOT reauth_required — and the
-      // order is fine, so it is NOT order_not_actionable either (R20).
-      return { success: false, error: message, reason: 'caller_proof_mismatch' };
-    }
-    if (message === 'Pedido no encontrado') {
-      return { success: false, error: message, reason: 'order_not_found' };
+    if (message === 'No autorizado' || message === 'Pedido no encontrado') {
+      return { success: false, error: message };
     }
     console.error('[Action Error] updateOrderStatus:', error);
-    // Unclassified: a dead socket is not an authorization decision, and telling
-    // the buyer to re-verify would be a loop that cannot help.
-    return { success: false, error: 'Error al actualizar el estado', reason: 'generic' };
+    return { success: false, error: 'Error al actualizar el estado' };
   }
 }
 
@@ -366,8 +339,6 @@ export async function clearOrderAccessCookie(trackingToken: string): Promise<voi
 export interface ReportIssueV2Result {
   success: boolean;
   error?: string;
-  /** R20: a refusal is never a bare boolean — the UI branches on this. */
-  reason?: OrderAccessRefusalReason;
 }
 
 /**
@@ -382,21 +353,12 @@ export async function reportIssueV2(
   callerProof?: CallerProof,
 ): Promise<ReportIssueV2Result> {
   try {
-    // R19: the signed httpOnly cookie is the authorization decision, checked
-    // before the callerProof block and before the first DB read.
-    const access = await requireOrderAccess(trackingToken);
-    if (!access.ok) {
-      return { success: false, error: ORDER_ACCESS_DENIED_ERROR, reason: access.reason };
-    }
-
     // Validate caller if callerProof is provided
     if (callerProof) {
       try {
         await verifyCallerProof(paymentId, callerProof);
       } catch {
-        // Cookie verified, proof does not belong to this buyer — see the twin
-        // branch in `updateOrderStatus` (R20).
-        return { success: false, error: 'No autorizado', reason: 'caller_proof_mismatch' };
+        return { success: false, error: 'No autorizado' };
       }
     }
 
@@ -407,7 +369,7 @@ export async function reportIssueV2(
       .limit(1);
 
     if (!payment) {
-      return { success: false, error: 'Pedido no encontrado', reason: 'order_not_found' };
+      return { success: false, error: 'Pedido no encontrado' };
     }
 
     const result = await transition({
@@ -419,15 +381,13 @@ export async function reportIssueV2(
     });
 
     if (!result.success) {
-      // The cookie verified, so a refused transition is about the ORDER's state.
-      return { success: false, error: result.error, reason: 'order_not_actionable' };
+      return { success: false, error: result.error };
     }
 
     revalidatePath('/[slug]/order/[token]', 'page');
     return { success: true };
   } catch (error) {
     console.error('[reportIssueV2] Error:', error);
-    // Unclassified: a thrown error is not an authorization decision (R20).
-    return { success: false, error: 'Error al reportar el problema', reason: 'generic' };
+    return { success: false, error: 'Error al reportar el problema' };
   }
 }
