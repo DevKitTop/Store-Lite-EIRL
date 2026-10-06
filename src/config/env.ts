@@ -44,6 +44,16 @@ export const env = {
   // En producción, debe ser un string aleatorio fuerte. Si no se configura,
   // se usa un fallback para dev — pero OJO, no es seguro para producción.
   otpHashSecret: process.env.OTP_HASH_SECRET || 'dev-fallback-otp-secret-not-for-production',
+  // ORDER_ACCESS_COOKIE_SECRET — HMAC secret for the signed `order_access_{token}`
+  //   cookie that upgrades an order page from its PII-free projection to the full
+  //   row (server-side only).
+  //   DELIBERATELY INVERTED from `otpHashSecret` above, which falls back to a
+  //   known dev string. An OTP hash is integrity-only, so a guessable fallback is
+  //   merely embarrassing; this secret gates an ACCESS DECISION, so a known
+  //   fallback would mean an unset PRODUCTION secret still verifies cookies —
+  //   i.e. it would silently AUTHORIZE instead of denying. Hence `''`, and
+  //   `verifyOrderAccessCookie` treats `''` as "nothing verifies".
+  orderAccessCookieSecret: process.env.ORDER_ACCESS_COOKIE_SECRET || '',
   // CRON_SECRET / cron_secret — protege los endpoints cron contra acceso público.
   //   Las llamadas desde Supabase pg_cron deben incluir este token.
   cronSecret: process.env.CRON_SECRET || process.env.cron_secret || '',
@@ -65,6 +75,19 @@ export const env = {
   metaPixelId: process.env.NEXT_PUBLIC_META_PIXEL_ID || '',
   metaCapiAccessToken: process.env.META_CAPI_ACCESS_TOKEN || '',
   metaTestEventCode: process.env.META_TEST_EVENT_CODE || '',
+
+  // YCloud WhatsApp Embedded Signup (Server-side only)
+  //   YCLOUD_API_KEY: Tech Partner API key
+  //   YCLOUD_WABA_ID: Store Lite's WABA ID in YCloud
+  //   YCLOUD_WEBHOOK_SECRET: Webhook signature verification secret
+  ycloudApiKey: process.env.YCLOUD_API_KEY || '',
+  ycloudWabaId: process.env.YCLOUD_WABA_ID || '',
+  ycloudWebhookSecret: process.env.YCLOUD_WEBHOOK_SECRET || '',
+  // WhatsApp anti-spam rate limiting (per channel/seller) — protects the Meta
+  // quality rating. Kept as STRINGS on purpose; parsing lives in the send
+  // guards (src/core/whatsapp/guards/whatsappSendGuards.ts). Defaults are safe.
+  whatsappRateLimitPerWindow: process.env.WHATSAPP_RATE_LIMIT_PER_WINDOW || '100',
+  whatsappRateLimitWindowMinutes: process.env.WHATSAPP_RATE_LIMIT_WINDOW_MINUTES || '5',
 } as const;
 
 // Optional: Add validation here to throw early if vars are missing
@@ -93,6 +116,16 @@ if (!process.env.OTP_HASH_SECRET) {
   );
 }
 
+// Order access cookie secret: warn-if-missing beside the OTP precedent. Note the
+// asymmetry with the message above — here the unset state denies everything, it
+// does not fall back.
+if (!process.env.ORDER_ACCESS_COOKIE_SECRET) {
+  console.warn(
+    '[Orders] ORDER_ACCESS_COOKIE_SECRET not set. Order pages will serve the PII-free ' +
+      'projection and never grant full access. Set a strong random string in production.',
+  );
+}
+
 // Meta Pixel / CAPI validation — warn-if-missing, never crash.
 // El pixel funciona sin token CAPI; CAPI no envía nada sin token.
 if (!env.metaPixelId) {
@@ -100,4 +133,16 @@ if (!env.metaPixelId) {
 }
 if (!env.metaCapiAccessToken) {
   console.warn('META_CAPI_ACCESS_TOKEN is missing. Meta CAPI events will not be sent.');
+}
+
+// YCloud WhatsApp validation
+if (!env.ycloudApiKey || !env.ycloudWabaId) {
+  console.warn(
+    'YCloud environment variables (YCLOUD_API_KEY, YCLOUD_WABA_ID) are missing. WhatsApp Embedded Signup will not work.',
+  );
+}
+if (!env.ycloudWebhookSecret) {
+  console.warn(
+    'YCLOUD_WEBHOOK_SECRET is missing. Webhook signature verification will be skipped in development.',
+  );
 }

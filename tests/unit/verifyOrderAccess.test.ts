@@ -29,28 +29,54 @@
 // OWN client id: the store is module scope and buckets live 15 minutes.
 // =====================================================
 
-import { verifyOrderAccess } from '@/app/[slug]/(app)/order/[token]/actions';
+import {
+  verifyOrderAccess,
+  verifyOrderByGoogleIdentity,
+} from '@/app/[slug]/(app)/order/[token]/actions';
 import { RATE_LIMITS, type checkRateLimit as CheckRateLimit } from '@/lib/rateLimit';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // ── Mocks ────────────────────────────────────────────
 
-const { holder, mockHeaders, mockHeadersFn, mockFindFirst, mockCheckRateLimit, realLimiter } =
-  vi.hoisted(() => {
-    const holder = new Map<string, string>();
-    return {
-      holder,
-      // A PLAIN OBJECT, not a Headers instance: `ReadonlyHeaders` from
-      // `await headers()` satisfies `{ get(name): string | null }` structurally.
-      mockHeaders: { get: (name: string) => holder.get(name) ?? null },
-      mockHeadersFn: vi.fn(),
-      mockFindFirst: vi.fn(),
-      mockCheckRateLimit: vi.fn(),
-      realLimiter: { current: null as null | typeof CheckRateLimit },
-    };
-  });
+/** One recorded `cookieStore.set(...)` call. */
+interface RecordedCookie {
+  name: string;
+  value: string;
+  maxAge?: number;
+  httpOnly?: boolean;
+  sameSite?: string;
+  path?: string;
+}
 
-vi.mock('next/headers', () => ({ headers: mockHeadersFn }));
+const {
+  holder,
+  mockHeaders,
+  mockHeadersFn,
+  mockCookiesFn,
+  cookieStore,
+  cookieWrites,
+  mockFindFirst,
+  mockCheckRateLimit,
+  realLimiter,
+} = vi.hoisted(() => {
+  const holder = new Map<string, string>();
+  const cookieStore = new Map<string, string>();
+  return {
+    holder,
+    // A PLAIN OBJECT, not a Headers instance: `ReadonlyHeaders` from
+    // `await headers()` satisfies `{ get(name): string | null }` structurally.
+    mockHeaders: { get: (name: string) => holder.get(name) ?? null },
+    mockHeadersFn: vi.fn(),
+    mockCookiesFn: vi.fn(),
+    cookieStore,
+    cookieWrites: [] as RecordedCookie[],
+    mockFindFirst: vi.fn(),
+    mockCheckRateLimit: vi.fn(),
+    realLimiter: { current: null as null | typeof CheckRateLimit },
+  };
+});
+
+vi.mock('next/headers', () => ({ headers: mockHeadersFn, cookies: mockCookiesFn }));
 
 vi.mock('@/core/database/client', () => ({
   db: { query: { payments: { findFirst: mockFindFirst } } },
@@ -75,6 +101,7 @@ vi.mock('@/lib/rateLimit', async (importOriginal) => {
 const AUTH_MAX = RATE_LIMITS.auth.maxRequests; // 10 requests / 15 min
 const TOKEN = 'tok-verify-1';
 const CORRECT_ORDER = '#4242';
+const GOOGLE_UID = 'google-uid-1';
 
 /** The payment exists; only the caller's orderNumber can mismatch it. */
 const PAYMENT = { orderNumber: CORRECT_ORDER };
@@ -95,7 +122,23 @@ function useNoClientHeader() {
 
 beforeEach(() => {
   holder.clear();
+  cookieStore.clear();
+  cookieWrites.length = 0;
   mockHeadersFn.mockImplementation(async () => mockHeaders);
+  mockCookiesFn.mockImplementation(async () => ({
+    get: (name: string) => {
+      const value = cookieStore.get(name);
+      return value === undefined ? undefined : { name, value };
+    },
+    set: (cookie: RecordedCookie) => {
+      cookieWrites.push(cookie);
+      if (cookie.maxAge === 0) cookieStore.delete(cookie.name);
+      else cookieStore.set(cookie.name, cookie.value);
+    },
+    delete: (name: string) => {
+      cookieStore.delete(name);
+    },
+  }));
   mockFindFirst.mockResolvedValue(PAYMENT);
   mockCheckRateLimit.mockImplementation(realLimiter.current!);
 });
@@ -195,5 +238,319 @@ describe('verifyOrderAccess — a verified access refunds the budget', () => {
 
     // A global reset would have handed the sibling its full budget back too.
     expect(await verifyOrderAccess(TOKEN, sibling, '#0000')).toMatchObject({ rateLimited: true });
+  });
+});
+
+// ── Suite: the success arms mint the access cookie (R13) ─
+//
+// A verified access is what upgrades `/{slug}/order/{token}` from its PII-free
+// projection to the full payment row. So the mint is not decoration on the
+// success path — it IS the capability, and R13 pins both halves: it must happen
+// on every success, and it must NOT happen on any refusal.
+
+describe('verifyOrderAccess — verified access mints the order access cookie', () => {
+  test('a verified dni + order number mints the signed marker for THIS order', async () => {
+    useClientIp('203.0.113.110');
+
+    expect(await verifyOrderAccess(TOKEN, '87654321', CORRECT_ORDER)).toEqual({ success: true });
+
+    expect(cookieWrites).toHaveLength(1);
+    const cookie = cookieWrites[0];
+    expect(cookie.name).toBe(`order_access_${TOKEN}`);
+    expect(cookie.httpOnly).toBe(true);
+    expect(cookie.maxAge).toBe(3600);
+    expect(cookie.sameSite).toBe('lax');
+    expect(cookie.path).toBe('/');
+    // `{expMs}.{base64url signature}` — the marker is signed, not a bare flag.
+    expect(cookie.value).toMatch(/^\d+\.[A-Za-z0-9_-]+$/);
+  });
+
+  test('a Google-identity match mints the marker too', async () => {
+    useClientIp('203.0.113.111');
+    mockFindFirst.mockResolvedValue({
+      id: 'pay-google-1',
+      orderNumber: CORRECT_ORDER,
+      metadata: { customerAuth: { authId: GOOGLE_UID } },
+    });
+
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID)).toEqual({ success: true });
+
+    expect(cookieWrites).toHaveLength(1);
+    expect(cookieWrites[0].name).toBe(`order_access_${TOKEN}`);
+    expect(cookieWrites[0].httpOnly).toBe(true);
+    expect(cookieWrites[0].maxAge).toBe(3600);
+  });
+});
+
+// ── Suite: real round-trip between mint and verify (R13) ─
+// A cookie value that matches a shape regex is not enough if mint and verify
+// disagree on the secret or payload layout. This asserts the real modules
+// agree.
+
+describe('verifyOrderAccess — mint/verify round-trip with known secret', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  test('a minted cookie verifies successfully for the same token', async () => {
+    vi.stubEnv('ORDER_ACCESS_COOKIE_SECRET', 'test-secret-key-32-chars-long!!');
+    vi.resetModules();
+
+    const { verifyOrderAccessCookie } = await import('@/lib/orderAccessCookie');
+    const { verifyOrderAccess: verifyOrderAccessFresh } =
+      await import('@/app/[slug]/(app)/order/[token]/actions');
+
+    useClientIp('203.0.113.200');
+    expect(await verifyOrderAccessFresh(TOKEN, '87654321', CORRECT_ORDER)).toEqual({
+      success: true,
+    });
+
+    expect(cookieWrites).toHaveLength(1);
+    expect(await verifyOrderAccessCookie(TOKEN)).toBe(true);
+    vi.unstubAllEnvs();
+  });
+
+  test('a cookie minted for token A does not verify for token B', async () => {
+    vi.stubEnv('ORDER_ACCESS_COOKIE_SECRET', 'test-secret-key-32-chars-long!!');
+    vi.resetModules();
+
+    const { verifyOrderAccessCookie } = await import('@/lib/orderAccessCookie');
+    const { verifyOrderAccess: verifyOrderAccessFresh } =
+      await import('@/app/[slug]/(app)/order/[token]/actions');
+
+    useClientIp('203.0.113.201');
+    const tokenA = TOKEN;
+    const tokenB = 'different-token-123';
+
+    expect(await verifyOrderAccessFresh(tokenA, '87654321', CORRECT_ORDER)).toEqual({
+      success: true,
+    });
+
+    expect(cookieWrites).toHaveLength(1);
+    expect(await verifyOrderAccessCookie(tokenA)).toBe(true);
+    expect(await verifyOrderAccessCookie(tokenB)).toBe(false);
+    vi.unstubAllEnvs();
+  });
+});
+
+// ── Suite: a refusal must not touch the cookie store (R13) ─
+//
+// "MUST NOT touch" is stronger than "must not set". A refusal that cleared the
+// store would hand an attacker a way to log a real buyer out, and a refusal that
+// set anything at all would be an authorization primitive. So the assertion is
+// on an EMPTY write log — a delete shows up in the same log and fails it too.
+
+describe('verifyOrderAccess — a refusal leaves the cookie store untouched', () => {
+  test('a rate-limited caller gets no cookie', async () => {
+    useClientIp('203.0.113.112');
+    mockCheckRateLimit.mockReturnValue({ allowed: false, remaining: 0, resetInMs: 30_500 });
+
+    expect(await verifyOrderAccess(TOKEN, '87654321', CORRECT_ORDER)).toMatchObject({
+      rateLimited: true,
+    });
+
+    expect(cookieWrites).toEqual([]);
+    expect(cookieStore.size).toBe(0);
+  });
+
+  test('a wrong dni gets no cookie', async () => {
+    useClientIp('203.0.113.113');
+    // The lookup is `trackingToken AND buyerDni`; no row ⇒ this dni is not the
+    // buyer's. Same `!order` branch as an unknown token, different situation.
+    mockFindFirst.mockResolvedValue(null);
+
+    expect(await verifyOrderAccess(TOKEN, '11111111', CORRECT_ORDER)).toEqual({ success: false });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('an unknown order gets no cookie', async () => {
+    useClientIp('203.0.113.114');
+    mockFindFirst.mockResolvedValue(null);
+
+    expect(await verifyOrderAccess('tok-that-was-never-issued', '87654321', CORRECT_ORDER)).toEqual(
+      {
+        success: false,
+      },
+    );
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('an expired marker already in the store is left byte-identical, not cleared', async () => {
+    useClientIp('203.0.113.115');
+    // A buyer whose 1h marker lapsed. A failed re-verification must leave the
+    // stale cookie exactly as it found it — clearing it on a wrong guess would
+    // turn the gate into a logout primitive for anyone who knows a tracking URL.
+    const stale = '1.deadbeef';
+    cookieStore.set(`order_access_${TOKEN}`, stale);
+    mockFindFirst.mockResolvedValue(null);
+
+    expect(await verifyOrderAccess(TOKEN, '87654321', '#0000')).toEqual({ success: false });
+
+    expect(cookieWrites).toEqual([]);
+    expect(cookieStore.get(`order_access_${TOKEN}`)).toBe(stale);
+  });
+
+  test('a refused Google-identity match gets no cookie', async () => {
+    useClientIp('203.0.113.116');
+    mockFindFirst.mockResolvedValue({
+      id: 'pay-google-2',
+      orderNumber: CORRECT_ORDER,
+      metadata: { customerAuth: { authId: GOOGLE_UID } },
+    });
+
+    // Right token, wrong Google account.
+    expect(await verifyOrderByGoogleIdentity(TOKEN, 'somebody-elses-uid')).toEqual({
+      success: false,
+      reason: 'wrong_account',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a Google match on an order with no Google link gets no cookie', async () => {
+    useClientIp('203.0.113.117');
+    mockFindFirst.mockResolvedValue({
+      id: 'pay-google-3',
+      orderNumber: CORRECT_ORDER,
+      metadata: null,
+    });
+
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID)).toEqual({
+      success: false,
+      reason: 'no_google_link',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a Google flow with not_found leaves cookie store empty', async () => {
+    useClientIp('203.0.113.130');
+    mockFindFirst.mockResolvedValue(null);
+
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID)).toEqual({
+      success: false,
+      reason: 'not_found',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a Google flow with wrong_order leaves cookie store empty', async () => {
+    useClientIp('203.0.113.131');
+    mockFindFirst.mockResolvedValue({
+      id: 'pay-google-4',
+      orderNumber: CORRECT_ORDER,
+      metadata: { customerAuth: { authId: GOOGLE_UID } },
+    });
+
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID, '#WRONG')).toEqual({
+      success: false,
+      reason: 'wrong_order',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a Google flow with catch error leaves cookie store empty', async () => {
+    useClientIp('203.0.113.132');
+    mockFindFirst.mockRejectedValue(new Error('db error'));
+
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID)).toEqual({
+      success: false,
+      reason: 'error',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a Google flow with wrong_order when orderNumber matches after trim logic check', async () => {
+    useClientIp('203.0.113.133');
+    mockFindFirst.mockResolvedValue({
+      id: 'pay-google-5',
+      orderNumber: CORRECT_ORDER,
+      metadata: { customerAuth: { authId: GOOGLE_UID } },
+    });
+
+    // Case where provided orderNumber doesn't match after trimming
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID, '  #DIFFERENT  ')).toEqual({
+      success: false,
+      reason: 'wrong_order',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a Google flow with wrong_order when provided is falsy after trim', async () => {
+    useClientIp('203.0.113.134');
+    mockFindFirst.mockResolvedValue({
+      id: 'pay-google-6',
+      orderNumber: CORRECT_ORDER,
+      metadata: { customerAuth: { authId: GOOGLE_UID } },
+    });
+
+    expect(await verifyOrderByGoogleIdentity(TOKEN, GOOGLE_UID, '   ')).toEqual({
+      success: false,
+      reason: 'wrong_order',
+    });
+
+    expect(cookieWrites).toEqual([]);
+  });
+});
+
+// ── Suite: R15 — `orderNumber IS NULL` must not self-authorize ─
+//
+// Both sides normalize to `null`, so `null !== null` is FALSE: a bare DNI (the
+// `?dni=` auto-auth path, which sends no order number) was let straight into any
+// order whose `orderNumber` happened to be NULL. That was survivable while the
+// page only rendered; with success now minting a full-access cookie it is not.
+
+describe('verifyOrderAccess — an order with no orderNumber is not auto-authorized (R15)', () => {
+  test('a null orderNumber + no supplied number is refused, and mints nothing', async () => {
+    useClientIp('203.0.113.118');
+    mockFindFirst.mockResolvedValue({ orderNumber: null });
+
+    expect(await verifyOrderAccess(TOKEN, '87654321')).toEqual({ success: false });
+
+    expect(cookieWrites).toEqual([]);
+  });
+
+  test('a real matching orderNumber still succeeds (the conjunct is not a lockout)', async () => {
+    useClientIp('203.0.113.119');
+    mockFindFirst.mockResolvedValue({ orderNumber: CORRECT_ORDER });
+
+    expect(await verifyOrderAccess(TOKEN, '87654321', CORRECT_ORDER)).toEqual({ success: true });
+
+    expect(cookieWrites).toHaveLength(1);
+  });
+
+  test('a numbered order with no supplied orderNumber is still refused (unchanged)', async () => {
+    useClientIp('203.0.113.120');
+    mockFindFirst.mockResolvedValue({ orderNumber: CORRECT_ORDER });
+
+    expect(await verifyOrderAccess(TOKEN, '87654321')).toEqual({ success: false });
+
+    expect(cookieWrites).toEqual([]);
+  });
+});
+
+// ── Suite: minting is inside the guard, so it cannot escape ─
+//
+// The mint runs inside `verifyOrderAccess`'s existing try/catch (design D10).
+// That is deliberate but it is a trade-off, so it is pinned rather than left to
+// chance: a `cookies()` failure degrades to `{success:false}` — a verified buyer
+// is told no instead of receiving a half-minted authorization.
+
+describe('verifyOrderAccess — a cookie-store failure degrades to a refusal', () => {
+  test('an unavailable cookie store turns a verified access into {success:false}', async () => {
+    useClientIp('203.0.113.121');
+    mockCookiesFn.mockImplementation(async () => {
+      throw new Error('Cookies can only be modified in a Server Action or Route Handler');
+    });
+
+    expect(await verifyOrderAccess(TOKEN, '87654321', CORRECT_ORDER)).toEqual({ success: false });
   });
 });
