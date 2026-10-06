@@ -16,17 +16,25 @@ export interface ServerTicketResult {
  * The server reads the real order data, renders via Satori, uploads to Supabase,
  * and returns the public URL.
  *
+ * The server accepts two proofs of access: an owner session, or the buyer's
+ * `trackingToken` (design D3). `trackingToken` is optional and omitted from the
+ * request body when the caller has none, so owner-authed callers keep sending
+ * exactly the body they sent before.
+ *
  * @param orderNumber - The order number to generate the ticket for
+ * @param forceRegenerate - Ask the server to rebuild an existing ticket (owner-only)
+ * @param trackingToken - The buyer's token, used as proof when there is no session
  * @returns The public URL of the generated ticket
  */
 export async function requestServerTicket(
   orderNumber: string,
   forceRegenerate?: boolean,
+  trackingToken?: string,
 ): Promise<ServerTicketResult> {
   const response = await fetch('/api/ticket/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ orderNumber, forceRegenerate }),
+    body: JSON.stringify({ orderNumber, forceRegenerate, trackingToken }),
   });
 
   const data = await response.json();

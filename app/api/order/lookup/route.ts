@@ -1,20 +1,40 @@
 import { db } from '@/core/database/client';
 import { businesses, businessTeamMembers, payments } from '@/core/database/schema';
+import { checkOrderAccessRateLimit } from '@/lib/orderAccessRateLimit';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 
 /**
  * POST /api/order/lookup
  * Busca el tracking_token usando DNI, Nro de Orden y businessSlug
  * 🔒 SECURITY: Blocks authenticated sellers/team members from looking up
  * orders from their own business to prevent self-confirmation attacks.
+ * 🔒 SECURITY: Auth-intent rate limit keyed (IP, dni) — BEFORE zod, so a
+ * brute-forcer cannot probe for free by sending malformed bodies (C11 / D2).
  */
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.json();
 
-    // 0. Validate Data using Zod
+    // 0. Rate limit BEFORE validation and before any database access.
+    const rateLimit = checkOrderAccessRateLimit(request, rawBody);
+    if (!rateLimit.allowed) {
+      const retryAfter = String(Math.ceil(rateLimit.resetInMs / 1000));
+      return NextResponse.json(
+        { error: 'Too many requests. Please try again later.' },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': retryAfter,
+            'X-RateLimit-Remaining': '0',
+            'X-RateLimit-Reset': retryAfter,
+          },
+        },
+      );
+    }
+
+    // 1. Validate Data using Zod
     const { lookupOrderSchema } = await import('@/features/billing/schemas');
     const validationResult = lookupOrderSchema.safeParse(rawBody);
 
