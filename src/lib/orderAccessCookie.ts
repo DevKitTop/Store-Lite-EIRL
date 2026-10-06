@@ -73,7 +73,7 @@ export function orderAccessCookieName(trackingToken: string): string {
 }
 
 /** base64url HMAC-SHA256 over `{version}|{trackingToken}|{expMs}`. */
-export function sign(secret: string, trackingToken: string, expMs: number): string {
+function sign(secret: string, trackingToken: string, expMs: number): string {
   return createHmac('sha256', secret)
     .update(`${PAYLOAD_VERSION}|${trackingToken}|${expMs}`, 'utf8')
     .digest('base64url');

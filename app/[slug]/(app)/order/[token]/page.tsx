@@ -514,7 +514,8 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
     <OrderAuthGate
       token={token}
       businessName={order.business.name}
-      orderNumber={order.orderNumber || ''}
+      orderNumber={order.orderNumber}
+      businessSlug={slug}
       serverPreAuth={serverPreAuth}
     >
       <div className="order-root">
