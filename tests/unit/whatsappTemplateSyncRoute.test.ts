@@ -104,11 +104,12 @@ function syncRequest(): Request {
 function stubYCloudStatus(status: string | undefined): void {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () =>
-      new Response(JSON.stringify({ id: 'meta-tpl-1', status }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ id: 'meta-tpl-1', status }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
     ),
   );
 }

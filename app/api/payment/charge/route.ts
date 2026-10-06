@@ -14,6 +14,7 @@ import {
   products,
 } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
+import { CulqiReadError, getCulqiOrder, isCulqiOrderPaid } from '@/core/payments/culqiOrders';
 import { completeIdempotencyKey, reserveIdempotencyKey } from '@/core/payments/idempotency';
 import { paymentRateLimiter } from '@/core/payments/rateLimiter';
 import { generateTrackingToken } from '@/core/utils/trackingToken';
@@ -28,10 +29,85 @@ import { sendOrderStatusSms } from '@/lib/twilio/orderSms';
 import { splitFullName } from '@/shared/payments/fullName';
 import type { CulqiChargeResponse } from '@/types/culqi';
 import { decrypt } from '@/utils/crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
 const LOW_STOCK_THRESHOLD = 5;
+
+// Buyer-facing copy for a Culqi order that is not acknowledged as paid yet.
+// `chargePayment` throws `data.details || data.error`, so this text lives in
+// `error` and the response MUST NOT carry a `details` key.
+const ORDER_NOT_PAID_MESSAGE =
+  'Tu pago todavía se está confirmando con la pasarela. Esperá unos segundos e intentá de nuevo.';
+
+// Buyer-facing copy for a charge whose amount/currency/product does not match the
+// Culqi order that was actually verified. Same R12 discipline: the text lives in
+// `error` (because `chargePayment` throws `data.details || data.error`) and the
+// response MUST NOT carry a `details` key.
+const ORDER_AMOUNT_MISMATCH_MESSAGE =
+  'El monto de la orden no coincide con el pago solicitado. Contactá al negocio para resolverlo.';
+const ORDER_CURRENCY_MISMATCH_MESSAGE =
+  'La moneda de la orden no coincide con el pago solicitado. Contactá al negocio para resolverlo.';
+const ORDER_PRODUCT_MISMATCH_MESSAGE =
+  'La orden no corresponde a este producto. Contactá al negocio para resolverlo.';
+
+// Single source of truth for the buyer's 500 message: the response body and the
+// idempotency failure record must agree, or a replayed key would return a
+// different text than the original attempt.
+const INTERNAL_ERROR_MESSAGE = 'Error interno procesando el pago';
+
+/**
+ * `payment_orders.amount` is `decimal(10,2)` written in SOLES by create-order
+ * (`String(amount / 100)`), while the request amount is minor units. Returns the
+ * order amount in minor units, or `null` when the stored value is not a finite
+ * number — `null` is a DENY, never a pass: `NaN !== x` is true but a future
+ * `Number.isFinite`-free refactor must not be able to let it slip through.
+ */
+function orderAmountToMinorUnits(stored: unknown): number | null {
+  const soles = typeof stored === 'string' || typeof stored === 'number' ? Number(stored) : NaN;
+  if (!Number.isFinite(soles)) return null;
+  return Math.round(soles * 100);
+}
+
+/**
+ * `payment_orders` has NO productId column: the binding lives in
+ * `metadata.productId` (create-order writes it only when a product was given, so
+ * a product-less order legitimately has none).
+ *
+ * - `'absent'`  → nothing to bind against, the caller must ALLOW.
+ * - `{ id }`    → the order is bound to that product.
+ * - `'invalid'` → a binding is present but unusable (not a string). Fail closed:
+ *                 an attacker cannot skip the check with a non-string value.
+ */
+type OrderProductBinding = 'absent' | 'invalid' | { id: string };
+
+function readOrderProductBinding(metadata: unknown): OrderProductBinding {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return 'absent';
+  const bound = (metadata as { productId?: unknown }).productId;
+  if (bound === undefined || bound === null) return 'absent';
+  if (typeof bound !== 'string' || bound === '') return 'invalid';
+  return { id: bound };
+}
+
+/** Map a Culqi read failure: an abort is 504, anything else is a 502 transport fault. */
+function culqiReadErrorResponse(err: unknown): NextResponse {
+  if (err instanceof CulqiReadError && err.kind === 'timeout') {
+    return NextResponse.json({ error: 'Timeout al leer la orden de Culqi' }, { status: 504 });
+  }
+  return NextResponse.json({ error: 'Error de conexión con la pasarela' }, { status: 502 });
+}
+
+/** Only the fields `useCulqiCallback` reads — never the raw row with buyer PII. */
+function projectReplayPayment(payment: typeof payments.$inferSelect) {
+  return {
+    id: payment.id,
+    trackingToken: payment.trackingToken,
+    orderNumber: payment.orderNumber,
+    amount: payment.amount,
+    currency: payment.currency,
+    status: payment.status,
+  };
+}
 
 // ─── Internal types ─────────────────────────────────────────────────
 interface ShippingInfoData {
@@ -170,9 +246,15 @@ async function executeCulqiCharge({
 
 // eslint-disable-next-line complexity, sonarjs/cognitive-complexity
 export async function POST(request: Request) {
+  // Declared OUTSIDE the try so the catch block can see them: a key that is
+  // reserved and then abandoned at `processing` locks the buyer out forever.
+  let reservedIdempotencyKey: string | null = null;
+  // Set the moment the success path reaches its own completion, so the catch
+  // block can never re-complete (and downgrade) a key for a committed payment.
+  let successPathCompletedKey = false;
+
   try {
     const idempotencyKey = request.headers.get('Idempotency-Key');
-    let reservedIdempotencyKey: string | null = null;
 
     const rawBody = await request.json();
 
@@ -277,6 +359,93 @@ export async function POST(request: Request) {
     if (isOrderFlow) {
       // ORDER-BASED: Culqi Checkout ya cobró contra la orden
       // Solo creamos el payment en DB y marcamos la orden como pagada
+      const orderRow = await db.query.paymentOrders.findFirst({
+        where: and(
+          eq(paymentOrders.culqiOrderId, culqiOrderId as string),
+          eq(paymentOrders.businessId, businessId),
+        ),
+        // Projected on purpose: the gate needs the money fields and the product
+        // binding, never buyerEmail/buyerPhone. Reading the full row would pull
+        // buyer PII into memory for a check that never serialises it.
+        columns: {
+          amount: true,
+          currency: true,
+          metadata: true,
+        },
+      });
+
+      if (!orderRow) {
+        return NextResponse.json(
+          { success: false, error: 'Orden de pago no encontrada' },
+          { status: 404 },
+        );
+      }
+
+      // ─── BINDING: the verified payment must be what gets recorded ───
+      // A paid Culqi order only authorises ITS OWN amount and product. Without
+      // this binding, a buyer can pay a S/ 1 order and have the transaction
+      // record + decrement stock for a S/ 1000 product of the same business
+      // (underpayment + fabricated financial record). Both checks run before the
+      // Culqi read (no upstream round-trip is wasted) and before
+      // reserveIdempotencyKey (no key is burned).
+      const orderAmountMinor = orderAmountToMinorUnits(orderRow.amount);
+      if (orderAmountMinor === null || orderAmountMinor !== amount) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: ORDER_AMOUNT_MISMATCH_MESSAGE,
+            code: 'ORDER_AMOUNT_MISMATCH',
+          },
+          { status: 402 },
+        );
+      }
+
+      if (currency !== orderRow.currency) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: ORDER_CURRENCY_MISMATCH_MESSAGE,
+            code: 'ORDER_CURRENCY_MISMATCH',
+          },
+          { status: 402 },
+        );
+      }
+
+      const productBinding = readOrderProductBinding(orderRow.metadata);
+      const productIsBound =
+        productBinding === 'invalid' ||
+        (productBinding !== 'absent' && productBinding.id !== productId);
+      if (productIsBound) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: ORDER_PRODUCT_MISMATCH_MESSAGE,
+            code: 'ORDER_PRODUCT_MISMATCH',
+          },
+          { status: 402 },
+        );
+      }
+
+      const { secretKey, error: keyError } = await resolveCulqiSecretKey(businessId);
+      if (keyError) return keyError;
+
+      let culqiOrderPaid = false;
+      try {
+        culqiOrderPaid = isCulqiOrderPaid(await getCulqiOrder(culqiOrderId as string, secretKey));
+      } catch (err) {
+        return culqiReadErrorResponse(err);
+      }
+
+      if (!culqiOrderPaid) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: ORDER_NOT_PAID_MESSAGE,
+            code: 'ORDER_NOT_PAID',
+          },
+          { status: 402 },
+        );
+      }
     } else if (isTokenFlow) {
       // TOKEN-BASED: Ejecutar el cargo contra Culqi con la key del negocio
       const { secretKey, error: keyError } = await resolveCulqiSecretKey(businessId);
@@ -310,13 +479,16 @@ export async function POST(request: Request) {
     const culqiChargeIdForLookup = culqiOrderId || culqiData?.id || null;
     if (culqiChargeIdForLookup) {
       const existingPayment = await db.query.payments.findFirst({
-        where: eq(payments.culqiChargeId, culqiChargeIdForLookup),
+        where: and(
+          eq(payments.culqiChargeId, culqiChargeIdForLookup),
+          eq(payments.businessId, businessId),
+        ),
       });
 
       if (existingPayment) {
         const responseBody = {
           success: true,
-          payment: existingPayment,
+          payment: projectReplayPayment(existingPayment),
           charge: {
             id: culqiChargeIdForLookup,
             status: 'paid',
@@ -391,10 +563,22 @@ export async function POST(request: Request) {
 
         // 5b. Si es pago contra orden, marcar la orden como pagada
         if (culqiOrderId) {
-          await tx
+          const flipped = await tx
             .update(paymentOrders)
             .set({ status: 'paid', updatedAt: sql`now()` })
-            .where(eq(paymentOrders.culqiOrderId, culqiOrderId));
+            .where(
+              and(
+                eq(paymentOrders.culqiOrderId, culqiOrderId),
+                eq(paymentOrders.businessId, businessId),
+              ),
+            )
+            .returning({ id: paymentOrders.id });
+
+          // Fail closed: a 0-row flip (or an undefined result) means the order we
+          // verified is not the row we would mark paid, so abort the transaction.
+          if (flipped?.length !== 1) {
+            throw new Error('payment_orders flip affected no row');
+          }
         }
 
         // 5. Actualizar Stock
@@ -478,12 +662,32 @@ export async function POST(request: Request) {
       },
     };
 
+    successPathCompletedKey = true;
     await completeIdempotencyKey(reservedIdempotencyKey, responseBody, 200);
 
     return NextResponse.json(responseBody);
   } catch (error) {
     console.error('[payment/charge] Critical Error:', error);
-    return NextResponse.json({ error: 'Error interno procesando el pago' }, { status: 500 });
+
+    // A key left at `processing` with a null body is a PERMANENT lockout: the
+    // client key is deterministic (`charge-${token || culqiOrderId}`,
+    // paymentApi.ts:68), `reserveIdempotencyKey` answers `{type:'processing'}`
+    // for it forever, and no reaper exists for `payment_idempotency_keys`. So a
+    // throw after the reservation must complete the key with the failure.
+    if (reservedIdempotencyKey && !successPathCompletedKey) {
+      try {
+        await completeIdempotencyKey(
+          reservedIdempotencyKey,
+          { error: INTERNAL_ERROR_MESSAGE },
+          500,
+        );
+      } catch (completeError) {
+        // Never let the cleanup mask the original failure.
+        console.error('[payment/charge] Idempotency completion error:', completeError);
+      }
+    }
+
+    return NextResponse.json({ error: INTERNAL_ERROR_MESSAGE }, { status: 500 });
   }
 }
 

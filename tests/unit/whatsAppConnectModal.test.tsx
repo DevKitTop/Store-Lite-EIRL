@@ -9,18 +9,16 @@
 // 2. Expired state: when expiresAt is in the past the modal renders
 //    the expired UI and never starts polling.
 
+import { WhatsAppConnectModal } from '@/features/whatsapp/components/WhatsAppConnectModal';
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WhatsAppConnectModal } from '@/features/whatsapp/components/WhatsAppConnectModal';
 
 const FAR_FUTURE = '2099-12-31T23:59:59.000Z';
 const PAST = '2020-01-01T00:00:00.000Z';
 
 /** Stub global fetch; returns the given status payload. */
 function stubStatusFetch(status: string) {
-  const fetchMock = vi.fn(async () =>
-    new Response(JSON.stringify({ status }), { status: 200 }),
-  );
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status }), { status: 200 }));
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }

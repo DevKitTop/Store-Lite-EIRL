@@ -5,15 +5,7 @@
 // =====================================================
 
 import { sql } from 'drizzle-orm';
-import {
-  boolean,
-  index,
-  pgTable,
-  text,
-  timestamp,
-  uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { boolean, index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 import { businesses } from './businesses';
 
@@ -39,7 +31,9 @@ export const whatsappChannels = pgTable(
   },
   (table) => ({
     businessIdIdx: uniqueIndex('uq_whatsapp_channels_business_id').on(table.businessId),
-    ycloudPhoneNumberIdIdx: uniqueIndex('uq_whatsapp_channels_ycloud_phone_number_id').on(table.ycloudPhoneNumberId),
+    ycloudPhoneNumberIdIdx: uniqueIndex('uq_whatsapp_channels_ycloud_phone_number_id').on(
+      table.ycloudPhoneNumberId,
+    ),
     isActiveIdx: index('idx_whatsapp_channels_is_active').on(table.isActive),
     createdAtIdx: index('idx_whatsapp_channels_created_at').on(table.createdAt.desc()),
   }),
@@ -70,7 +64,9 @@ export const whatsappConversations = pgTable(
     customerPhoneIdx: index('idx_whatsapp_conversations_customer_phone').on(table.customerPhone),
     metaBsuIdIdx: index('idx_whatsapp_conversations_meta_bsu_id').on(table.metaBsuId),
     statusIdx: index('idx_whatsapp_conversations_status').on(table.status),
-    lastMessageAtIdx: index('idx_whatsapp_conversations_last_message_at').on(table.lastMessageAt.desc()),
+    lastMessageAtIdx: index('idx_whatsapp_conversations_last_message_at').on(
+      table.lastMessageAt.desc(),
+    ),
     // One active conversation per (channel, metaBsuId) for deduplication
     activePerChannelMetaBsuIdx: uniqueIndex('uq_whatsapp_conversations_active_per_channel_meta_bsu')
       .on(table.channelId, table.metaBsuId)
@@ -101,7 +97,9 @@ export const whatsappMessages = pgTable(
     ycloudMessageId: text('ycloud_message_id').notNull().unique(),
     status: text('status', {
       enum: ['accepted', 'sent', 'delivered', 'read', 'failed'],
-    }).notNull().default('accepted'),
+    })
+      .notNull()
+      .default('accepted'),
     metaPrice: text('meta_price'),
     metaCurrency: text('meta_currency'),
     errorCode: text('error_code'),
@@ -112,7 +110,9 @@ export const whatsappMessages = pgTable(
   (table) => ({
     conversationIdIdx: index('idx_whatsapp_messages_conversation_id').on(table.conversationId),
     channelIdIdx: index('idx_whatsapp_messages_channel_id').on(table.channelId),
-    ycloudMessageIdIdx: uniqueIndex('uq_whatsapp_messages_ycloud_message_id').on(table.ycloudMessageId),
+    ycloudMessageIdIdx: uniqueIndex('uq_whatsapp_messages_ycloud_message_id').on(
+      table.ycloudMessageId,
+    ),
     statusIdx: index('idx_whatsapp_messages_status').on(table.status),
     createdAtIdx: index('idx_whatsapp_messages_created_at').on(table.createdAt.desc()),
     conversationCreatedIdx: index('idx_whatsapp_messages_conversation_created').on(
@@ -136,7 +136,9 @@ export const whatsappTemplates = pgTable(
     category: text('category', { enum: ['marketing', 'utility', 'authentication'] }).notNull(),
     language: text('language').notNull().default('es'),
     body: text('body').notNull(),
-    metaStatus: text('meta_status', { enum: ['pending', 'approved', 'rejected'] }).default('pending'),
+    metaStatus: text('meta_status', { enum: ['pending', 'approved', 'rejected'] }).default(
+      'pending',
+    ),
     metaTemplateId: text('meta_template_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
@@ -145,7 +147,9 @@ export const whatsappTemplates = pgTable(
     channelIdIdx: index('idx_whatsapp_templates_channel_id').on(table.channelId),
     nameIdx: index('idx_whatsapp_templates_name').on(table.name),
     metaStatusIdx: index('idx_whatsapp_templates_meta_status').on(table.metaStatus),
-    metaTemplateIdIdx: uniqueIndex('uq_whatsapp_templates_meta_template_id').on(table.metaTemplateId),
+    metaTemplateIdIdx: uniqueIndex('uq_whatsapp_templates_meta_template_id').on(
+      table.metaTemplateId,
+    ),
     // Unique per (channelId, name) where channelId is not null
     channelNameIdx: uniqueIndex('uq_whatsapp_templates_channel_name')
       .on(table.channelId, table.name)

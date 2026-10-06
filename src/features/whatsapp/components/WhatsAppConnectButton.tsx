@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useCallback } from 'react';
 import { MessageSquare } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useCallback, useState } from 'react';
 import { WhatsAppConnectModal } from './WhatsAppConnectModal';
 
 interface WhatsAppConnectButtonProps {

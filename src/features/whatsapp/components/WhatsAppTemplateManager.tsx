@@ -86,7 +86,11 @@ export function isBaseTemplateCreated(templates: WhatsAppTemplate[], baseName: s
 
 // ─── Manager ────────────────────────────────────────────────
 
-export function WhatsAppTemplateManager({ channelId, open, onClose }: WhatsAppTemplateManagerProps) {
+export function WhatsAppTemplateManager({
+  channelId,
+  open,
+  onClose,
+}: WhatsAppTemplateManagerProps) {
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [creatingName, setCreatingName] = useState<string | null>(null);

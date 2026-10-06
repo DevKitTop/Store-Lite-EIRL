@@ -1,5 +1,3 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   WhatsAppTemplateManager,
   baseTemplateLabel,
@@ -9,6 +7,8 @@ import {
   templateStatusLabel,
   type WhatsAppTemplate,
 } from '@/features/whatsapp/components/WhatsAppTemplateManager';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const CHANNEL_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -52,17 +52,14 @@ function stubFetch(routes: Record<string, StubRoute | RouteFactory>): void {
         return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
       }
       const entry = routes[matchingKey];
-      const route: StubRoute =
-        typeof entry === 'function' ? entry() : entry;
+      const route: StubRoute = typeof entry === 'function' ? entry() : entry;
       return new Response(JSON.stringify(route.body ?? {}), { status: route.status ?? 200 });
     }),
   );
 }
 
 function renderManager(open = true) {
-  return render(
-    <WhatsAppTemplateManager channelId={CHANNEL_ID} open={open} onClose={() => {}} />,
-  );
+  return render(<WhatsAppTemplateManager channelId={CHANNEL_ID} open={open} onClose={() => {}} />);
 }
 
 // ── Pure helpers ─────────────────────────────────────────────
@@ -125,9 +122,24 @@ describe('WhatsAppTemplateManager', () => {
       'GET /api/seller/whatsapp/templates': {
         body: {
           templates: [
-            createTemplate({ id: 't1', name: 'order_confirmed', category: 'utility', metaStatus: 'approved' }),
-            createTemplate({ id: 't2', name: 'payment_reminder', category: 'marketing', metaStatus: 'rejected' }),
-            createTemplate({ id: 't3', name: 'delivery_update', category: 'authentication', metaStatus: 'pending' }),
+            createTemplate({
+              id: 't1',
+              name: 'order_confirmed',
+              category: 'utility',
+              metaStatus: 'approved',
+            }),
+            createTemplate({
+              id: 't2',
+              name: 'payment_reminder',
+              category: 'marketing',
+              metaStatus: 'rejected',
+            }),
+            createTemplate({
+              id: 't3',
+              name: 'delivery_update',
+              category: 'authentication',
+              metaStatus: 'pending',
+            }),
           ],
         },
       },
@@ -253,7 +265,9 @@ describe('WhatsAppTemplateManager', () => {
           synced: 1,
           total: 1,
           errors: [],
-          results: [{ name: 'order_confirmed', metaStatus: 'approved', metaTemplateId: 'ycloud-1' }],
+          results: [
+            { name: 'order_confirmed', metaStatus: 'approved', metaTemplateId: 'ycloud-1' },
+          ],
         },
       },
     });

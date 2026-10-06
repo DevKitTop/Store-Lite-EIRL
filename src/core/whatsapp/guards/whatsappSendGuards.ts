@@ -45,10 +45,7 @@ export interface RateLimitCheck {
  * Unparseable / non-positive / non-integer values fall back to the safe
  * Meta-friendly defaults (100 sends / 5 minutes).
  */
-export function resolveRateLimitConfig(
-  perWindow: string,
-  windowMinutes: string,
-): RateLimitConfig {
+export function resolveRateLimitConfig(perWindow: string, windowMinutes: string): RateLimitConfig {
   const parsedLimit = Number(perWindow);
   const parsedMinutes = Number(windowMinutes);
   const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? parsedLimit : 100;
@@ -65,9 +62,7 @@ export function resolveRateLimitConfig(
  * also updates on outbound sends and would extend the window forever).
  * If the customer never messaged first, the window is CLOSED.
  */
-export async function assertWithinServiceWindow(
-  conversationId: string,
-): Promise<ReplyWindowCheck> {
+export async function assertWithinServiceWindow(conversationId: string): Promise<ReplyWindowCheck> {
   const rows = await db
     .select({ createdAt: whatsappMessages.createdAt })
     .from(whatsappMessages)
