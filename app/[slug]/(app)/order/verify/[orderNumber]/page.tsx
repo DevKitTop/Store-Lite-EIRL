@@ -1,15 +1,12 @@
 import { db } from '@/core/database/client';
 import { businesses, payments, products } from '@/core/database/schema';
+import { checkOrderVerifyRateLimits } from '@/lib/orderAccessRateLimit';
+import { resolveOrderVerificationAccess } from '@/lib/orderVerificationAccess';
+import { getClientIdentifierFromHeaders } from '@/lib/rateLimit';
 import { and, eq, inArray } from 'drizzle-orm';
+import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-
-interface Props {
-  params: Promise<{
-    slug: string;
-    orderNumber: string;
-  }>;
-}
 
 function maskDni(dni?: string | null): string {
   if (!dni) return 'No registrado';
@@ -23,94 +20,208 @@ function formatCurrency(amount: string | number, currency = 'PEN'): string {
   return `${symbol} ${num.toFixed(2)}`;
 }
 
-export default async function OrderVerificationPage({ params }: Props) {
+/**
+ * Public columns for the verification page verdict (Q_A).
+ *
+ * The projection boundary is NOT "no PII" — it is "no PII that is never
+ * rendered". Three things are deliberately in here:
+ *
+ *   * `buyerDni` — R22 REQUIRES the public verdict to carry a masked DNI last-4
+ *     (`maskDni`, below). Masking needs the value, so the column is selected and
+ *     only the mask reaches the markup. The raw DNI is never rendered; the
+ *     anonymous render is pinned by `orderVerificationPage.test.ts`.
+ *   * `trackingToken` — selected SERVER-LOCALLY only, per design.md D2
+ *     ("Q_A returns trackingToken (server-local only)"). It is needed to derive
+ *     the cookie name `order_access_{token}`, which cannot be named before the row
+ *     is read. The gate is on RENDERING the link, not on selecting the column:
+ *     the value stays in this module, is never returned, never logged, and never
+ *     passed to a component prop (D2 leak table).
+ *   * `id` — carried through for the Q_A/Q_B fallback merge below.
+ *
+ * The genuine MUST-NOT-be-selected boundary is `buyerEmail` and `ticketUrl`
+ * (R22): neither is rendered on any path, so selecting them would put data in
+ * the query result that no gate governs.
+ */
+const PUBLIC_VERIFICATION_COLUMNS = {
+  id: true,
+  orderNumber: true,
+  amount: true,
+  currency: true,
+  paymentMethod: true,
+  status: true,
+  buyerDni: true,
+  createdAt: true,
+  trackingToken: true,
+} as const;
+
+/**
+ * Gated columns for the verification page surface (Q_B).
+ * Includes metadata and productId for cart rendering.
+ */
+const GATED_VERIFICATION_COLUMNS = {
+  ...PUBLIC_VERIFICATION_COLUMNS,
+  metadata: true,
+  productId: true,
+} as const;
+
+const BUSINESS_COLUMNS = {
+  id: true,
+  name: true,
+  slug: true,
+  taxId: true,
+  address: true,
+  logoUrl: true,
+} as const;
+
+// Type helpers for conditional query results
+interface PaymentPublic {
+  id: string;
+  orderNumber: string | null;
+  amount: string;
+  currency: string;
+  paymentMethod: string;
+  status: string;
+  buyerDni: string | null;
+  createdAt: Date;
+  trackingToken: string;
+}
+
+export default async function OrderVerificationPage({
+  params,
+}: {
+  params: Promise<{ slug: string; orderNumber: string }>;
+}) {
   const { slug, orderNumber } = await params;
   const cleanOrderNumber = orderNumber.startsWith('#') ? orderNumber.slice(1) : orderNumber;
 
-  // ── 1. Lookup Business ──────────────────────────────────────────
+  // ── R23: Rate limit keyed by (IP, orderNumber) + coarse per-IP backstop ──
+  // Runs BEFORE any database access, so a refused request costs nothing and
+  // cannot leak order existence. Identity comes from headers() because a Server
+  // Component has no NextRequest; `getClientIdentifierFromHeaders` is the shared
+  // resolution so this page cannot drift from proxy.ts on hop priority.
+  //
+  // `checkOrderVerifyRateLimits` charges BOTH buckets atomically — the spec's
+  // per-(IP, orderNumber) bucket AND a coarse per-IP bucket that contains no order
+  // number. The second one is what stops enumeration: rotating `orderNumber`
+  // mints a fresh fine bucket every request, which measured 200/200 served. The
+  // RAW ip is passed here — this call composes the key itself.
+  const clientIp = getClientIdentifierFromHeaders(await headers());
+  const rateLimit = checkOrderVerifyRateLimits(clientIp, cleanOrderNumber);
+  if (!rateLimit.allowed) {
+    // Render neutral throttled state instead of 429 to preserve printed-ticket UX
+    return renderThrottledState();
+  }
+
+  // ── 1. Lookup Business ──────────────────────────────────────────────
   const business = await db.query.businesses.findFirst({
     where: eq(businesses.slug, slug),
-    columns: {
-      id: true,
-      name: true,
-      slug: true,
-      taxId: true,
-      address: true,
-      logoUrl: true,
-    },
+    columns: BUSINESS_COLUMNS,
   });
 
   if (!business) {
     notFound();
   }
 
-  // ── 2. Lookup Payment/Order ─────────────────────────────────────
-  const payment = await db.query.payments.findFirst({
+  // ── 2. Q_A: Public verdict read (always runs) ───────────────────────
+  // Selects only public columns — no PII, no metadata, no productId
+  const paymentQa = await db.query.payments.findFirst({
     where: and(eq(payments.businessId, business.id), eq(payments.orderNumber, cleanOrderNumber)),
-    columns: {
-      id: true,
-      orderNumber: true,
-      amount: true,
-      currency: true,
-      paymentMethod: true,
-      status: true,
-      buyerEmail: true,
-      buyerDni: true,
-      createdAt: true,
-      trackingToken: true,
-      metadata: true,
-      ticketUrl: true,
-      productId: true,
-    },
+    columns: PUBLIC_VERIFICATION_COLUMNS,
   });
 
-  const isValid = Boolean(payment && payment.status !== 'failed');
+  const trackingToken = paymentQa?.trackingToken;
 
-  const metadata = payment?.metadata as Record<string, unknown> | null;
-  const rawCartItems =
-    (metadata?.cartItems as {
-      id?: string;
-      productId?: string;
-      name?: string;
-      quantity?: number;
-      price?: number | string;
-    }[]) || [];
-
-  const itemMap = new Map<string, number>();
-  if (rawCartItems.length > 0) {
-    for (const item of rawCartItems) {
-      const pId = item.id || item.productId;
-      if (pId) {
-        itemMap.set(pId, (itemMap.get(pId) || 0) + (item.quantity || 1));
-      }
-    }
-  } else if (payment?.productId) {
-    itemMap.set(payment.productId, 1);
+  // ── W-N1: Explicit NULL orderNumber state ──────────────────────────
+  if (!paymentQa?.orderNumber) {
+    return renderNullOrderState(slug);
   }
 
-  const productIds = Array.from(itemMap.keys());
-  const dbProducts =
-    productIds.length > 0
-      ? await db
-          .select({
-            id: products.id,
-            title: products.title,
-            price: products.price,
-          })
-          .from(products)
-          .where(inArray(products.id, productIds))
-      : [];
+  // ── 3. Cookie gate for gated surface ────────────────────────────────
+  // ONE resolver, ONE binding. Every gated site below (Q_B read, cart build,
+  // cart render, tracking link) reads `hasFullAccess` — none of them re-derives
+  // it, and `verifyOrderAccessCookie` is not called anywhere in this module.
+  const hasFullAccess = await resolveOrderVerificationAccess(trackingToken);
 
-  const productDbMap = new Map(dbProducts.map((p) => [p.id, p]));
-  const cartItems = productIds.map((pId) => {
-    const dbProd = productDbMap.get(pId);
-    const qty = itemMap.get(pId) || 1;
-    return {
-      name: dbProd?.title || 'Producto',
-      quantity: qty,
-      price: dbProd ? Number(dbProd.price) : Number(payment?.amount || 0) / qty,
-    };
-  });
+  // ── 4. Q_B: Gated surface read (only if cookie verifies) ────────────
+  let paymentQb:
+    | {
+        id: string;
+        orderNumber: string | null;
+        amount: string;
+        currency: string;
+        paymentMethod: string;
+        status: string;
+        buyerDni: string | null;
+        createdAt: Date;
+        trackingToken: string;
+        metadata: unknown;
+        productId: string;
+      }
+    | null
+    | undefined = null;
+  // `hasFullAccess === true` already implies a non-empty `trackingToken`: the
+  // resolver returns false without one. No second guard needed here.
+  if (hasFullAccess) {
+    paymentQb = await db.query.payments.findFirst({
+      where: and(eq(payments.businessId, business.id), eq(payments.orderNumber, cleanOrderNumber)),
+      columns: GATED_VERIFICATION_COLUMNS,
+    });
+  }
+
+  // Use Q_B for gated data, fall back to Q_A for public fields
+  const payment = paymentQb ?? paymentQa;
+  const isValid = Boolean(payment && payment.status !== 'failed');
+
+  // ── 5. Build cart items (only for gated surface) ────────────────────
+  let cartItems: { name: string; quantity: number; price: number }[] = [];
+  if (hasFullAccess && paymentQb) {
+    const paymentGated = paymentQb as { metadata?: Record<string, unknown>; productId: string };
+    const metadata = paymentGated.metadata ?? null;
+    const rawCartItems =
+      (metadata?.cartItems as {
+        id?: string;
+        productId?: string;
+        name?: string;
+        quantity?: number;
+        price?: number | string;
+      }[]) || [];
+
+    const itemMap = new Map<string, number>();
+    if (rawCartItems.length > 0) {
+      for (const item of rawCartItems) {
+        const pId = item.id || item.productId;
+        if (pId) {
+          itemMap.set(pId, (itemMap.get(pId) || 0) + (item.quantity || 1));
+        }
+      }
+    } else if (paymentGated.productId) {
+      itemMap.set(paymentGated.productId, 1);
+    }
+
+    const productIds = Array.from(itemMap.keys());
+    const dbProducts =
+      productIds.length > 0
+        ? await db
+            .select({
+              id: products.id,
+              title: products.title,
+              price: products.price,
+            })
+            .from(products)
+            .where(inArray(products.id, productIds))
+        : [];
+
+    const productDbMap = new Map(dbProducts.map((p) => [p.id, p]));
+    cartItems = productIds.map((pId) => {
+      const dbProd = productDbMap.get(pId);
+      const qty = itemMap.get(pId) || 1;
+      return {
+        name: dbProd?.title || 'Producto',
+        quantity: qty,
+        price: dbProd ? Number(dbProd.price) : Number(payment?.amount || 0) / qty,
+      };
+    });
+  }
 
   return (
     <div
@@ -275,8 +386,8 @@ export default async function OrderVerificationPage({ params }: Props) {
               </div>
             </div>
 
-            {/* Products List */}
-            {cartItems.length > 0 && (
+            {/* Products List (GATED SURFACE) */}
+            {hasFullAccess && cartItems.length > 0 && (
               <div style={{ marginBottom: '20px' }}>
                 <h3
                   style={{
@@ -358,7 +469,8 @@ export default async function OrderVerificationPage({ params }: Props) {
 
             {/* Action buttons */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {payment.trackingToken && (
+              {/* Tracking link (GATED SURFACE) */}
+              {hasFullAccess && payment.trackingToken && (
                 <Link
                   href={`/${slug}/order/${payment.trackingToken}`}
                   style={{
@@ -423,6 +535,148 @@ export default async function OrderVerificationPage({ params }: Props) {
       <p style={{ marginTop: '24px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>
         Sistema de validación criptográfica de comprobantes digitales • Store Lite
       </p>
+    </div>
+  );
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+// maskDni and formatCurrency are defined at the top of the file
+
+/** Render neutral throttled state (R23) - no 429, no order disclosure. */
+function renderThrottledState() {
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        backgroundColor: '#f8fafc',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        padding: '32px 16px',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '480px',
+          backgroundColor: '#ffffff',
+          borderRadius: '24px',
+          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01)',
+          border: '1px solid #e2e8f0',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '32px 20px', textAlign: 'center' }}>
+          <div
+            style={{
+              width: '64px',
+              height: '64px',
+              borderRadius: '50%',
+              backgroundColor: '#fef3c7',
+              color: '#f59e0b',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '28px',
+              fontWeight: 'bold',
+              margin: '0 auto 16px',
+            }}
+          >
+            ⏳
+          </div>
+          <h1 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 800, color: '#92400e' }}>
+            Demasiados intentos
+          </h1>
+          <p style={{ margin: 0, fontSize: '13px', color: '#92400e', lineHeight: 1.5 }}>
+            Hiciste muchas consultas en poco tiempo. Por favor, espera unos minutos e inténtalo de
+            nuevo.
+          </p>
+        </div>
+        <p style={{ marginTop: '24px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>
+          Sistema de validación criptográfica de comprobantes digitales • Store Lite
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** W-N1: Render explicit "no existe" state for NULL orderNumber. */
+function renderNullOrderState(slug: string) {
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        backgroundColor: '#f8fafc',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        padding: '32px 16px',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '480px',
+          backgroundColor: '#ffffff',
+          borderRadius: '24px',
+          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01)',
+          border: '1px solid #e2e8f0',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '32px 20px', textAlign: 'center' }}>
+          <div
+            style={{
+              width: '64px',
+              height: '64px',
+              borderRadius: '50%',
+              backgroundColor: '#fee2e2',
+              color: '#ef4444',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '28px',
+              fontWeight: 'bold',
+              margin: '0 auto 16px',
+            }}
+          >
+            📭
+          </div>
+          <h1 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 800, color: '#991b1b' }}>
+            Orden no encontrada
+          </h1>
+          <p style={{ margin: '0 0 8px', fontSize: '13px', color: '#991b1b', lineHeight: 1.5 }}>
+            Este número de orden no existe en nuestros registros.
+          </p>
+          <p style={{ margin: '0 0 16px', fontSize: '12px', color: '#64748b' }}>
+            Si realizaste una compra reciente, contactá al vendedor para obtener tu comprobante.
+          </p>
+          <p style={{ margin: '0 0 24px', fontSize: '12px', color: '#64748b' }}>
+            O verificá tu identidad con Google si compraste con esa cuenta.
+          </p>
+          <Link
+            href={`/${slug}`}
+            style={{
+              display: 'inline-block',
+              backgroundColor: '#0f172a',
+              color: '#ffffff',
+              padding: '12px 24px',
+              borderRadius: '12px',
+              textDecoration: 'none',
+              fontWeight: 600,
+              fontSize: '13px',
+            }}
+          >
+            Volver a la tienda
+          </Link>
+        </div>
+        <p style={{ marginTop: '24px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>
+          Sistema de validación criptográfica de comprobantes digitales • Store Lite
+        </p>
+      </div>
     </div>
   );
 }

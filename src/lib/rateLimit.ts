@@ -25,6 +25,24 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
   auth: { windowMs: 15 * 60 * 1000, maxRequests: 10 }, // 10 requests per 15min
   api: { windowMs: 60 * 1000, maxRequests: 30 }, // 30 requests per minute
   storefront: { windowMs: 60 * 1000, maxRequests: 60 }, // 60 requests per minute
+  /**
+   * Coarse backstop for the order-verification page, charged per IP ACROSS all
+   * order numbers (see `orderAccessRateLimit.ts`). `storefront` above cannot do
+   * this job: its key embeds the attacker-controlled `orderNumber`, so rotating
+   * that segment mints a fresh budget every request.
+   *
+   * Why 30/min. A real buyer opening the printed-ticket URL loads this page a
+   * handful of times a minute at most (open, reload after a print hiccup, show a
+   * colleague), so 30/min is roughly 6-30x one human's ceiling. It also keeps a
+   * small shared-NAT office — the realistic worst case, since several desks
+   * egress from one address — functional at about six concurrent users. Against
+   * the measured 200 requests/min scrape rate it removes ~85% of throughput, and
+   * the load-bearing part is not the number at all: the ceiling now exists and is
+   * INDEPENDENT of `orderNumber`.
+   *
+   * This is a throttle, not a wall — see the open findings below.
+   */
+  orderVerifyIp: { windowMs: 60 * 1000, maxRequests: 30 }, // 30 requests per minute
 };
 
 // In-memory store (per-edge-instance). For MVP this is fine.
