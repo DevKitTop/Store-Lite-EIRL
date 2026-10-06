@@ -54,9 +54,6 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# runtime logs (dev servers, scripts)
-*.log
-
 # env files (can opt-in for committing if needed)
 .env
 .env.prod
@@ -100,12 +97,13 @@ opencode.json
 !SOUL.md
 !AGENTS.md
 
-# OpenSpec change artifacts must stay committable, otherwise SDD writes
-# proposal/spec/design/tasks that git silently drops and the PR loses its
-# decision trail.
-# NOTE: openspec/specs/ is owned by PR #206 (chore/openspec-spec-tracking) and
-# deliberately NOT duplicated here - one PR, one concern.
-!openspec/changes/**/*.md
+# Capability specs are the source of truth and MUST be versioned.
+# Without this, a fresh clone silently misses every requirement that was
+# archived while this blanket rule was in effect (gitignore only applies to
+# untracked files, so specs committed before the rule were unaffected).
+# Scope: openspec/specs/ only. openspec/changes/ stays ignored so in-flight
+# change folders (proposal/design/tasks, local-only drafts) never leak into commits.
+!openspec/specs/**/*.md
 
 # Explicitly ignore analysis files created in the workspace
 informe_detallado_archivos_grandes.md
@@ -119,4 +117,3 @@ send-test-email.ts
 .env.current
 
 sendTestEmail.ts
-
