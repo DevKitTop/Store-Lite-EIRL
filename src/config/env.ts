@@ -83,6 +83,11 @@ export const env = {
   ycloudApiKey: process.env.YCLOUD_API_KEY || '',
   ycloudWabaId: process.env.YCLOUD_WABA_ID || '',
   ycloudWebhookSecret: process.env.YCLOUD_WEBHOOK_SECRET || '',
+  // YCloud Meta Embedded Signup (FB SDK) - coexistence popup
+  ycloudFbAppId: process.env.NEXT_PUBLIC_YCLOUD_FB_APP_ID || '',
+  ycloudFbConfigId: process.env.NEXT_PUBLIC_YCLOUD_FB_CONFIG_ID || '',
+  ycloudFbSolutionId: process.env.NEXT_PUBLIC_YCLOUD_FB_SOLUTION_ID || '',
+  // YCloud Meta Embedded Signup (FB SDK) — coexistence popup
   // WhatsApp anti-spam rate limiting (per channel/seller) â€” protects the Meta
   // quality rating. Kept as STRINGS on purpose; parsing lives in the send
   // guards (src/core/whatsapp/guards/whatsappSendGuards.ts). Defaults are safe.
@@ -142,6 +147,7 @@ if (!env.ycloudApiKey || !env.ycloudWabaId) {
   );
 }
 if (!env.ycloudWebhookSecret) {
+  // YCloud Meta Embedded Signup (FB SDK) - coexistence popup
   console.warn(
     'YCLOUD_WEBHOOK_SECRET is missing. Webhook signature verification will be skipped in development.',
   );

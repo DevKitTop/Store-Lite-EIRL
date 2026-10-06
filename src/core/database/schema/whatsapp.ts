@@ -25,6 +25,9 @@ export const whatsappChannels = pgTable(
     wabaId: text('waba_id'),
     displayPhoneNumber: text('display_phone_number'),
     isActive: boolean('is_active').notNull().default(false),
+    connectionStatus: text('connection_status', { enum: ['pending', 'connected', 'failed'] })
+      .notNull()
+      .default('pending'),
     connectedAt: timestamp('connected_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
