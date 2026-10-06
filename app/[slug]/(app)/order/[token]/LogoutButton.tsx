@@ -3,6 +3,7 @@
 import { Icon } from '@/shared/components/ui';
 import { getBusinessPath } from '@/shared/utils/url';
 import { useRouter } from 'next/navigation';
+import { clearOrderAccessCookie } from './actions';
 
 export default function LogoutButton({
   token,
@@ -13,7 +14,7 @@ export default function LogoutButton({
 }) {
   const router = useRouter();
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     // Set logout intent in BOTH sessionStorage and localStorage.
     // sessionStorage: prevents auto-auth in the same tab (immediate).
     // localStorage:  persists across tab closes — without it, opening
@@ -23,6 +24,19 @@ export default function LogoutButton({
     sessionStorage.setItem('order_logout_intent', token);
     localStorage.setItem('order_logout_intent', marker);
     localStorage.removeItem(`order_session_${token}`);
+
+    // 🔒 SECURITY (R16): the markers above are client-side only. The signed
+    // access cookie is httpOnly, so the browser cannot clear it from here —
+    // without this server action the full-access cookie would outlive the logout
+    // and the next request to this URL would still get the full order row.
+    // Revocation is best-effort: a failed delete must not trap the buyer on a
+    // page they asked to leave.
+    try {
+      await clearOrderAccessCookie(token);
+    } catch (error) {
+      console.error('[Logout] Could not revoke the order access cookie:', error);
+    }
+
     router.push(getBusinessPath(businessSlug));
   };
 

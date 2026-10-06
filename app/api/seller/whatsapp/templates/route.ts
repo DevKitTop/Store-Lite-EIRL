@@ -1,11 +1,11 @@
+import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, whatsappChannels, whatsappTemplates } from '@/core/database/schema';
+import { BASE_TEMPLATES, applyBusinessName } from '@/features/chat/constants/baseTemplates';
 import { createClient } from '@/lib/supabase/server';
 import { and, desc, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { env } from '@/config/env';
-import { BASE_TEMPLATES, applyBusinessName } from '@/features/chat/constants/baseTemplates';
 
 const createTemplateSchema = z.object({
   channelId: z.string().uuid('ID de canal inválido'),
@@ -28,7 +28,12 @@ const createTemplateSchema = z.object({
 
 const createFromBaseSchema = z.object({
   channelId: z.string().uuid('ID de canal inválido'),
-  baseTemplateName: z.enum(['order_confirmed', 'order_shipped', 'payment_reminder', 'delivery_update']),
+  baseTemplateName: z.enum([
+    'order_confirmed',
+    'order_shipped',
+    'payment_reminder',
+    'delivery_update',
+  ]),
 });
 
 const YCLOUD_API_BASE = 'https://api.ycloud.com/v2';
@@ -91,7 +96,10 @@ export async function GET(request: Request) {
     }
 
     const whereClause = onlyApproved
-      ? and(eq(whatsappTemplates.channelId, channelId), eq(whatsappTemplates.metaStatus, 'approved'))
+      ? and(
+          eq(whatsappTemplates.channelId, channelId),
+          eq(whatsappTemplates.metaStatus, 'approved'),
+        )
       : eq(whatsappTemplates.channelId, channelId);
 
     const templates = await db
@@ -173,10 +181,7 @@ async function handleCreateFromBase(data: z.infer<typeof createFromBaseSchema>, 
 
   const apiKey = env.ycloudApiKey;
   if (!apiKey) {
-    return NextResponse.json(
-      { error: 'Configuración de WhatsApp incompleta' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Configuración de WhatsApp incompleta' }, { status: 500 });
   }
 
   // Prepare YCloud payload
@@ -184,19 +189,20 @@ async function handleCreateFromBase(data: z.infer<typeof createFromBaseSchema>, 
     name: templateWithBusiness.name,
     category: templateWithBusiness.category,
     language: templateWithBusiness.language,
-    components: templateWithBusiness.components?.map((comp) => {
-      const base = { type: comp.type };
-      if (comp.type === 'header') {
-        return { ...base, format: comp.format || 'TEXT' };
-      }
-      if (comp.type === 'body') {
-        return { ...base, text: comp.text || templateWithBusiness.body };
-      }
-      if (comp.type === 'button') {
-        return { ...base, sub_type: comp.sub_type || 'url', text: comp.text, url: comp.url };
-      }
-      return base;
-    }) ?? [],
+    components:
+      templateWithBusiness.components?.map((comp) => {
+        const base = { type: comp.type };
+        if (comp.type === 'header') {
+          return { ...base, format: comp.format || 'TEXT' };
+        }
+        if (comp.type === 'body') {
+          return { ...base, text: comp.text || templateWithBusiness.body };
+        }
+        if (comp.type === 'button') {
+          return { ...base, sub_type: comp.sub_type || 'url', text: comp.text, url: comp.url };
+        }
+        return base;
+      }) ?? [],
   };
 
   const response = await fetch(`${YCLOUD_API_BASE}/whatsapp/templates`, {
@@ -253,10 +259,7 @@ async function handleCreateTemplate(data: z.infer<typeof createTemplateSchema>, 
 
   const apiKey = env.ycloudApiKey;
   if (!apiKey) {
-    return NextResponse.json(
-      { error: 'Configuración de WhatsApp incompleta' },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: 'Configuración de WhatsApp incompleta' }, { status: 500 });
   }
 
   // Prepare YCloud payload
@@ -264,19 +267,20 @@ async function handleCreateTemplate(data: z.infer<typeof createTemplateSchema>, 
     name: data.name,
     category: data.category,
     language: data.language,
-    components: data.components?.map((comp) => {
-      const base = { type: comp.type };
-      if (comp.type === 'header') {
-        return { ...base, format: comp.format || 'TEXT' };
-      }
-      if (comp.type === 'body') {
-        return { ...base, text: comp.text || data.body };
-      }
-      if (comp.type === 'button') {
-        return { ...base, sub_type: comp.sub_type || 'url', text: comp.text, url: comp.url };
-      }
-      return base;
-    }) ?? [],
+    components:
+      data.components?.map((comp) => {
+        const base = { type: comp.type };
+        if (comp.type === 'header') {
+          return { ...base, format: comp.format || 'TEXT' };
+        }
+        if (comp.type === 'body') {
+          return { ...base, text: comp.text || data.body };
+        }
+        if (comp.type === 'button') {
+          return { ...base, sub_type: comp.sub_type || 'url', text: comp.text, url: comp.url };
+        }
+        return base;
+      }) ?? [],
   };
 
   const response = await fetch(`${YCLOUD_API_BASE}/whatsapp/templates`, {

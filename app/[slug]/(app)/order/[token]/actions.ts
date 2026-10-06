@@ -1,59 +1,19 @@
 'use server';
 
 import { db } from '@/core/database/client';
-import { businesses, chatSessions, messages, payments } from '@/core/database/schema';
+import { chatSessions, messages, payments } from '@/core/database/schema';
 import { transition } from '@/core/orders/orderService';
 import { ORDER_STATUS_V2, type OrderStatusV2 } from '@/core/orders/orderStatus';
+import { deleteOrderAccessCookie, setOrderAccessCookie } from '@/lib/orderAccessCookie';
+import {
+  checkOrderAccessRateLimitFor,
+  resetOrderAccessRateLimit,
+} from '@/lib/orderAccessRateLimit';
+import { getClientIdentifierFromHeaders } from '@/lib/rateLimit';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { headers } from 'next/headers';
 import type { CallerProof } from './types';
-
-// ─── Rate Limiting (in-memory) ───
-// 5 intentos por IP cada 15 minutos
-const RATE_LIMIT_MAX = 5;
-const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
-
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
-
-const rateLimitMap = new Map<string, RateLimitEntry>();
-
-async function checkRateLimit(): Promise<{ allowed: boolean; retryAfter?: number }> {
-  const headersList = await headers();
-  const ip =
-    headersList.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    headersList.get('x-real-ip') ||
-    'unknown';
-
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-
-  if (!entry || now > entry.resetAt) {
-    // Primera vez o ventana expirada
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return { allowed: true };
-  }
-
-  if (entry.count >= RATE_LIMIT_MAX) {
-    const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
-    return { allowed: false, retryAfter };
-  }
-
-  entry.count += 1;
-  return { allowed: true };
-}
-
-async function clearRateLimit() {
-  const headersList = await headers();
-  const ip =
-    headersList.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    headersList.get('x-real-ip') ||
-    'unknown';
-  rateLimitMap.delete(ip);
-}
 
 /**
  * Verify that at least one of {dni, authId} in callerProof matches
@@ -155,12 +115,15 @@ export async function updateOrderStatus(
 
 export async function verifyOrderAccess(trackingToken: string, dni: string, orderNumber?: string) {
   try {
-    // Rate limiting check
-    const rateLimit = await checkRateLimit();
+    // Rate limiting check — the SHARED auth-intent limiter keyed (client, dni),
+    // the same primitive POST /api/order/lookup uses. Runs BEFORE the payment
+    // lookup so a refused caller cannot learn whether the order exists.
+    const clientId = getClientIdentifierFromHeaders(await headers());
+    const rateLimit = checkOrderAccessRateLimitFor(clientId, { dni });
     if (!rateLimit.allowed) {
       return {
         success: false,
-        error: `Demasiados intentos. Esperá ${rateLimit.retryAfter} segundos.`,
+        error: `Demasiados intentos. Esperá ${Math.ceil(rateLimit.resetInMs / 1000)} segundos.`,
         rateLimited: true,
       };
     }
@@ -174,55 +137,24 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
     }
 
     // P4: Normalize orderNumber comparison (handle null/empty)
+    // R15: ensure `null !== null` cannot authorize — an absent order number
+    // must never pass when the order itself has no order number.
     const providedOrderNumber = orderNumber?.trim() || null;
     const dbOrderNumber = order.orderNumber || null;
 
-    if (providedOrderNumber !== dbOrderNumber) {
+    if (!providedOrderNumber || providedOrderNumber !== dbOrderNumber) {
       return { success: false };
     }
 
-    // Success — clear rate limit counter
-    await clearRateLimit();
+    // Success — refund this caller's own (client, dni) budget, scoped so no
+    // sibling dni is handed a fresh window it has not paid for.
+    resetOrderAccessRateLimit(clientId, { dni });
+
+    await setOrderAccessCookie(trackingToken);
 
     return { success: true };
   } catch (error) {
     return { success: false };
-  }
-}
-
-/**
- * Verify order access using ONLY DNI + orderNumber (no trackingToken).
- * Used when the tracking link has expired and user needs to recover access.
- */
-export async function verifyOrderAccessByDniAndOrderNumber(dni: string, orderNumber: string) {
-  try {
-    const order = await db.query.payments.findFirst({
-      where: and(eq(payments.buyerDni, dni), eq(payments.orderNumber, orderNumber)),
-    });
-
-    if (!order) {
-      return { success: false };
-    }
-
-    return {
-      success: true,
-      trackingToken: order.trackingToken,
-      slug: order.businessId ? await getBusinessSlug(order.businessId) : null,
-    };
-  } catch (error) {
-    return { success: false };
-  }
-}
-
-async function getBusinessSlug(businessId: string): Promise<string | null> {
-  try {
-    const biz = await db.query.businesses.findFirst({
-      where: eq(businesses.id, businessId),
-      columns: { slug: true },
-    });
-    return biz?.slug ?? null;
-  } catch {
-    return null;
   }
 }
 
@@ -238,7 +170,10 @@ async function getBusinessSlug(businessId: string): Promise<string | null> {
  */
 export async function syncChatSession(params: {
   guestIdFromStorage: string | null;
-  dni: string;
+  // 🔒 SECURITY (R17): nullable — the order page's public projection omits the
+  // buyer DNI. A falsy value keeps the existing `guest-${paymentId}` identity,
+  // so an unverified visitor can never join another buyer's `dni-{dni}` thread.
+  dni: string | null;
   businessId: string;
   buyerName: string;
   paymentId: string;
@@ -372,16 +307,29 @@ export async function verifyOrderByGoogleIdentity(
       const dbOrderNumber = order.orderNumber || null;
       const providedOrderNumber = orderNumber.trim() || null;
 
-      if (providedOrderNumber !== dbOrderNumber) {
+      if (!providedOrderNumber || providedOrderNumber !== dbOrderNumber) {
         return { success: false, reason: 'wrong_order' };
       }
     }
+
+    await setOrderAccessCookie(trackingToken);
 
     return { success: true };
   } catch (error) {
     console.error('[Action Error] verifyOrderByGoogleIdentity:', error);
     return { success: false, reason: 'error' };
   }
+}
+
+/**
+ * Revokes the signed order-access cookie (R16) — the server half of logout.
+ *
+ * Named `clearOrderAccessCookie` rather than re-exporting the module's
+ * `deleteOrderAccessCookie`, because a `'use server'` file may only export
+ * async functions and the R16 name has to stay stable for `LogoutButton`.
+ */
+export async function clearOrderAccessCookie(trackingToken: string): Promise<void> {
+  await deleteOrderAccessCookie(trackingToken);
 }
 
 // =====================================================

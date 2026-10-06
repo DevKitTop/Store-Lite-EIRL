@@ -4,11 +4,13 @@ import { ChatSidebar } from '../../app/[slug]/(app)/chat/components/ChatSidebar'
 
 type FilterTab = 'all' | 'unread' | 'orders' | 'whatsapp';
 
-function renderSidebar(overrides: {
-  filterTab?: FilterTab;
-  whatsappChannelConnected?: boolean;
-  onOpenTemplates?: () => void;
-} = {}) {
+function renderSidebar(
+  overrides: {
+    filterTab?: FilterTab;
+    whatsappChannelConnected?: boolean;
+    onOpenTemplates?: () => void;
+  } = {},
+) {
   const props = {
     chats: [],
     selectedChatId: null,

@@ -96,5 +96,6 @@ export const lookupOrderSchema = z.object({
     .min(1, 'El número de orden es requerido')
     .transform((val) => (val.startsWith('#') ? val.slice(1) : val)),
   businessSlug: z.string().min(1, 'El slug del negocio es requerido'),
+  trackingToken: z.string().min(1, 'El token de seguimiento es requerido'),
 });
 export type LookupOrderInput = z.infer<typeof lookupOrderSchema>;

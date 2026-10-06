@@ -26,12 +26,6 @@ export const whatsappChannels = pgTable(
     displayPhoneNumber: text('display_phone_number'),
     isActive: boolean('is_active').notNull().default(false),
     connectedAt: timestamp('connected_at', { withTimezone: true }),
-    // YCloud connection lifecycle: pending (awaiting embed signup adoption /
-    // polling), connected (channel active), failed (DISCONNECTED/REJECTED/
-    // DEREGISTERED). isActive+connectedAt cannot express the failed state.
-    connectionStatus: text('connection_status', { enum: ['pending', 'connected', 'failed'] })
-      .notNull()
-      .default('pending'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },

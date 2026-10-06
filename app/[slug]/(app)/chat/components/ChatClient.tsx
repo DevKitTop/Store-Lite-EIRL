@@ -1,7 +1,5 @@
 'use client';
 
-import { env } from '@/config/env';
-import { WhatsAppCoexistenceModal } from '@/features/whatsapp/components/WhatsAppCoexistenceModal';
 import { WhatsAppConnectModal } from '@/features/whatsapp/components/WhatsAppConnectModal';
 import { WhatsAppTemplateManager } from '@/features/whatsapp/components/WhatsAppTemplateManager';
 import { createClient } from '@/lib/supabase/client';
@@ -185,17 +183,6 @@ export function ChatClient({
     code: string;
     expiresAt: string;
   } | null>(null);
-  // Coexistence flow (FB Embedded Signup): the modal emits a FINISH payload,
-  // ChatClient completes the connection and polls status until it settles.
-  const [showCoexistenceModal, setShowCoexistenceModal] = useState(false);
-  const [coexistenceStatus, setCoexistenceStatus] = useState<
-    'pending' | 'connected' | 'failed' | undefined
-  >(undefined);
-  const [coexistencePhoneNumberId, setCoexistencePhoneNumberId] = useState<string | null>(null);
-  // The bind error surfaced by /connect/complete (e.g. YCloud 409) — passed
-  // to the modal so the seller sees WHY the linking failed, not just the
-  // generic error-retry frame.
-  const [coexistenceError, setCoexistenceError] = useState<string | null>(null);
   const [isTemplateManagerOpen, setIsTemplateManagerOpen] = useState(false);
 
   // ─── Pin / Reorder state (localStorage-backed) ─────────────────────
@@ -1187,17 +1174,6 @@ export function ChatClient({
   }, []);
 
   const handleOpenWhatsAppConnect = useCallback(async () => {
-    // FB Embedded Signup coexistence: when the FB envs are configured we
-    // skip init+pair-code entirely and let the merchant authorize the
-    // number through the Meta popup.
-    if (env.ycloudFbAppId && env.ycloudFbConfigId && env.ycloudFbSolutionId) {
-      setCoexistenceStatus(undefined);
-      setCoexistencePhoneNumberId(null);
-      setCoexistenceError(null);
-      setShowCoexistenceModal(true);
-      return;
-    }
-
     try {
       const response = await fetch('/api/seller/whatsapp/connect/init', {
         method: 'POST',
@@ -1248,121 +1224,6 @@ export function ChatClient({
     setShowWhatsAppConnectModal(false);
     setWhatsAppConnectData(null);
   }, []);
-
-  // Coexistence flow: the FB popup finished signing the WABA in. Complete
-  // the connection server-side, then poll /status until it settles.
-  const handleCoexistenceFinish = useCallback(
-    async (payload: { businessId: string; wabaId: string; phoneNumberId: string }) => {
-      setCoexistencePhoneNumberId(payload.phoneNumberId);
-      try {
-        const response = await fetch('/api/seller/whatsapp/connect/complete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            businessId,
-            wabaId: payload.wabaId,
-            phoneNumberId: payload.phoneNumberId,
-          }),
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          // The YCloud bind error (e.g. 409 with a business-specific reason)
-          // must reach the seller — it explains WHY the linking failed.
-          setCoexistenceError(data.error || null);
-          setCoexistenceStatus('failed');
-          return;
-        }
-
-        // 'connected' can come back immediately if the number was already
-        // linked to this business; otherwise keep polling 'pending'.
-        setCoexistenceError(null);
-        setCoexistenceStatus(data.connectionStatus ?? 'pending');
-      } catch (err) {
-        setCoexistenceError(null);
-        setCoexistenceStatus('failed');
-      }
-    },
-    [businessId],
-  );
-
-  const handleCoexistenceModalClose = useCallback(() => {
-    setShowCoexistenceModal(false);
-    setCoexistenceStatus(undefined);
-    setCoexistencePhoneNumberId(null);
-    setCoexistenceError(null);
-  }, []);
-
-  // Poll the connection status while the coexistence modal is in 'pending'.
-  useEffect(() => {
-    if (!showCoexistenceModal || coexistenceStatus !== 'pending' || !coexistencePhoneNumberId) {
-      return;
-    }
-
-    const pollStatus = async () => {
-      try {
-        const response = await fetch('/api/seller/whatsapp/connect/status', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ businessId, phoneNumberId: coexistencePhoneNumberId }),
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) return;
-
-        // failed must ALWAYS win: the W1 backend fix (slice 2) can return a
-        // coherent failed payload, but in-flight/legacy responses may still
-        // contradict — never render success for a failed channel.
-        if (data.connectionStatus === 'failed') {
-          setCoexistenceStatus('failed');
-        } else if (data.connectionStatus === 'connected' || data.status === 'connected') {
-          setCoexistenceStatus('connected');
-        }
-      } catch (err) {
-        // Transient error — keep polling; the next tick will retry.
-      }
-    };
-
-    pollStatus();
-    const intervalId = setInterval(pollStatus, 5000);
-    return () => clearInterval(intervalId);
-  }, [businessId, showCoexistenceModal, coexistenceStatus, coexistencePhoneNumberId]);
-
-  // Once connected, show the success frame briefly, then close the modal
-  // and refresh the channel state so the sidebar reflects the connection.
-  useEffect(() => {
-    if (coexistenceStatus !== 'connected' || !showCoexistenceModal) return;
-
-    const timer = setTimeout(() => {
-      setShowCoexistenceModal(false);
-      setCoexistenceStatus(undefined);
-      setCoexistencePhoneNumberId(null);
-
-      const refreshChannel = async () => {
-        try {
-          const result = await fetchWhatsAppConversations(businessId);
-          if (result.success) {
-            setWhatsAppChannelConnected(result.channelConnected ?? true);
-            const resolvedChannelId = resolveChannelId(result);
-            if (resolvedChannelId) setWhatsAppChannelId(resolvedChannelId);
-          }
-        } catch (err) {
-          // Non-fatal: the sidebar polling will pick up the channel anyway.
-        }
-      };
-      refreshChannel();
-
-      setSnackbar({
-        open: true,
-        message: 'WhatsApp conectado correctamente',
-        severity: 'success',
-      });
-    }, 1200);
-
-    return () => clearTimeout(timer);
-  }, [businessId, coexistenceStatus, showCoexistenceModal]);
 
   return (
     <div className={`${styles.chatContainer} ${selectedSession ? styles.hasSelectedChat : ''}`}>
@@ -1429,21 +1290,6 @@ export function ChatClient({
           expiresAt={whatsAppConnectData.expiresAt}
           onClose={handleWhatsAppConnectModalClose}
           onSuccess={handleWhatsAppConnectSuccess}
-        />
-      )}
-      {showCoexistenceModal && (
-        <WhatsAppCoexistenceModal
-          businessId={businessId}
-          onClose={handleCoexistenceModalClose}
-          onFinish={handleCoexistenceFinish}
-          connectionStatus={coexistenceStatus}
-          errorMessage={coexistenceError}
-          onRetry={() => {
-            // Clear the parent-driven 'failed' state so the modal can leave
-            // the error-retry frame and re-run the popup flow.
-            setCoexistenceStatus(undefined);
-            setCoexistenceError(null);
-          }}
         />
       )}
       <AlertSnackbar

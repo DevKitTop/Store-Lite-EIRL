@@ -61,7 +61,13 @@ describe('getMonthlyUsage', () => {
     mocks.selectWhere.mockResolvedValue([
       messageRow({ id: 'msg-1', ycloudMessageId: 'y-1', status: 'delivered', metaPrice: '0.05' }),
       messageRow({ id: 'msg-2', ycloudMessageId: 'y-2', status: 'read', metaPrice: '0.07' }),
-      messageRow({ id: 'msg-3', ycloudMessageId: 'y-3', status: 'sent', metaPrice: null, metaCurrency: null }),
+      messageRow({
+        id: 'msg-3',
+        ycloudMessageId: 'y-3',
+        status: 'sent',
+        metaPrice: null,
+        metaCurrency: null,
+      }),
       messageRow({
         id: 'msg-4',
         ycloudMessageId: 'y-4',

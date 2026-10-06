@@ -2,11 +2,7 @@
 
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
-import {
-  businesses,
-  whatsappChannels,
-  whatsappTemplates,
-} from '@/core/database/schema';
+import { businesses, whatsappChannels, whatsappTemplates } from '@/core/database/schema';
 import {
   assertOutboundRateLimit,
   assertTemplateApproved,

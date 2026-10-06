@@ -7,6 +7,7 @@
 
 import { db } from '@/core/database/client';
 import { penalties } from '@/core/database/schema';
+import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
 import { and, desc, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
@@ -26,6 +27,16 @@ export async function GET(request: Request) {
       return NextResponse.json(
         { error: `Status inválido. Valores permitidos: ${VALID_STATUSES.join(', ')} o 'all'` },
         { status: 400 },
+      );
+    }
+
+    // ── Auth: owner-only (team roles are not widened) ──────────
+    try {
+      await requireOwnedBusinessById(businessId);
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : 'No autorizado' },
+        { status: 401 },
       );
     }
 

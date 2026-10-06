@@ -1,3 +1,4 @@
+import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, whatsappChannels, whatsappTemplates } from '@/core/database/schema';
 import { normalizeMetaStatus } from '@/core/whatsapp/templates/metaStatus';
@@ -5,7 +6,6 @@ import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { env } from '@/config/env';
 
 interface SyncResultEntry {
   name: string;
@@ -81,10 +81,7 @@ export async function POST(request: Request) {
 
     const apiKey = env.ycloudApiKey;
     if (!apiKey) {
-      return NextResponse.json(
-        { error: 'Configuración de WhatsApp incompleta' },
-        { status: 500 },
-      );
+      return NextResponse.json({ error: 'Configuración de WhatsApp incompleta' }, { status: 500 });
     }
 
     // Get all templates for this channel that have metaTemplateId
@@ -145,7 +142,9 @@ export async function POST(request: Request) {
           metaTemplateId,
         });
       } catch (err) {
-        errors.push(`${template.name}: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+        errors.push(
+          `${template.name}: ${err instanceof Error ? err.message : 'Error desconocido'}`,
+        );
         results.push({
           name: template.name,
           metaStatus: template.metaStatus as string,

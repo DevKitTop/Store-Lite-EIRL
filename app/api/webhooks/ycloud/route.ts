@@ -8,7 +8,6 @@ import {
   whatsappMessages,
   whatsappTemplates,
 } from '@/core/database/schema';
-import { normalizePhoneChannelStatus } from '@/core/whatsapp/connect/phoneChannelStatus';
 import { normalizeMetaStatus } from '@/core/whatsapp/templates/metaStatus';
 import { and, eq } from 'drizzle-orm';
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -386,22 +385,9 @@ async function handlePhoneNumberUpdated(payload: YCloudPayload): Promise<void> {
   const displayPhoneNumber = phoneNumberData.display_phone_number;
   const status = phoneNumberData.status;
 
-  // YCloud sends UPPERCASE statuses; activation happens ONLY on exact
-  // 'CONNECTED' (see phoneChannelStatus.ts). Persist the normalized
-  // connection_status on every status-bearing update.
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (displayPhoneNumber) updates.displayPhoneNumber = displayPhoneNumber;
-  if (status) {
-    const normalized = normalizePhoneChannelStatus(status);
-    updates.connectionStatus = normalized.connectionStatus;
-    // CONNECTED activates (isActive + connectedAt); failed statuses DEACTIVATE
-    // (isActive false) and clear any stale connection timestamp so the UI can
-    // retry. 'pending' leaves activation untouched.
-    if (normalized.isActive !== undefined) {
-      updates.isActive = normalized.isActive;
-      updates.connectedAt = normalized.connectedAt ?? null;
-    }
-  }
+  if (status) updates.isActive = status === 'connected';
 
   await db
     .update(whatsappChannels)
@@ -464,13 +450,6 @@ export async function POST(request: Request): Promise<Response> {
       }
       case 'whatsapp.phone_number.updated': {
         await handlePhoneNumberUpdated(body);
-        break;
-      }
-      case 'smb.app.state.sync': {
-        // Ack Meta's state sync pulse. No contact/channel import by design:
-        // contacts are created lazily on inbound messages (see Out of Scope
-        // in the coexistence spec — no contact sync).
-        console.warn('[ycloud-webhook] smb.app.state.sync acknowledged (no contact sync)');
         break;
       }
       default:

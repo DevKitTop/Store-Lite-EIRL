@@ -4,9 +4,9 @@ import { whatsappChannels } from '@/core/database/schema';
 import { eq } from 'drizzle-orm';
 import { notFound, redirect } from 'next/navigation';
 
+import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { WhatsAppConnectButton } from '@/features/whatsapp/components/WhatsAppConnectButton';
 import { DashboardHeader } from '../components/DashboardHeader';
-import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 
 import styles from './whatsapp.module.css';
 
@@ -26,7 +26,9 @@ export default async function WhatsAppPage({ params }: WhatsAppPageProps) {
   }
 
   if (resolvedBusiness.matchedAlias) {
-    redirect(replaceSlugInPath(`/${slug}/dashboard/whatsapp`, slug, resolvedBusiness.canonicalSlug));
+    redirect(
+      replaceSlugInPath(`/${slug}/dashboard/whatsapp`, slug, resolvedBusiness.canonicalSlug),
+    );
   }
 
   // 2. Get entitlements
@@ -60,7 +62,8 @@ export default async function WhatsAppPage({ params }: WhatsAppPageProps) {
         <div className={styles.header}>
           <h1 className={styles.title}>WhatsApp Business</h1>
           <p className={styles.description}>
-            Conecta tu número de WhatsApp para recibir y responder mensajes de tus clientes directamente desde el panel.
+            Conecta tu número de WhatsApp para recibir y responder mensajes de tus clientes
+            directamente desde el panel.
           </p>
         </div>
 
@@ -68,7 +71,9 @@ export default async function WhatsAppPage({ params }: WhatsAppPageProps) {
           <div className={styles.card}>
             <div className={styles.channelInfo}>
               <div className={styles.statusBadge}>
-                <span className={`${styles.statusDot} ${channel.isActive ? styles.active : styles.inactive}`} />
+                <span
+                  className={`${styles.statusDot} ${channel.isActive ? styles.active : styles.inactive}`}
+                />
                 <span className={styles.statusText}>
                   {channel.isActive ? 'Conectado' : 'Pendiente de conexión'}
                 </span>
@@ -120,7 +125,8 @@ export default async function WhatsAppPage({ params }: WhatsAppPageProps) {
                     WhatsApp Conectado
                   </button>
                   <p className="text-center text-sm text-gray-500 mt-2">
-                    Para reconectar, primero desconecta el número desde la configuración de WhatsApp Business en tu teléfono.
+                    Para reconectar, primero desconecta el número desde la configuración de WhatsApp
+                    Business en tu teléfono.
                   </p>
                 </div>
               )}
@@ -130,13 +136,24 @@ export default async function WhatsAppPage({ params }: WhatsAppPageProps) {
           <div className={styles.card} style={{ textAlign: 'center' }}>
             <div className={styles.emptyState}>
               <div className={styles.emptyIcon}>
-                <svg className="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
+                <svg
+                  className="w-12 h-12 text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"
+                  />
                 </svg>
               </div>
               <h2 className={styles.emptyTitle}>Sin WhatsApp conectado</h2>
               <p className={styles.emptyDescription}>
-                Vincula tu número de WhatsApp Business para gestionar conversaciones con tus clientes desde este panel.
+                Vincula tu número de WhatsApp Business para gestionar conversaciones con tus
+                clientes desde este panel.
               </p>
               <WhatsAppConnectButton
                 businessId={business.id}

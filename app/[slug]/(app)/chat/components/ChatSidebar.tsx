@@ -1,4 +1,4 @@
-import { CircularProgress, Icon, IconButton, Button } from '@/shared/components/ui';
+import { Button, CircularProgress, Icon, IconButton } from '@/shared/components/ui';
 import Image from 'next/image';
 import { useCallback, useState } from 'react';
 import styles from './ChatSidebar.module.css';
@@ -299,28 +299,28 @@ export function ChatSidebar({
 
             {chats.length === 0 && (
               <div className={styles.emptyState}>
-                {filterTab === 'unread'
-                  ? 'No hay mensajes sin leer'
-                  : filterTab === 'orders'
-                    ? 'No hay ventas con chat'
-                    : filterTab === 'whatsapp' && !whatsappChannelConnected ? (
-                      <div className={styles.whatsappEmptyState}>
-                        <div className={styles.whatsappEmptyIcon}>💬</div>
-                        <p className={styles.whatsappEmptyTitle}>Conectá tu WhatsApp</p>
-                        <p className={styles.whatsappEmptyText}>
-                          Respondé a tus clientes desde acá. Tardás menos de 2 minutos.
-                        </p>
-                        <Button
-                          variant="filled"
-                          className={styles.whatsappConnectBtn}
-                          onClick={onConnectWhatsApp}
-                        >
-                          Conectar WhatsApp
-                        </Button>
-                      </div>
-                    ) : (
-                      'No hay conversaciones'
-                    )}
+                {filterTab === 'unread' ? (
+                  'No hay mensajes sin leer'
+                ) : filterTab === 'orders' ? (
+                  'No hay ventas con chat'
+                ) : filterTab === 'whatsapp' && !whatsappChannelConnected ? (
+                  <div className={styles.whatsappEmptyState}>
+                    <div className={styles.whatsappEmptyIcon}>💬</div>
+                    <p className={styles.whatsappEmptyTitle}>Conectá tu WhatsApp</p>
+                    <p className={styles.whatsappEmptyText}>
+                      Respondé a tus clientes desde acá. Tardás menos de 2 minutos.
+                    </p>
+                    <Button
+                      variant="filled"
+                      className={styles.whatsappConnectBtn}
+                      onClick={onConnectWhatsApp}
+                    >
+                      Conectar WhatsApp
+                    </Button>
+                  </div>
+                ) : (
+                  'No hay conversaciones'
+                )}
               </div>
             )}
           </>

@@ -12,11 +12,7 @@
 
 export type MetaTemplateStatus = 'pending' | 'approved' | 'rejected';
 
-const VALID_META_STATUSES: ReadonlySet<string> = new Set([
-  'pending',
-  'approved',
-  'rejected',
-]);
+const VALID_META_STATUSES: ReadonlySet<string> = new Set(['pending', 'approved', 'rejected']);
 
 export function normalizeMetaStatus(value: string | null | undefined): MetaTemplateStatus {
   const normalized = value?.toLowerCase() ?? '';

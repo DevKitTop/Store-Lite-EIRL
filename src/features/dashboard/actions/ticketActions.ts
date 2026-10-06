@@ -5,12 +5,18 @@ import { db } from '@/core/database/client';
 import { businesses, payments, profiles } from '@/core/database/schema';
 import { transition } from '@/core/orders/orderService';
 import { ORDER_STATUS, ORDER_STATUS_V2 } from '@/core/orders/orderStatus';
+import { checkPermission } from '@/lib/permissions';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { createClient } from '@supabase/supabase-js';
 import { and, eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 
 const BUCKET_NAME = 'tickets';
+
+// Every unauthorized outcome — unresolved actor, missing grant, or a payment row
+// owned by another tenant — reports the same string, so an anonymous caller
+// learns nothing about session state (spec R3).
+const NO_PERMISSION_ERROR = 'No tienes permisos para este pedido';
 
 async function getAuthenticatedUserId(): Promise<string | null> {
   try {
@@ -51,6 +57,24 @@ function createAdminClient() {
   });
 }
 
+/**
+ * Authorization gate for the seller order actions.
+ *
+ * Callers MUST run this at the top of the action, before the first DB read and
+ * outside the `env.orderFlowV2` branch, so the legacy inline path is guarded
+ * too (design D4). An unresolved actor is a hard abort, not a permissive
+ * default (design D6) — callers must not fall back to a partial actor.
+ */
+async function requireOrderManager(
+  businessId: string,
+): Promise<{ ok: true; actorId: string } | { ok: false }> {
+  const actorId = await getAuthenticatedUserId();
+  if (!actorId) return { ok: false };
+  const canManage = await checkPermission(businessId, actorId, 'orders.manage');
+  if (!canManage) return { ok: false };
+  return { ok: true, actorId };
+}
+
 export interface UploadTicketResult {
   success: boolean;
   error?: string;
@@ -70,6 +94,11 @@ export async function uploadTicketAndUpdatePayment(
   businessId: string,
 ): Promise<UploadTicketResult> {
   try {
+    // Authorization gate — before any DB read and outside the orderFlowV2 branch (design D4).
+    const gate = await requireOrderManager(businessId);
+    if (!gate.ok) return { success: false, error: NO_PERMISSION_ERROR };
+    const { actorId } = gate;
+
     // 1. Obtener datos del pago para validar y pasar preconditions
     const [existingPayment] = await db
       .select({
@@ -93,7 +122,7 @@ export async function uploadTicketAndUpdatePayment(
         'got:',
         existingPayment.businessId,
       );
-      return { success: false, error: 'No tienes permisos para este pedido' };
+      return { success: false, error: NO_PERMISSION_ERROR };
     }
 
     if (!existingPayment.trackingToken) {
@@ -136,11 +165,10 @@ export async function uploadTicketAndUpdatePayment(
 
     // 6. Update payment — V2 path uses OrderService, legacy uses inline
     if (env.orderFlowV2) {
-      const actorId = await getAuthenticatedUserId();
       const result = await transition({
         paymentId,
         toStatus: ORDER_STATUS_V2.WAITING_CUSTOMER_CONFIRMATION,
-        actor: { type: 'seller', id: actorId ?? undefined },
+        actor: { type: 'seller', id: actorId },
         expectedVersion,
         extraFields: { ticketImageUrl },
         preconditions: {},
@@ -196,6 +224,11 @@ export async function notifyDelivery(
   businessId: string,
 ): Promise<NotifyDeliveryResult> {
   try {
+    // Authorization gate — before any DB read and outside the orderFlowV2 branch (design D4).
+    const gate = await requireOrderManager(businessId);
+    if (!gate.ok) return { success: false, error: NO_PERMISSION_ERROR };
+    const { actorId } = gate;
+
     const [existingPayment] = await db
       .select({
         status: payments.status,
@@ -211,7 +244,7 @@ export async function notifyDelivery(
     }
 
     if (existingPayment.businessId !== businessId) {
-      return { success: false, error: 'No tienes permisos para este pedido' };
+      return { success: false, error: NO_PERMISSION_ERROR };
     }
 
     // Solo se puede notificar entrega si el ticket ya fue validado (status = delivered)
@@ -223,11 +256,10 @@ export async function notifyDelivery(
     const expectedVersion = existingPayment.version ?? 0;
 
     if (env.orderFlowV2) {
-      const actorId = await getAuthenticatedUserId();
       const result = await transition({
         paymentId,
         toStatus: ORDER_STATUS_V2.IN_TRANSIT,
-        actor: { type: 'seller', id: actorId ?? undefined },
+        actor: { type: 'seller', id: actorId },
         expectedVersion,
       });
 
@@ -272,6 +304,11 @@ export async function prepareOrder(
   businessId: string,
 ): Promise<NotifyDeliveryResult> {
   try {
+    // Authorization gate — before any DB read and outside the orderFlowV2 branch (design D4).
+    const gate = await requireOrderManager(businessId);
+    if (!gate.ok) return { success: false, error: NO_PERMISSION_ERROR };
+    const { actorId } = gate;
+
     const [existingPayment] = await db
       .select({
         status: payments.status,
@@ -284,16 +321,15 @@ export async function prepareOrder(
 
     if (!existingPayment) return { success: false, error: 'Pedido no encontrado' };
     if (existingPayment.businessId !== businessId)
-      return { success: false, error: 'No tienes permisos para este pedido' };
+      return { success: false, error: NO_PERMISSION_ERROR };
 
     const expectedVersion = existingPayment.version ?? 0;
 
     if (env.orderFlowV2) {
-      const actorId = await getAuthenticatedUserId();
       const result = await transition({
         paymentId,
         toStatus: ORDER_STATUS_V2.PREPARING_ORDER,
-        actor: { type: 'seller', id: actorId ?? undefined },
+        actor: { type: 'seller', id: actorId },
         expectedVersion,
       });
       if (!result.success) return { success: false, error: mapTransitionError(result.error) };
@@ -316,6 +352,11 @@ export async function markReadyForPickup(
   businessId: string,
 ): Promise<NotifyDeliveryResult> {
   try {
+    // Authorization gate — before any DB read and outside the orderFlowV2 branch (design D4).
+    const gate = await requireOrderManager(businessId);
+    if (!gate.ok) return { success: false, error: NO_PERMISSION_ERROR };
+    const { actorId } = gate;
+
     const [existingPayment] = await db
       .select({
         status: payments.status,
@@ -328,16 +369,15 @@ export async function markReadyForPickup(
 
     if (!existingPayment) return { success: false, error: 'Pedido no encontrado' };
     if (existingPayment.businessId !== businessId)
-      return { success: false, error: 'No tienes permisos para este pedido' };
+      return { success: false, error: NO_PERMISSION_ERROR };
 
     const expectedVersion = existingPayment.version ?? 0;
 
     if (env.orderFlowV2) {
-      const actorId = await getAuthenticatedUserId();
       const result = await transition({
         paymentId,
         toStatus: ORDER_STATUS_V2.READY_FOR_PICKUP,
-        actor: { type: 'seller', id: actorId ?? undefined },
+        actor: { type: 'seller', id: actorId },
         expectedVersion,
       });
       if (!result.success) return { success: false, error: mapTransitionError(result.error) };
@@ -364,6 +404,11 @@ export async function confirmPickedUp(
   customerCode: string,
 ): Promise<NotifyDeliveryResult> {
   try {
+    // Authorization gate — before any DB read and outside the orderFlowV2 branch (design D4).
+    const gate = await requireOrderManager(businessId);
+    if (!gate.ok) return { success: false, error: NO_PERMISSION_ERROR };
+    const { actorId } = gate;
+
     const [existingPayment] = await db
       .select({
         status: payments.status,
@@ -380,7 +425,7 @@ export async function confirmPickedUp(
 
     if (!existingPayment) return { success: false, error: 'Pedido no encontrado' };
     if (existingPayment.businessId !== businessId)
-      return { success: false, error: 'No tienes permisos para este pedido' };
+      return { success: false, error: NO_PERMISSION_ERROR };
 
     // Validar que el código ingresado coincida con el código generado
     if (!existingPayment.pickupCode) {
@@ -395,13 +440,11 @@ export async function confirmPickedUp(
     const expectedVersion = existingPayment.version ?? 0;
 
     if (env.orderFlowV2) {
-      const actorId = await getAuthenticatedUserId();
-
       // 1. First transition: READY_FOR_PICKUP → PICKED_UP (records pickup event)
       const pickupResult = await transition({
         paymentId,
         toStatus: ORDER_STATUS_V2.PICKED_UP,
-        actor: { type: 'seller', id: actorId ?? undefined },
+        actor: { type: 'seller', id: actorId },
         expectedVersion,
       });
       if (!pickupResult.success)

@@ -31,7 +31,12 @@ export const BASE_TEMPLATES: readonly BaseTemplate[] = [
         type: 'body',
         text: 'Hola {{1}}! Tu pedido #{{2}} ha sido confirmado por {{3}}. Monto: S/ {{4}}. Estado: Confirmado.',
       },
-      { type: 'button', sub_type: 'url', text: 'Ver pedido', url: 'https://storelite.app/orders/{{5}}' },
+      {
+        type: 'button',
+        sub_type: 'url',
+        text: 'Ver pedido',
+        url: 'https://storelite.app/orders/{{5}}',
+      },
     ],
   },
   {
@@ -44,7 +49,12 @@ export const BASE_TEMPLATES: readonly BaseTemplate[] = [
         type: 'body',
         text: '¡Tu pedido #{{1}} ya está en camino! 📦 Transportista: {{2}}. Guía: {{3}}. Entrega estimada: {{4}}.',
       },
-      { type: 'button', sub_type: 'url', text: 'Rastrear', url: 'https://storelite.app/track/{{5}}' },
+      {
+        type: 'button',
+        sub_type: 'url',
+        text: 'Rastrear',
+        url: 'https://storelite.app/track/{{5}}',
+      },
     ],
   },
   {
