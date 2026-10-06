@@ -54,6 +54,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# runtime logs (dev servers, scripts)
+*.log
+
 # env files (can opt-in for committing if needed)
 .env
 .env.prod

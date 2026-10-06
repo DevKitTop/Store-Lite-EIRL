@@ -5,6 +5,7 @@ import { Icon } from '@/shared/components/ui';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import './FlowModals.css';
+import { beginOrderReauthentication } from './orderReauth';
 
 interface ConfirmationFlowProps {
   paymentId: string;
@@ -34,6 +35,15 @@ export default function ConfirmationFlow({
       if (result.success) {
         setState('success');
         router.refresh();
+      } else if (result.reason === 'reauth_required') {
+        // R20: the signed cookie lapsed mid-confirmation (1h TTL). This branch is
+        // RECOVERABLE, so the stale client session has to go and the page has to be
+        // reloaded for `OrderAuthGate` to re-check. Both live in `orderReauth`
+        // because `refresh` alone cannot do it — see the comment there for why the
+        // gate's effect never re-runs on an in-place refresh.
+        beginOrderReauthentication(trackingToken, () => router.refresh());
+        setError(result.error || 'Necesitás volver a verificar tu acceso al pedido.');
+        setState('idle');
       } else {
         setError(result.error || 'Error al confirmar');
         setState('idle');
