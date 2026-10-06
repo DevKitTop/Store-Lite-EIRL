@@ -385,7 +385,9 @@ export default function Checkout({
       setLoading(true);
 
       const orderNumber = completedOrder.orderNumber;
-      const result = await requestServerTicket(orderNumber, true);
+      // The buyer has no session here, so their trackingToken is the proof the
+      // server accepts (design D3). Without it the route answers 401.
+      const result = await requestServerTicket(orderNumber, true, completedOrder.trackingToken);
 
       if (!result.success || !result.publicUrl) {
         throw new Error(result.error || 'No se pudo generar el ticket');

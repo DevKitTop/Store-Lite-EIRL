@@ -103,7 +103,7 @@ export default function OrderChatSection({
   useEffect(() => {
     if (!sessionId || !guestId) return;
 
-    // ── Realtime subscription (sin server-side filter) ──
+    // ── Realtime subscription (scoped server-side a esta sesión) ──
     const channel = supabase
       .channel(`order-chat-${sessionId}`)
       .on(
@@ -112,10 +112,11 @@ export default function OrderChatSection({
           event: 'INSERT',
           schema: 'public',
           table: 'messages',
+          filter: `session_id=eq.${sessionId}`,
         },
         (payload: any) => {
           const m = payload.new;
-          // Client-side filter: solo mensajes de esta sesión Y este payment
+          // Client-side filter (defense-in-depth): solo mensajes de esta sesión Y este payment
           if (String(m.session_id) !== sessionId) return;
           if (String(m.payment_id) !== paymentId) return;
 

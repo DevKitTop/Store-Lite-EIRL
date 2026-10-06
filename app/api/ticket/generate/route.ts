@@ -1,6 +1,8 @@
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, payments, products } from '@/core/database/schema';
+import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
+import { safeTokenEqual } from '@/lib/tokenCompare';
 import type { ServerTicketData, ServerTicketItem } from '@/shared/payments/serverTicketRenderer';
 import { calculateTicketHeight, ServerTicket } from '@/shared/payments/serverTicketRenderer';
 import { createClient } from '@supabase/supabase-js';
@@ -43,7 +45,7 @@ function formatPaymentMethod(method: string): string {
  */
 export async function POST(req: Request) {
   try {
-    const { orderNumber, forceRegenerate } = await req.json();
+    const { orderNumber, forceRegenerate, trackingToken } = await req.json();
 
     if (!orderNumber || typeof orderNumber !== 'string') {
       return NextResponse.json({ error: 'Missing or invalid orderNumber' }, { status: 400 });
@@ -71,6 +73,8 @@ export async function POST(req: Request) {
         createdAt: payments.createdAt,
         ticketUrl: payments.ticketUrl,
         businessId: payments.businessId,
+        // Buyer proof: the caller's token is compared against this value.
+        trackingToken: payments.trackingToken,
         // Business join fields
         businessName: businesses.name,
         businessSlug: businesses.slug,
@@ -87,8 +91,34 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
+    // ── 1b. Access proof (design D4) ──────────────────────────────────
+    // Two proofs are accepted, in this order:
+    //   OWNER — a session that owns the payment's business. The `await` is
+    //           load-bearing: without it the rejection escapes the `try` and
+    //           the handler answers 500 instead of branching.
+    //   BUYER — the caller's trackingToken, compared in constant time against
+    //           the value stored on THIS row. `forceRegenerate` is coerced to
+    //           false so a buyer can never overwrite an existing ticket.
+    let effectiveForceRegenerate = forceRegenerate;
+
+    try {
+      await requireOwnedBusinessById(payment.businessId);
+    } catch {
+      const presentedToken = typeof trackingToken === 'string' ? trackingToken : '';
+      const storedToken = typeof payment.trackingToken === 'string' ? payment.trackingToken : '';
+
+      // `safeTokenEqual('', '')` is true by contract, so blank proofs are
+      // rejected here: an absent token is not a proof, and a row without a
+      // stored token is not claimable at all.
+      if (!presentedToken || !storedToken || !safeTokenEqual(presentedToken, storedToken)) {
+        return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+      }
+
+      effectiveForceRegenerate = false;
+    }
+
     // If ticket already exists and regeneration not forced, return it
-    if (payment.ticketUrl && !forceRegenerate) {
+    if (payment.ticketUrl && !effectiveForceRegenerate) {
       return NextResponse.json({ success: true, publicUrl: payment.ticketUrl });
     }
 

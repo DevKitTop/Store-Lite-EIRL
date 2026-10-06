@@ -1,7 +1,7 @@
 'use server';
 
 import { db } from '@/core/database/client';
-import { businesses, chatSessions, messages, payments } from '@/core/database/schema';
+import { chatSessions, messages, payments } from '@/core/database/schema';
 import { transition } from '@/core/orders/orderService';
 import { ORDER_STATUS_V2, type OrderStatusV2 } from '@/core/orders/orderStatus';
 import { and, desc, eq, isNull } from 'drizzle-orm';
@@ -187,42 +187,6 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
     return { success: true };
   } catch (error) {
     return { success: false };
-  }
-}
-
-/**
- * Verify order access using ONLY DNI + orderNumber (no trackingToken).
- * Used when the tracking link has expired and user needs to recover access.
- */
-export async function verifyOrderAccessByDniAndOrderNumber(dni: string, orderNumber: string) {
-  try {
-    const order = await db.query.payments.findFirst({
-      where: and(eq(payments.buyerDni, dni), eq(payments.orderNumber, orderNumber)),
-    });
-
-    if (!order) {
-      return { success: false };
-    }
-
-    return {
-      success: true,
-      trackingToken: order.trackingToken,
-      slug: order.businessId ? await getBusinessSlug(order.businessId) : null,
-    };
-  } catch (error) {
-    return { success: false };
-  }
-}
-
-async function getBusinessSlug(businessId: string): Promise<string | null> {
-  try {
-    const biz = await db.query.businesses.findFirst({
-      where: eq(businesses.id, businessId),
-      columns: { slug: true },
-    });
-    return biz?.slug ?? null;
-  } catch {
-    return null;
   }
 }
 
