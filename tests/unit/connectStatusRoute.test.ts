@@ -57,6 +57,7 @@ function channelRow(overrides: Partial<Record<string, unknown>> = {}) {
     businessId: BUSINESS_ID,
     ycloudPhoneNumberId: PHONE_NUMBER_ID,
     isActive: false,
+    connectionStatus: 'pending',
     connectedAt: null,
     displayPhoneNumber: null,
     ...overrides,
@@ -124,10 +125,31 @@ describe('POST /api/seller/whatsapp/connect/status', () => {
     expect(mocks.fetchMock).not.toHaveBeenCalled();
   });
 
+  it('returns 403 when the payload businessId does not match the channel business', async () => {
+    mocks.channelFindFirst.mockResolvedValue(channelRow());
+    mocks.businessFindFirst.mockResolvedValue({ ownerId: 'user-1' });
+
+    const request = new Request('http://localhost/api/seller/whatsapp/connect/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phoneNumberId: PHONE_NUMBER_ID,
+        businessId: '55555555-5555-4555-8555-555555555555',
+      }),
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'Sin permisos para este canal' });
+    expect(mocks.fetchMock).not.toHaveBeenCalled();
+  });
+
   it('returns the DB state without calling YCloud when the channel is already active', async () => {
     mocks.channelFindFirst.mockResolvedValue(
       channelRow({
         isActive: true,
+        connectionStatus: 'connected',
         connectedAt: new Date('2026-09-01T10:00:00.000Z'),
         displayPhoneNumber: '+51 967 356 665',
       }),
@@ -140,10 +162,83 @@ describe('POST /api/seller/whatsapp/connect/status', () => {
     expect(await response.json()).toEqual({
       status: 'connected',
       isActive: true,
+      connectionStatus: 'connected',
       displayPhoneNumber: '+51 967 356 665',
       connectedAt: '2026-09-01T10:00:00.000Z',
     });
     expect(mocks.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('NEVER reports connected for an active-but-failed channel — YCloud wins', async () => {
+    mocks.channelFindFirst.mockResolvedValue(
+      channelRow({
+        isActive: true,
+        connectionStatus: 'failed',
+        connectedAt: new Date('2026-09-01T10:00:00.000Z'),
+        displayPhoneNumber: '+51 967 356 665',
+      }),
+    );
+    mocks.businessFindFirst.mockResolvedValue({ ownerId: 'user-1' });
+    stubYCloudList({
+      items: [
+        { id: PHONE_NUMBER_ID, status: 'DISCONNECTED', displayPhoneNumber: '+51 967 356 665' },
+      ],
+    });
+
+    const response = await POST(statusRequest());
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      status: 'failed',
+      isActive: false,
+      connectionStatus: 'failed',
+      displayPhoneNumber: '+51 967 356 665',
+      connectedAt: null,
+    });
+    // The contradiction is persisted away: the channel is deactivated.
+    expect(mocks.updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ isActive: false, connectionStatus: 'failed', connectedAt: null }),
+    );
+  });
+
+  it('deactivates and returns coherent failed state when YCloud reports DISCONNECTED', async () => {
+    mocks.channelFindFirst.mockResolvedValue(channelRow());
+    mocks.businessFindFirst.mockResolvedValue({ ownerId: 'user-1' });
+    stubYCloudList({ items: [{ id: PHONE_NUMBER_ID, status: 'DISCONNECTED' }] });
+
+    const response = await POST(statusRequest());
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      status: 'failed',
+      isActive: false,
+      connectionStatus: 'failed',
+      displayPhoneNumber: null,
+      connectedAt: null,
+    });
+    expect(mocks.updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ isActive: false, connectionStatus: 'failed', connectedAt: null }),
+    );
+  });
+
+  it('reports failed (not pending) when YCloud errors and the channel already failed', async () => {
+    mocks.channelFindFirst.mockResolvedValue(
+      channelRow({ connectionStatus: 'failed', displayPhoneNumber: '+51 967 356 665' }),
+    );
+    mocks.businessFindFirst.mockResolvedValue({ ownerId: 'user-1' });
+    mocks.fetchMock.mockRejectedValue(new Error('network down'));
+    vi.stubGlobal('fetch', mocks.fetchMock);
+
+    const response = await POST(statusRequest());
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      status: 'failed',
+      isActive: false,
+      connectionStatus: 'failed',
+      displayPhoneNumber: '+51 967 356 665',
+      connectedAt: null,
+    });
   });
 
   it('activates the channel and returns connected when YCloud reports CONNECTED', async () => {
@@ -180,6 +275,7 @@ describe('POST /api/seller/whatsapp/connect/status', () => {
     expect(response.status).toBe(200);
     expect(body.status).toBe('connected');
     expect(body.isActive).toBe(true);
+    expect(body.connectionStatus).toBe('connected');
     expect(body.displayPhoneNumber).toBe('+51 967 356 665');
 
     const updated = mocks.updateSet.mock.calls[0]![0] as { connectedAt: Date };
@@ -197,6 +293,7 @@ describe('POST /api/seller/whatsapp/connect/status', () => {
     expect(await response.json()).toEqual({
       status: 'PENDING',
       isActive: false,
+      connectionStatus: 'pending',
       displayPhoneNumber: null,
       connectedAt: null,
     });
@@ -215,6 +312,7 @@ describe('POST /api/seller/whatsapp/connect/status', () => {
     expect(await response.json()).toEqual({
       status: 'pending',
       isActive: false,
+      connectionStatus: 'pending',
       displayPhoneNumber: '+51 967 356 665',
       connectedAt: null,
     });
@@ -232,6 +330,7 @@ describe('POST /api/seller/whatsapp/connect/status', () => {
     expect(await response.json()).toEqual({
       status: 'pending',
       isActive: false,
+      connectionStatus: 'pending',
       displayPhoneNumber: '+51 967 356 665',
       connectedAt: null,
     });
@@ -249,6 +348,7 @@ describe('POST /api/seller/whatsapp/connect/status', () => {
     expect(await response.json()).toEqual({
       status: 'pending',
       isActive: false,
+      connectionStatus: 'pending',
       displayPhoneNumber: null,
       connectedAt: null,
     });

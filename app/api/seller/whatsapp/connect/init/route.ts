@@ -1,6 +1,7 @@
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, whatsappChannels } from '@/core/database/schema';
+import { upsertWhatsappChannel } from '@/core/whatsapp/connect/whatsappChannelUpsert';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -122,34 +123,25 @@ export async function POST(request: Request) {
 
     const { id: phoneNumberId, displayPhoneNumber } = connectedNumber;
 
-    // Guard the unique ycloudPhoneNumberId constraint: if a (stale, INACTIVE)
-    // channel already owns this number, reactivate it instead of inserting.
-    const channelForNumber = await db.query.whatsappChannels.findFirst({
-      where: eq(whatsappChannels.ycloudPhoneNumberId, phoneNumberId),
-      columns: { id: true },
-    });
-
     const connectedAt = new Date();
 
-    if (channelForNumber) {
-      await db
-        .update(whatsappChannels)
-        .set({
-          isActive: true,
-          displayPhoneNumber: displayPhoneNumber ?? null,
-          connectedAt,
-          updatedAt: new Date(),
-        })
-        .where(eq(whatsappChannels.id, channelForNumber.id));
-    } else {
-      await db.insert(whatsappChannels).values({
-        businessId,
-        ycloudPhoneNumberId: phoneNumberId,
-        wabaId,
-        isActive: true,
-        displayPhoneNumber: displayPhoneNumber ?? null,
-        connectedAt,
-      });
+    // Shared tenant-scoped upsert: guards ycloudPhoneNumberId uniqueness and
+    // only reactivates a stale channel owned by the authenticated business.
+    const upsertResult = await upsertWhatsappChannel({
+      businessId,
+      ycloudPhoneNumberId: phoneNumberId,
+      wabaId,
+      displayPhoneNumber: displayPhoneNumber ?? null,
+      connectionStatus: 'connected',
+      isActive: true,
+      connectedAt,
+    });
+
+    if (upsertResult.outcome === 'conflict') {
+      return NextResponse.json(
+        { error: 'Este número de WhatsApp ya está vinculado a otro negocio' },
+        { status: 409 },
+      );
     }
 
     // Return the adopted number: the account is already connected, so the

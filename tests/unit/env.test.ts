@@ -83,3 +83,38 @@ describe('env — WhatsApp send guards rate limiting', () => {
     expect(env.whatsappRateLimitWindowMinutes).toBe('10');
   });
 });
+
+describe('env — YCloud Facebook Embedded Signup', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('maps the public Meta partner env vars when set', async () => {
+    vi.stubEnv('NEXT_PUBLIC_YCLOUD_FB_APP_ID', '1234567890');
+    vi.stubEnv('NEXT_PUBLIC_YCLOUD_FB_CONFIG_ID', 'cfg-123');
+    vi.stubEnv('NEXT_PUBLIC_YCLOUD_FB_SOLUTION_ID', 'sol-456');
+    vi.resetModules();
+
+    const { env } = await import('@/config/env');
+
+    expect(env.ycloudFbAppId).toBe('1234567890');
+    expect(env.ycloudFbConfigId).toBe('cfg-123');
+    expect(env.ycloudFbSolutionId).toBe('sol-456');
+  });
+
+  it('defaults to empty strings and warns when the Meta envs are missing', async () => {
+    vi.stubEnv('NEXT_PUBLIC_YCLOUD_FB_APP_ID', '');
+    vi.stubEnv('NEXT_PUBLIC_YCLOUD_FB_CONFIG_ID', '');
+    vi.stubEnv('NEXT_PUBLIC_YCLOUD_FB_SOLUTION_ID', '');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.resetModules();
+
+    const { env } = await import('@/config/env');
+
+    expect(env.ycloudFbAppId).toBe('');
+    expect(env.ycloudFbConfigId).toBe('');
+    expect(env.ycloudFbSolutionId).toBe('');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('NEXT_PUBLIC_YCLOUD_FB_APP_ID'));
+  });
+});
