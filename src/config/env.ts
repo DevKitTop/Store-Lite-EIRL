@@ -60,6 +60,12 @@ export const env = {
   ycloudApiKey: process.env.YCLOUD_API_KEY || '',
   ycloudWabaId: process.env.YCLOUD_WABA_ID || '',
   ycloudWebhookSecret: process.env.YCLOUD_WEBHOOK_SECRET || '',
+  // YCloud Meta partner config for Facebook Embedded Signup (public — the
+  // coexistence popup needs these client-side). warn-if-missing: unset → the
+  // UI keeps the pair-code modal as fallback.
+  ycloudFbAppId: process.env.NEXT_PUBLIC_YCLOUD_FB_APP_ID || '',
+  ycloudFbConfigId: process.env.NEXT_PUBLIC_YCLOUD_FB_CONFIG_ID || '',
+  ycloudFbSolutionId: process.env.NEXT_PUBLIC_YCLOUD_FB_SOLUTION_ID || '',
   // WhatsApp anti-spam rate limiting (per channel/seller) — protects the Meta
   // quality rating. Kept as STRINGS on purpose; parsing lives in the send
   // guards (src/core/whatsapp/guards/whatsappSendGuards.ts). Defaults are safe.
@@ -104,8 +110,20 @@ if (!env.metaCapiAccessToken) {
 
 // YCloud WhatsApp validation
 if (!env.ycloudApiKey || !env.ycloudWabaId) {
-  console.warn('YCloud environment variables (YCLOUD_API_KEY, YCLOUD_WABA_ID) are missing. WhatsApp Embedded Signup will not work.');
+  console.warn(
+    'YCloud environment variables (YCLOUD_API_KEY, YCLOUD_WABA_ID) are missing. WhatsApp Embedded Signup will not work.',
+  );
 }
 if (!env.ycloudWebhookSecret) {
-  console.warn('YCLOUD_WEBHOOK_SECRET is missing. Webhook signature verification will be skipped in development.');
+  console.warn(
+    'YCLOUD_WEBHOOK_SECRET is missing. Webhook signature verification will be skipped in development.',
+  );
+}
+
+// YCloud Facebook Embedded Signup — public Meta partner config. Missing → the
+// coexistence popup is disabled and the pair-code modal stays as fallback.
+if (!env.ycloudFbAppId || !env.ycloudFbConfigId || !env.ycloudFbSolutionId) {
+  console.warn(
+    'NEXT_PUBLIC_YCLOUD_FB_APP_ID, NEXT_PUBLIC_YCLOUD_FB_CONFIG_ID and NEXT_PUBLIC_YCLOUD_FB_SOLUTION_ID are missing. WhatsApp coexistence popup will not load; the pair-code modal stays as fallback.',
+  );
 }

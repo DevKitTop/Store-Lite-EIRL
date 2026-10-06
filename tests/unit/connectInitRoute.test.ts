@@ -11,8 +11,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const FOREIGN_BUSINESS_ID = '99999999-9999-4999-8999-999999999999';
 const NO_CONNECTED_NUMBER_ERROR =
   'No hay un número de WhatsApp conectado en la cuenta de YCloud. Conecta un número desde la consola de YCloud primero.';
+const FOREIGN_CHANNEL_ERROR = 'Este número de WhatsApp ya está vinculado a otro negocio';
 
 const mocks = vi.hoisted(() => ({
   getUser: vi.fn(),
@@ -170,6 +172,7 @@ describe('POST /api/seller/whatsapp/connect/init', () => {
         ycloudPhoneNumberId: 'pn-1001',
         wabaId: 'waba-1',
         isActive: true,
+        connectionStatus: 'connected',
         displayPhoneNumber: '+51 967 356 665',
         connectedAt: expect.any(Date),
       }),
@@ -191,7 +194,7 @@ describe('POST /api/seller/whatsapp/connect/init', () => {
     mocks.businessFindFirst.mockResolvedValue({ id: BUSINESS_ID });
     mocks.channelFindFirst
       .mockResolvedValueOnce(null) // no ACTIVE channel for this business
-      .mockResolvedValueOnce({ id: 'ch-stale' }); // stale channel owns pn-1001
+      .mockResolvedValueOnce({ id: 'ch-stale', businessId: BUSINESS_ID }); // stale same-tenant channel owns pn-1001
     stubYCloudList({ items: [CONNECTED_NUMBER] });
 
     const response = await POST(initRequest());
@@ -201,6 +204,7 @@ describe('POST /api/seller/whatsapp/connect/init', () => {
     expect(mocks.updateSet).toHaveBeenCalledWith(
       expect.objectContaining({
         isActive: true,
+        connectionStatus: 'connected',
         displayPhoneNumber: '+51 967 356 665',
         connectedAt: expect.any(Date),
       }),
@@ -208,6 +212,21 @@ describe('POST /api/seller/whatsapp/connect/init', () => {
     expect(mocks.insertValues).not.toHaveBeenCalled();
     expect(body.status).toBe('connected');
     expect(body.phoneNumberId).toBe('pn-1001');
+  });
+
+  it('returns 409 and leaves a FOREIGN business channel untouched (cross-tenant)', async () => {
+    mocks.businessFindFirst.mockResolvedValue({ id: BUSINESS_ID });
+    mocks.channelFindFirst
+      .mockResolvedValueOnce(null) // no ACTIVE channel for this business
+      .mockResolvedValueOnce({ id: 'ch-foreign', businessId: FOREIGN_BUSINESS_ID }); // other tenant owns pn-1001
+    stubYCloudList({ items: [CONNECTED_NUMBER] });
+
+    const response = await POST(initRequest());
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: FOREIGN_CHANNEL_ERROR });
+    expect(mocks.insertValues).not.toHaveBeenCalled();
+    expect(mocks.updateSet).not.toHaveBeenCalled();
   });
 
   it('returns 409 when YCloud returns no phone numbers at all', async () => {
