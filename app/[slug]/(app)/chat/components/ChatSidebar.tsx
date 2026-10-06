@@ -1,11 +1,11 @@
-import { CircularProgress, Icon, IconButton } from '@/shared/components/ui';
+import { CircularProgress, Icon, IconButton, Button } from '@/shared/components/ui';
 import Image from 'next/image';
 import { useCallback, useState } from 'react';
 import styles from './ChatSidebar.module.css';
 
 import type { Chat } from './ChatClient';
 
-type FilterTab = 'all' | 'unread' | 'orders';
+type FilterTab = 'all' | 'unread' | 'orders' | 'whatsapp';
 
 interface ChatSidebarProps {
   chats: Chat[];
@@ -24,12 +24,17 @@ interface ChatSidebarProps {
   onReorder: (draggedId: string, targetId: string) => void;
   canManage: boolean;
   storeLogo: string;
+  // WhatsApp specific
+  whatsappChannelConnected?: boolean;
+  onConnectWhatsApp?: () => void;
+  onOpenTemplates?: () => void;
 }
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: 'all', label: 'Todo' },
   { key: 'orders', label: 'Ventas' },
   { key: 'unread', label: 'Sin leer' },
+  { key: 'whatsapp', label: 'WhatsApp' },
 ];
 
 export function ChatSidebar({
@@ -48,6 +53,9 @@ export function ChatSidebar({
   onReorder,
   canManage,
   storeLogo,
+  whatsappChannelConnected = true,
+  onConnectWhatsApp,
+  onOpenTemplates,
 }: ChatSidebarProps) {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -214,6 +222,15 @@ export function ChatSidebar({
       <header className={styles.header}>
         <h2 className={styles.title}>{isPinning ? 'Personalizar' : 'Mensajes'}</h2>
         <div className={styles.headerActions}>
+          {filterTab === 'whatsapp' && whatsappChannelConnected && onOpenTemplates && (
+            <IconButton
+              aria-label="Plantillas de WhatsApp"
+              className={styles.editButton}
+              onClick={onOpenTemplates}
+            >
+              <Icon>description</Icon>
+            </IconButton>
+          )}
           {canManage && (
             <IconButton
               aria-label={isPinning ? 'Terminar' : 'Personalizar lista'}
@@ -286,7 +303,24 @@ export function ChatSidebar({
                   ? 'No hay mensajes sin leer'
                   : filterTab === 'orders'
                     ? 'No hay ventas con chat'
-                    : 'No hay conversaciones'}
+                    : filterTab === 'whatsapp' && !whatsappChannelConnected ? (
+                      <div className={styles.whatsappEmptyState}>
+                        <div className={styles.whatsappEmptyIcon}>💬</div>
+                        <p className={styles.whatsappEmptyTitle}>Conectá tu WhatsApp</p>
+                        <p className={styles.whatsappEmptyText}>
+                          Respondé a tus clientes desde acá. Tardás menos de 2 minutos.
+                        </p>
+                        <Button
+                          variant="filled"
+                          className={styles.whatsappConnectBtn}
+                          onClick={onConnectWhatsApp}
+                        >
+                          Conectar WhatsApp
+                        </Button>
+                      </div>
+                    ) : (
+                      'No hay conversaciones'
+                    )}
               </div>
             )}
           </>

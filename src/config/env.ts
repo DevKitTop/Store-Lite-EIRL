@@ -52,6 +52,19 @@ export const env = {
   metaPixelId: process.env.NEXT_PUBLIC_META_PIXEL_ID || '',
   metaCapiAccessToken: process.env.META_CAPI_ACCESS_TOKEN || '',
   metaTestEventCode: process.env.META_TEST_EVENT_CODE || '',
+
+  // YCloud WhatsApp Embedded Signup (Server-side only)
+  //   YCLOUD_API_KEY: Tech Partner API key
+  //   YCLOUD_WABA_ID: Store Lite's WABA ID in YCloud
+  //   YCLOUD_WEBHOOK_SECRET: Webhook signature verification secret
+  ycloudApiKey: process.env.YCLOUD_API_KEY || '',
+  ycloudWabaId: process.env.YCLOUD_WABA_ID || '',
+  ycloudWebhookSecret: process.env.YCLOUD_WEBHOOK_SECRET || '',
+  // WhatsApp anti-spam rate limiting (per channel/seller) — protects the Meta
+  // quality rating. Kept as STRINGS on purpose; parsing lives in the send
+  // guards (src/core/whatsapp/guards/whatsappSendGuards.ts). Defaults are safe.
+  whatsappRateLimitPerWindow: process.env.WHATSAPP_RATE_LIMIT_PER_WINDOW || '100',
+  whatsappRateLimitWindowMinutes: process.env.WHATSAPP_RATE_LIMIT_WINDOW_MINUTES || '5',
 } as const;
 
 // Optional: Add validation here to throw early if vars are missing
@@ -87,4 +100,12 @@ if (!env.metaPixelId) {
 }
 if (!env.metaCapiAccessToken) {
   console.warn('META_CAPI_ACCESS_TOKEN is missing. Meta CAPI events will not be sent.');
+}
+
+// YCloud WhatsApp validation
+if (!env.ycloudApiKey || !env.ycloudWabaId) {
+  console.warn('YCloud environment variables (YCLOUD_API_KEY, YCLOUD_WABA_ID) are missing. WhatsApp Embedded Signup will not work.');
+}
+if (!env.ycloudWebhookSecret) {
+  console.warn('YCLOUD_WEBHOOK_SECRET is missing. Webhook signature verification will be skipped in development.');
 }
