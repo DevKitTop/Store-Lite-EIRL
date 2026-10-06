@@ -165,6 +165,11 @@ export async function transition(
       console.error('[OrderService] SMS notification failed:', err);
     });
 
+    // 8. Fire-and-forget: notify customer via WhatsApp template (no await)
+    notifyOrderWhatsApp(updated, input.toStatus, input.actor.type).catch((err) => {
+      console.error('[OrderService] WhatsApp notification failed:', err);
+    });
+
     return { success: true, payment: updated, eventId: event.id };
   } catch (error) {
     if (
@@ -179,7 +184,7 @@ export async function transition(
   }
 }
 
-// ─── SMS notification helper (fire-and-forget) ───
+// ─── Notification helpers (fire-and-forget) ───
 
 async function notifyOrderSms(
   payment: typeof payments.$inferSelect,
@@ -214,6 +219,67 @@ async function notifyOrderSms(
     sendOrderCompletedEmail(payment, payment.businessId).catch((err) => {
       console.error('[OrderService] Completion email error:', err);
     });
+  }
+}
+
+async function notifyOrderWhatsApp(
+  payment: typeof payments.$inferSelect,
+  toStatus: OrderStatusV2,
+  actorType: string,
+): Promise<void> {
+  // Skip WhatsApp for system/customer actions
+  if (actorType === 'system') return;
+
+  if (!payment.buyerPhone) return;
+  if (!payment.businessId) return;
+
+  // Read business to get name and slug
+  const business = await db.query.businesses.findFirst({
+    where: eq(businesses.id, payment.businessId),
+    columns: { slug: true, name: true },
+  });
+
+  if (!business) return;
+
+  // Import WhatsApp notification functions dynamically to avoid circular deps
+  const { sendOrderConfirmedNotification, sendOrderShippedNotification } =
+    await import('@app/[slug]/(app)/chat/actions/orderNotificationActions');
+
+  // Send WhatsApp template based on status transition
+  try {
+    switch (toStatus) {
+      case ORDER_STATUS_V2.PAID: {
+        // Order confirmed - send order_confirmed template
+        // Variables: customerName, orderNumber, businessName, amount, orderUrl
+        await sendOrderConfirmedNotification(payment.businessId, payment.id, {
+          customerName: payment.buyerPhone, // Use phone as fallback, could fetch customer name
+          orderNumber: payment.orderNumber ?? payment.id.slice(0, 8),
+          businessName: business.name,
+          amount: payment.amount.toString(),
+          orderUrl: `https://${business.slug}.storelite.app/orders/${payment.trackingToken}`,
+        }).catch((err: Error) =>
+          console.error('[OrderService] WhatsApp order_confirmed failed:', err),
+        );
+        break;
+      }
+      case ORDER_STATUS_V2.IN_TRANSIT: {
+        // Order shipped - send order_shipped template
+        // Variables: orderNumber, carrier, trackingNumber, estimatedDelivery, trackingUrl
+        await sendOrderShippedNotification(payment.businessId, payment.id, {
+          orderNumber: payment.orderNumber ?? payment.id.slice(0, 8),
+          carrier: payment.courierName ?? 'Por confirmar',
+          trackingNumber: payment.trackingNumber ?? 'Por confirmar',
+          estimatedDelivery: 'Por confirmar', // Could be calculated from shipping info
+          trackingUrl: `https://${business.slug}.storelite.app/track/${payment.trackingToken}`,
+        }).catch((err: Error) =>
+          console.error('[OrderService] WhatsApp order_shipped failed:', err),
+        );
+        break;
+      }
+      // Add more status transitions as needed
+    }
+  } catch (error) {
+    console.error('[OrderService] WhatsApp notification error:', error);
   }
 }
 

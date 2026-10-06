@@ -17,3 +17,4 @@ export * from './profiles';
 export * from './relations';
 export * from './types';
 export * from './verification';
+export * from './whatsapp';

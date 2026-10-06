@@ -1,0 +1,228 @@
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 0 4px;
+}
+
+/* ── Sync row ── */
+
+.syncRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.syncSummary {
+  font-size: 0.8125rem;
+  color: var(--md-sys-color-on-surface-variant, #49454f);
+}
+
+/* ── Error ── */
+
+.errorText {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--md-sys-color-error, #b3261e);
+  background-color: var(--md-sys-color-error-container, #f9dedc);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+/* ── Sections ── */
+
+.sectionTitle {
+  margin: 12px 0 4px;
+  font-family: var(--md-sys-typescale-title-small-font-family-name, sans-serif);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--md-sys-color-on-surface, #1d1b20);
+}
+
+.emptyText {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--md-sys-color-on-surface-variant, #49454f);
+}
+
+.loadingContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 24px;
+}
+
+/* ── Template list ── */
+
+.templateList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.templateItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background-color: var(--md-sys-color-surface-container-low, #f7f2fa);
+  border: 1px solid var(--md-sys-color-outline-variant, #cac4d0);
+}
+
+.templateInfo {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.templateName {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--md-sys-color-on-surface, #1d1b20);
+  overflow-wrap: anywhere;
+}
+
+.templateMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--md-sys-color-on-surface-variant, #49454f);
+}
+
+.categoryChip {
+  background-color: var(--md-sys-color-secondary-container, #e8def8);
+  color: var(--md-sys-color-on-secondary-container, #1d192b);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.metaItem {
+  white-space: nowrap;
+}
+
+/* ── Status badge ── */
+
+.statusBadge {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.statusApproved {
+  color: #1e8e3e;
+  background-color: rgba(30, 142, 62, 0.12);
+}
+
+.statusPending {
+  color: #b26a00;
+  background-color: rgba(255, 179, 0, 0.15);
+}
+
+.statusRejected {
+  color: var(--md-sys-color-error, #b3261e);
+  background-color: var(--md-sys-color-error-container, #f9dedc);
+}
+
+/* ── Create from base ── */
+
+.baseList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.baseItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background-color: var(--md-sys-color-surface-container-low, #f7f2fa);
+  border: 1px solid var(--md-sys-color-outline-variant, #cac4d0);
+}
+
+.baseInfo {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.baseName {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--md-sys-color-on-surface, #1d1b20);
+}
+
+.baseBody {
+  font-size: 0.75rem;
+  color: var(--md-sys-color-on-surface-variant, #49454f);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Dark mode ── */
+
+@media (prefers-color-scheme: dark) {
+  .templateItem,
+  .baseItem {
+    background-color: var(--md-sys-color-surface-container-low, #1d1b20);
+    border-color: var(--md-sys-color-outline-variant, #49454f);
+  }
+
+  .templateName,
+  .baseName,
+  .sectionTitle {
+    color: var(--md-sys-color-on-surface, #e6e0e9);
+  }
+
+  .templateMeta,
+  .baseBody,
+  .emptyText,
+  .syncSummary {
+    color: var(--md-sys-color-on-surface-variant, #cac4d0);
+  }
+
+  .categoryChip {
+    background-color: var(--md-sys-color-secondary-container, #4a4458);
+    color: var(--md-sys-color-on-secondary-container, #e8def8);
+  }
+
+  .errorText {
+    color: var(--md-sys-color-error, #f2b8b5);
+    background-color: var(--md-sys-color-error-container, #8c1d18);
+  }
+
+  .statusApproved {
+    color: #81c995;
+    background-color: rgba(129, 201, 149, 0.16);
+  }
+
+  .statusPending {
+    color: #fdd663;
+    background-color: rgba(253, 214, 99, 0.16);
+  }
+
+  .statusRejected {
+    color: var(--md-sys-color-error, #f2b8b5);
+    background-color: var(--md-sys-color-error-container, #8c1d18);
+  }
+}

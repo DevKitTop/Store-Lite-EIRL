@@ -170,7 +170,10 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
  */
 export async function syncChatSession(params: {
   guestIdFromStorage: string | null;
-  dni: string;
+  // 🔒 SECURITY (R17): nullable — the order page's public projection omits the
+  // buyer DNI. A falsy value keeps the existing `guest-${paymentId}` identity,
+  // so an unverified visitor can never join another buyer's `dni-{dni}` thread.
+  dni: string | null;
   businessId: string;
   buyerName: string;
   paymentId: string;
