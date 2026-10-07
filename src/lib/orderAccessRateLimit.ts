@@ -61,7 +61,10 @@ export function checkOrderAccessRateLimitFor(
   params: { dni?: string | null; orderNumber?: string | null } = {},
 ): { allowed: boolean; remaining: number; resetInMs: number } {
   const identifier = params.dni ?? params.orderNumber;
-  const segment = typeof identifier === 'string' && identifier.length > 0 ? identifier.slice(0, MAX_DNI_KEY_LENGTH) : MISSING_DNI;
+  const segment =
+    typeof identifier === 'string' && identifier.length > 0
+      ? identifier.slice(0, MAX_DNI_KEY_LENGTH)
+      : MISSING_DNI;
   return checkRateLimit(`${clientId}:order:${segment}`, RATE_LIMITS.auth);
 }
 
@@ -83,6 +86,7 @@ export function checkOrderVerifyRateLimits(
   clientIp: string,
   orderNumber: string,
 ): { allowed: boolean; remaining: number; resetInMs: number } {
-  const segment = orderNumber && orderNumber.length > 0 ? orderNumber.slice(0, MAX_DNI_KEY_LENGTH) : MISSING_DNI;
+  const segment =
+    orderNumber && orderNumber.length > 0 ? orderNumber.slice(0, MAX_DNI_KEY_LENGTH) : MISSING_DNI;
   return checkRateLimit(`${clientIp}:verify:${segment}`, RATE_LIMITS.auth);
 }

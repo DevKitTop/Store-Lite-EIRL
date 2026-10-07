@@ -18,8 +18,8 @@ import { createClient as createServerClient } from '@/lib/supabase/server';
 import { and, eq, lt } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 
-// Every unauthorized outcome ÔÇö unresolved actor, missing grant, or a payment row
-// owned by another tenant ÔÇö reports the same string, so an anonymous caller
+// Every unauthorized outcome ï¿½ï¿½ï¿½ unresolved actor, missing grant, or a payment row
+// owned by another tenant ï¿½ï¿½ï¿½ reports the same string, so an anonymous caller
 // learns nothing about session state (spec R3).
 const NO_PERMISSION_ERROR = 'Pago no encontrado o no tienes permisos.';
 
@@ -62,7 +62,7 @@ async function getAuthenticatedUserId(): Promise<string | null> {
  * Callers MUST run this at the top of the action, before the first DB read and
  * outside the `env.orderFlowV2` branch, so the legacy inline path is guarded
  * too (design D4). An unresolved actor is a hard abort, not a permissive
- * default (design D6) ÔÇö callers must not fall back to a partial actor.
+ * default (design D6) ï¿½ï¿½ï¿½ callers must not fall back to a partial actor.
  */
 async function requireOrderManager(
   businessId: string,
@@ -81,7 +81,7 @@ async function requireOrderManager(
 export interface FinalizationActionResult {
   success: boolean;
   error?: string;
-    reason?: string;
+  reason?: string;
   data?: {
     status: string;
     finalizationDeadline?: string;
@@ -92,8 +92,8 @@ export interface FinalizationActionResult {
 // CONSTANTS
 // =====================================================
 
-const _HOURS_BEFORE_SELLER_CAN_REQUEST = 24; // 24h despu+®s de "aceptado" (reservado para validaci+¦n temporal)
-const DAYS_FOR_CUSTOMER_TO_CONFIRM = 3; // 3 d+¡as para que el customer confirme
+const _HOURS_BEFORE_SELLER_CAN_REQUEST = 24; // 24h despu+ï¿½s de "aceptado" (reservado para validaci+ï¿½n temporal)
+const DAYS_FOR_CUSTOMER_TO_CONFIRM = 3; // 3 d+ï¿½as para que el customer confirme
 
 // =====================================================
 // 1. SELLER: Request Finalization
@@ -109,7 +109,7 @@ export async function requestFinalization(
   businessId: string,
 ): Promise<FinalizationActionResult> {
   try {
-    // Authorization gate ÔÇö before any DB read and outside the orderFlowV2 branch (design D4).
+    // Authorization gate ï¿½ï¿½ï¿½ before any DB read and outside the orderFlowV2 branch (design D4).
     const gate = await requireOrderManager(businessId);
     if (!gate.ok) return { success: false, error: NO_PERMISSION_ERROR };
     const { actorId } = gate;
@@ -137,7 +137,7 @@ export async function requestFinalization(
       return {
         success: false,
         error: env.orderFlowV2
-          ? `El pedido debe estar "en tr+ínsito" para solicitar finalizaci+¦n. Estado actual: ${payment.status}`
+          ? `El pedido debe estar "en tr+ï¿½nsito" para solicitar finalizaci+ï¿½n. Estado actual: ${payment.status}`
           : `El pago debe estar en estado "delivered". Estado actual: ${payment.status}`,
       };
     }
@@ -150,7 +150,7 @@ export async function requestFinalization(
         '[requestFinalization] Finalization already requested at:',
         payment.finalizationRequestedAt,
       );
-      return { success: false, error: 'La finalizaci+¦n ya fue solicitada anteriormente.' };
+      return { success: false, error: 'La finalizaci+ï¿½n ya fue solicitada anteriormente.' };
     }
 
     // 5. Calculate deadline (now + 3 days)
@@ -158,7 +158,7 @@ export async function requestFinalization(
     const deadline = new Date(now);
     deadline.setDate(deadline.getDate() + DAYS_FOR_CUSTOMER_TO_CONFIRM);
 
-    // 6. Update payment ÔÇö V2 path uses OrderService, legacy uses inline
+    // 6. Update payment ï¿½ï¿½ï¿½ V2 path uses OrderService, legacy uses inline
     const expectedVersion = (payment as { version?: number }).version ?? 0;
 
     if (env.orderFlowV2) {
@@ -193,7 +193,7 @@ export async function requestFinalization(
         console.error('[requestFinalization] Version conflict for payment:', paymentId);
         return {
           success: false,
-          error: 'El pedido fue modificado por otra operaci+¦n. Recarg+í e intent+í de nuevo.',
+          error: 'El pedido fue modificado por otra operaci+ï¿½n. Recarg+ï¿½ e intent+ï¿½ de nuevo.',
         };
       }
     }
@@ -203,8 +203,8 @@ export async function requestFinalization(
       businessId,
       type: 'order_finalization_requested',
       category: 'pedidos',
-      title: 'Solicitud de finalizaci+¦n enviada',
-      message: `Se ha enviado la solicitud de finalizaci+¦n para el pedido ${payment.orderNumber || paymentId.slice(0, 8)}. Esperando confirmaci+¦n del cliente.`,
+      title: 'Solicitud de finalizaci+ï¿½n enviada',
+      message: `Se ha enviado la solicitud de finalizaci+ï¿½n para el pedido ${payment.orderNumber || paymentId.slice(0, 8)}. Esperando confirmaci+ï¿½n del cliente.`,
       data: {
         paymentId,
         orderNumber: payment.orderNumber,
@@ -213,7 +213,7 @@ export async function requestFinalization(
     });
 
     // 8. Send automatic chat message to the customer
-    // Buscar por paymentId (sesi+¦n aislada de esta orden), no por DNI
+    // Buscar por paymentId (sesi+ï¿½n aislada de esta orden), no por DNI
     const chatSession = await db.query.chatSessions.findFirst({
       where: and(eq(chatSessions.paymentId, payment.id), eq(chatSessions.status, 'active')),
     });
@@ -222,11 +222,11 @@ export async function requestFinalization(
       await db.insert(messages).values({
         sessionId: chatSession.id,
         isFromStore: true,
-        content: `ÔÜá´©Å EL VENDEDOR HA SOLICITADO FINALIZAR LA COMPRA. 
+        content: `ï¿½ï¿½á´©ï¿½ EL VENDEDOR HA SOLICITADO FINALIZAR LA COMPRA. 
 
-Si ya recibiste tu pedido correctamente, por favor conf+¡rmalo en el portal de seguimiento. 
+Si ya recibiste tu pedido correctamente, por favor conf+ï¿½rmalo en el portal de seguimiento. 
 
-Recuerda que si no respondes en 3 d+¡as (${deadline.toLocaleDateString('es-PE')}), el pedido se finalizar+í autom+íticamente.`,
+Recuerda que si no respondes en 3 d+ï¿½as (${deadline.toLocaleDateString('es-PE')}), el pedido se finalizar+ï¿½ autom+ï¿½ticamente.`,
       });
     }
 
@@ -251,7 +251,7 @@ Recuerda que si no respondes en 3 d+¡as (${deadline.toLocaleDateString('es-PE')}
     console.error('[requestFinalization] Error:', error);
     return {
       success: false,
-      error: 'Error al solicitar la finalizaci+¦n del pedido.',
+      error: 'Error al solicitar la finalizaci+ï¿½n del pedido.',
     };
   }
 }
@@ -278,7 +278,7 @@ export async function confirmFinalization(
 
     if (!payment) {
       console.error('[confirmFinalization] Payment not found or invalid token');
-      return { success: false, error: 'Pedido no encontrado o token inv+ílido.' };
+      return { success: false, error: 'Pedido no encontrado o token inv+ï¿½lido.' };
     }
 
     const confirmableStatuses: readonly string[] = CONFIRMABLE_STATUSES;
@@ -286,13 +286,13 @@ export async function confirmFinalization(
       console.error('[confirmFinalization] Invalid status:', payment.status);
       return {
         success: false,
-        error: `El pedido no est+í en estado de espera de confirmaci+¦n. Estado actual: ${payment.status}`,
+        error: `El pedido no est+ï¿½ en estado de espera de confirmaci+ï¿½n. Estado actual: ${payment.status}`,
       };
     }
 
     const now = new Date();
 
-    // 2. Update payment ÔÇö V2 path uses OrderService, legacy uses inline
+    // 2. Update payment ï¿½ï¿½ï¿½ V2 path uses OrderService, legacy uses inline
     const expectedVersion = (payment as { version?: number }).version ?? 0;
 
     if (env.orderFlowV2) {
@@ -323,7 +323,7 @@ export async function confirmFinalization(
       if (!updated) {
         return {
           success: false,
-          error: 'El estado del pedido fue modificado. Recarg+í la p+ígina e intent+í de nuevo.',
+          error: 'El estado del pedido fue modificado. Recarg+ï¿½ la p+ï¿½gina e intent+ï¿½ de nuevo.',
         };
       }
     }
@@ -333,8 +333,8 @@ export async function confirmFinalization(
       businessId: payment.businessId,
       type: 'order_finalization_confirmed',
       category: 'pedidos',
-      title: '-íPedido finalizado!',
-      message: `El cliente ha confirmado la recepci+¦n satisfactoria del pedido ${payment.orderNumber || payment.id.slice(0, 8)}.`,
+      title: '-ï¿½Pedido finalizado!',
+      message: `El cliente ha confirmado la recepci+ï¿½n satisfactoria del pedido ${payment.orderNumber || payment.id.slice(0, 8)}.`,
       data: {
         paymentId,
         orderNumber: payment.orderNumber,
@@ -343,7 +343,7 @@ export async function confirmFinalization(
     });
 
     // 4. Send chat message
-    // Buscar por paymentId (sesi+¦n aislada de esta orden), no por DNI
+    // Buscar por paymentId (sesi+ï¿½n aislada de esta orden), no por DNI
     const chatSession = await db.query.chatSessions.findFirst({
       where: and(eq(chatSessions.paymentId, payment.id), eq(chatSessions.status, 'active')),
     });
@@ -352,7 +352,7 @@ export async function confirmFinalization(
       await db.insert(messages).values({
         sessionId: chatSession.id,
         isFromStore: false, // From customer
-        content: `Ô£à HE CONFIRMADO LA RECEPCI+ôN DEL PEDIDO. Todo conforme.`,
+        content: `Ô£ï¿½ HE CONFIRMADO LA RECEPCI+ï¿½N DEL PEDIDO. Todo conforme.`,
       });
     }
 
@@ -390,7 +390,7 @@ export async function confirmFinalization(
     console.error('[confirmFinalization] Error:', error);
     return {
       success: false,
-      error: 'Error al confirmar la finalizaci+¦n del pedido.',
+      error: 'Error al confirmar la finalizaci+ï¿½n del pedido.',
     };
   }
 }
@@ -418,18 +418,18 @@ export async function rejectFinalization(
 
     if (!payment) {
       console.error('[rejectFinalization] Payment not found or invalid token');
-      return { success: false, error: 'Pedido no encontrado o token inv+ílido.' };
+      return { success: false, error: 'Pedido no encontrado o token inv+ï¿½lido.' };
     }
 
     if (!CONFIRMABLE_STATUSES.includes(payment.status as string)) {
       console.error('[rejectFinalization] Invalid status:', payment.status);
       return {
         success: false,
-        error: `El pedido no est+í en estado de espera de confirmaci+¦n. Estado actual: ${payment.status}`,
+        error: `El pedido no est+ï¿½ en estado de espera de confirmaci+ï¿½n. Estado actual: ${payment.status}`,
       };
     }
 
-    // 2. Update payment ÔÇö V2 path uses OrderService (ÔåÆ ISSUE_REPORTED), legacy uses inline (ÔåÆ disputed)
+    // 2. Update payment ï¿½ï¿½ï¿½ V2 path uses OrderService (ï¿½ï¿½ï¿½ ISSUE_REPORTED), legacy uses inline (ï¿½ï¿½ï¿½ disputed)
     // Legacy also clears completedAt if it was previously set (P17)
     const now = new Date();
     const expectedVersion = (payment as { version?: number }).version ?? 0;
@@ -462,7 +462,7 @@ export async function rejectFinalization(
       if (!updated) {
         return {
           success: false,
-          error: 'El estado del pedido fue modificado. Recarg+í la p+ígina e intent+í de nuevo.',
+          error: 'El estado del pedido fue modificado. Recarg+ï¿½ la p+ï¿½gina e intent+ï¿½ de nuevo.',
         };
       }
     }
@@ -483,7 +483,7 @@ export async function rejectFinalization(
     });
 
     // 4. Send chat message
-    // Buscar por paymentId (sesi+¦n aislada de esta orden), no por DNI
+    // Buscar por paymentId (sesi+ï¿½n aislada de esta orden), no por DNI
     const chatSession = await db.query.chatSessions.findFirst({
       where: and(eq(chatSessions.paymentId, payment.id), eq(chatSessions.status, 'active')),
     });
@@ -492,7 +492,7 @@ export async function rejectFinalization(
       await db.insert(messages).values({
         sessionId: chatSession.id,
         isFromStore: false, // From customer
-        content: `ÔØî HE REPORTADO UN PROBLEMA: ${reason}`,
+        content: `ï¿½ï¿½ï¿½ HE REPORTADO UN PROBLEMA: ${reason}`,
       });
     }
 
@@ -578,8 +578,8 @@ export async function autoFinalizeExpiredPayments(): Promise<{
           businessId: payment.businessId,
           type: 'order_auto_finalized',
           category: 'pedidos',
-          title: 'Pedido finalizado autom+íticamente',
-          message: `El pedido ${payment.orderNumber || payment.id.slice(0, 8)} se ha finalizado autom+íticamente tras 3 d+¡as sin respuesta del cliente.`,
+          title: 'Pedido finalizado autom+ï¿½ticamente',
+          message: `El pedido ${payment.orderNumber || payment.id.slice(0, 8)} se ha finalizado autom+ï¿½ticamente tras 3 d+ï¿½as sin respuesta del cliente.`,
           data: {
             paymentId: payment.id,
             orderNumber: payment.orderNumber,
@@ -589,7 +589,7 @@ export async function autoFinalizeExpiredPayments(): Promise<{
         });
 
         // 4. Send chat message
-        // Buscar por paymentId (sesi+¦n aislada de esta orden), no por DNI
+        // Buscar por paymentId (sesi+ï¿½n aislada de esta orden), no por DNI
         const chatSession = await db.query.chatSessions.findFirst({
           where: and(eq(chatSessions.paymentId, payment.id), eq(chatSessions.status, 'active')),
         });
@@ -598,7 +598,7 @@ export async function autoFinalizeExpiredPayments(): Promise<{
           await db.insert(messages).values({
             sessionId: chatSession.id,
             isFromStore: true,
-            content: `Ôîø PEDIDO FINALIZADO AUTOM+üTICAMENTE. Debido a la falta de respuesta en los +¦ltimos 3 d+¡as, el sistema ha dado por concluido este pedido.`,
+            content: `ï¿½ï¿½ï¿½ PEDIDO FINALIZADO AUTOM+ï¿½TICAMENTE. Debido a la falta de respuesta en los +ï¿½ltimos 3 d+ï¿½as, el sistema ha dado por concluido este pedido.`,
           });
         }
 
@@ -616,7 +616,7 @@ export async function autoFinalizeExpiredPayments(): Promise<{
     return {
       success: false,
       processedCount: 0,
-      error: 'Error en la auto-finalizaci+¦n de pagos.',
+      error: 'Error en la auto-finalizaci+ï¿½n de pagos.',
     };
   }
 }
