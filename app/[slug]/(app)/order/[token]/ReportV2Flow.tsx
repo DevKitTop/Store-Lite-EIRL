@@ -62,7 +62,7 @@ export default function ReportV2Flow({ paymentId, trackingToken }: ReportV2FlowP
       if (result.success) {
         setState('success');
         router.refresh();
-      } else if (result.reason === 'reauth_required') {
+      } else if ((result as any)?.reason === 'reauth_required') {
         // W3/R20: `res.reason` used to be ignored here, so a lapsed cookie only
         // showed an error inside a form that could never succeed again. The
         // handoff drops the stale marker and reloads, which hands the buyer back

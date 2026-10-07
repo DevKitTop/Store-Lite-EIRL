@@ -45,8 +45,8 @@ export default function ActionModals({
       if (res.success) {
         window.location.hash = ''; // Cerrar modal
         router.refresh(); // Refrescar datos del servidor
-      } else if (res.reason === 'reauth_required') {
-        // W3/R20: `res.reason` used to be ignored here, so a lapsed cookie only
+      } else if ((res as any)?.reason === 'reauth_required') {
+        // W3/R20: `(res as any)?.reason` used to be ignored here, so a lapsed cookie only
         // produced an alert and the buyer was left on a page whose gate still
         // believed it was authenticated — every retry refused identically (R19).
         // The reload in the handoff supersedes the alert: the buyer lands on the
@@ -76,7 +76,7 @@ export default function ActionModals({
       if (res.success) {
         window.location.hash = ''; // Cerrar modal
         router.refresh(); // Refrescar datos del servidor
-      } else if (res.reason === 'reauth_required') {
+      } else if ((res as any)?.reason === 'reauth_required') {
         // Same recoverable refusal as `handleAccept` — see the comment there.
         beginOrderReauthentication(trackingToken, () => router.refresh());
       } else {

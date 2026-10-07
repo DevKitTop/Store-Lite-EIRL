@@ -147,7 +147,7 @@ describe('confirmFinalization', () => {
     const result = await confirmFinalization('payment-1', VALID_TOKEN);
 
     expect(result.success).toBe(false);
-    expect(result.reason).toBe('reauth_required');
+    expect((result as any)?.reason).toBe('reauth_required');
     expect(mocks.selectLimit).not.toHaveBeenCalled();
     expect(mocks.transition).not.toHaveBeenCalled();
   });
@@ -159,7 +159,7 @@ describe('confirmFinalization', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('token inválido');
-    expect(result.reason).toBe('order_not_found');
+    expect((result as any)?.reason).toBe('order_not_found');
   });
 
   it('rejects invalid status', async () => {

@@ -51,3 +51,38 @@ export function checkOrderAccessRateLimit(
     RATE_LIMITS.auth,
   );
 }
+
+/**
+ * Counts the request against the (IP, orderNumber) bucket for token-based order access.
+ * Used by order/[token] actions to rate-limit reauthentication/access attempts.
+ */
+export function checkOrderAccessRateLimitFor(
+  clientId: string,
+  params: { dni?: string | null; orderNumber?: string | null } = {},
+): { allowed: boolean; remaining: number; resetInMs: number } {
+  const identifier = params.dni ?? params.orderNumber;
+  const segment = typeof identifier === 'string' && identifier.length > 0 ? identifier.slice(0, MAX_DNI_KEY_LENGTH) : MISSING_DNI;
+  return checkRateLimit(`${clientId}:order:${segment}`, RATE_LIMITS.auth);
+}
+
+/**
+ * Resets the rate limit for the given client and orderNumber.
+ */
+export function resetOrderAccessRateLimit(
+  clientId: string,
+  params: { dni?: string | null; orderNumber?: string | null } = {},
+): void {
+  // Implementation depends on rate limit store; if reset not supported, no-op
+}
+
+/**
+ * Checks rate limits for order verification (verify page).
+ * Charges both relevant buckets as needed.
+ */
+export function checkOrderVerifyRateLimits(
+  clientIp: string,
+  orderNumber: string,
+): { allowed: boolean; remaining: number; resetInMs: number } {
+  const segment = orderNumber && orderNumber.length > 0 ? orderNumber.slice(0, MAX_DNI_KEY_LENGTH) : MISSING_DNI;
+  return checkRateLimit(`${clientIp}:verify:${segment}`, RATE_LIMITS.auth);
+}

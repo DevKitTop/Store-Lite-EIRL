@@ -10,6 +10,7 @@ interface OrderAuthGateProps {
   token: string;
   businessName: string;
   orderNumber: string;
+  businessSlug: string;
   /** When true, the server has already verified the user's identity
    * (Google customer auth match) — skip the client-side auth gate entirely,
    * unless a logout intent marker is present in sessionStorage. */
