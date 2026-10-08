@@ -34,6 +34,15 @@ describe('order-number integrity migration (0048)', () => {
     expect(sql).toMatch(/WHERE\s+order_number\s+IS\s+NULL/i);
   });
 
+  it('backfill value matches the ORDER_NUMBER_PATTERN shape', () => {
+    // Regression: an earlier draft used the full 36-char UUID, producing a
+    // 40-char value that fails the {8,20} anchored pattern and aborts the
+    // migration. The backfill must mirror generateOrderNumber(): ORD- + 12
+    // uppercase hex chars.
+    expect(sql).toMatch(/substr\(replace\(gen_random_uuid\(\)::text,\s*'-',\s*''\),\s*1,\s*12\)/i);
+    expect(sql).toMatch(/upper\(substr/i);
+  });
+
   it('enforces format validation with the correct pattern', () => {
     expect(sql).toMatch(/\^ORD-\[A-Za-z0-9_-]\{8,20\}\$/);
   });

@@ -12,10 +12,12 @@ BEGIN;
 SELECT pg_advisory_xact_lock(4800048);
 
 -- 1. Backfill only NULL order_number rows
+-- Mirrors src/core/payments/orderNumber.ts: `ORD-` + 12 uppercase hex chars
+-- derived from 6 random bytes (16 chars total, within the {8,20} pattern).
 WITH backfill AS (
   SELECT
     id,
-    'ORD-' || regexp_replace(gen_random_uuid()::text, '[^A-Za-z0-9_-]', '', 'g') AS new_order_number
+    'ORD-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)) AS new_order_number
   FROM payments
   WHERE order_number IS NULL
 )
