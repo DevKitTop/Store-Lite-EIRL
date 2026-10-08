@@ -1,8 +1,12 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 describe('order-number integrity migration (0048)', () => {
-  const migrationPath = join(process.cwd(), 'migrations', '0048_payments_order_number_integrity.sql');
+  const migrationPath = join(
+    process.cwd(),
+    'migrations',
+    '0048_payments_order_number_integrity.sql',
+  );
   let sql: string;
 
   beforeAll(() => {
