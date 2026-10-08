@@ -404,8 +404,11 @@ async function handlePhoneNumberUpdated(payload: YCloudPayload): Promise<void> {
     .update(whatsappChannels)
     .set(updates)
     .where(eq(whatsappChannels.ycloudPhoneNumberId, ycloudPhoneNumberId));
-  console.warn(`[ycloud-webhook] Channel ${ycloudPhoneNumberId} updated: ${JSON.stringify(updates)}`);
-}export async function POST(request: Request): Promise<Response> {
+  console.warn(
+    `[ycloud-webhook] Channel ${ycloudPhoneNumberId} updated: ${JSON.stringify(updates)}`,
+  );
+}
+export async function POST(request: Request): Promise<Response> {
   const rawBody = await request.text();
   if (!rawBody) {
     return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
@@ -468,10 +471,3 @@ async function handlePhoneNumberUpdated(payload: YCloudPayload): Promise<void> {
 
   return NextResponse.json({ received: true });
 }
-
-
-
-
-
-
-
