@@ -380,26 +380,32 @@ async function handlePhoneNumberUpdated(payload: YCloudPayload): Promise<void> {
     console.warn('[ycloud-webhook] Phone number updated event missing phone_number data');
     return;
   }
-
   const ycloudPhoneNumberId = phoneNumberData.id;
   const displayPhoneNumber = phoneNumberData.display_phone_number;
   const status = phoneNumberData.status;
-
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (displayPhoneNumber) updates.displayPhoneNumber = displayPhoneNumber;
-  if (status) updates.isActive = status === 'connected';
-
+  if (status) {
+    if (status === 'CONNECTED') {
+      updates.isActive = true;
+      updates.connectionStatus = 'connected';
+      updates.connectedAt = new Date();
+    } else if (status === 'connected') {
+      updates.connectionStatus = 'pending';
+    } else if (status === 'REJECTED' || status === 'DISCONNECTED' || status === 'FAILED') {
+      updates.isActive = false;
+      updates.connectionStatus = 'failed';
+      if (status === 'DISCONNECTED') {
+        updates.connectedAt = null;
+      }
+    }
+  }
   await db
     .update(whatsappChannels)
     .set(updates)
     .where(eq(whatsappChannels.ycloudPhoneNumberId, ycloudPhoneNumberId));
-
-  console.warn(
-    `[ycloud-webhook] Channel ${ycloudPhoneNumberId} updated: ${JSON.stringify(updates)}`,
-  );
-}
-
-export async function POST(request: Request): Promise<Response> {
+  console.warn(`[ycloud-webhook] Channel ${ycloudPhoneNumberId} updated: ${JSON.stringify(updates)}`);
+}export async function POST(request: Request): Promise<Response> {
   const rawBody = await request.text();
   if (!rawBody) {
     return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
@@ -462,3 +468,10 @@ export async function POST(request: Request): Promise<Response> {
 
   return NextResponse.json({ received: true });
 }
+
+
+
+
+
+
+
