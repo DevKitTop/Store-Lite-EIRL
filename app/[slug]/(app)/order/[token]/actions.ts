@@ -1,4 +1,4 @@
-'use server';
+ï»¿'use server';
 
 import { db } from '@/core/database/client';
 import { chatSessions, messages, payments } from '@/core/database/schema';
@@ -51,7 +51,7 @@ async function verifyCallerProof(paymentId: string, callerProof: CallerProof): P
   throw new Error('No autorizado');
 }
 
-// ÔöÇÔöÇÔöÇ LegacyÔåÆV2 status mapping for customer actions ÔöÇÔöÇÔöÇ
+// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Legacyï¿½ï¿½ï¿½V2 status mapping for customer actions ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 const CUSTOMER_ACTION_MAP: Record<string, string> = {
   delivered: ORDER_STATUS_V2.DELIVERED,
   disputed: ORDER_STATUS_V2.DISPUTE,
@@ -115,7 +115,7 @@ export async function updateOrderStatus(
 
 export async function verifyOrderAccess(trackingToken: string, dni: string, orderNumber?: string) {
   try {
-    // Rate limiting check ÔÇö the SHARED auth-intent limiter keyed (client, dni),
+    // Rate limiting check ï¿½ï¿½ï¿½ the SHARED auth-intent limiter keyed (client, dni),
     // the same primitive POST /api/order/lookup uses. Runs BEFORE the payment
     // lookup so a refused caller cannot learn whether the order exists.
     const clientId = getClientIdentifierFromHeaders(await headers());
@@ -123,7 +123,7 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
     if (!rateLimit.allowed) {
       return {
         success: false,
-        error: `Demasiados intentos. Esper+í ${Math.ceil(rateLimit.resetInMs / 1000)} segundos.`,
+        error: `Demasiados intentos. Esper+ï¿½ ${Math.ceil(rateLimit.resetInMs / 1000)} segundos.`,
         rateLimited: true,
       };
     }
@@ -137,7 +137,7 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
     }
 
     // P4: Normalize orderNumber comparison (handle null/empty)
-    // R15: ensure `null !== null` cannot authorize ÔÇö an absent order number
+    // R15: ensure `null !== null` cannot authorize ï¿½ï¿½ï¿½ an absent order number
     // must never pass when the order itself has no order number.
     const providedOrderNumber = orderNumber?.trim() || null;
     const dbOrderNumber = order.orderNumber || null;
@@ -146,7 +146,7 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
       return { success: false };
     }
 
-    // Success ÔÇö refund this caller's own (client, dni) budget, scoped so no
+    // Success ï¿½ï¿½ï¿½ refund this caller's own (client, dni) budget, scoped so no
     // sibling dni is handed a fresh window it has not paid for.
     resetOrderAccessRateLimit(clientId, { dni });
 
@@ -159,18 +159,18 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
 }
 
 /**
- * Sincroniza la sesi+¦n de chat vinculada a un pedido espec+¡fico.
+ * Sincroniza la sesi+ï¿½n de chat vinculada a un pedido espec+ï¿½fico.
  *
- * L+¦gica:
- * 1. Busca una sesi+¦n activa vinculada al paymentId exacto ÔåÆ si existe, la reusa.
- * 2. Si no, busca una sesi+¦n activa del mismo buyer (guestId) ÔåÆ la REUSA y
+ * L+ï¿½gica:
+ * 1. Busca una sesi+ï¿½n activa vinculada al paymentId exacto ï¿½ï¿½ï¿½ si existe, la reusa.
+ * 2. Si no, busca una sesi+ï¿½n activa del mismo buyer (guestId) ï¿½ï¿½ï¿½ la REUSA y
  *    la vincula al paymentId. Esto es CLAVE para mantener el historial del
- *    chat pre-compra (donde el seller ya mand+¦ mensajes).
- * 3. Si no hay ninguna, CREA una nueva sesi+¦n vinculada al paymentId.
+ *    chat pre-compra (donde el seller ya mand+ï¿½ mensajes).
+ * 3. Si no hay ninguna, CREA una nueva sesi+ï¿½n vinculada al paymentId.
  */
 export async function syncChatSession(params: {
   guestIdFromStorage: string | null;
-  // ­ƒöÆ SECURITY (R17): nullable ÔÇö the order page's public projection omits the
+  // ï¿½ï¿½ï¿½ï¿½ SECURITY (R17): nullable ï¿½ï¿½ï¿½ the order page's public projection omits the
   // buyer DNI. A falsy value keeps the existing `guest-${paymentId}` identity,
   // so an unverified visitor can never join another buyer's `dni-{dni}` thread.
   dni: string | null;
@@ -183,7 +183,7 @@ export async function syncChatSession(params: {
     const orderGuestId = `guest-${params.paymentId}`;
     const targetGuestId = params.dni ? `dni-${params.dni}` : orderGuestId;
 
-    // 1. Buscar sesi+¦n activa vinculada EXACTAMENTE a este paymentId
+    // 1. Buscar sesi+ï¿½n activa vinculada EXACTAMENTE a este paymentId
     const exactSession = await db.query.chatSessions.findFirst({
       where: and(
         eq(chatSessions.paymentId, params.paymentId),
@@ -197,9 +197,9 @@ export async function syncChatSession(params: {
       return { success: true, sessionId: exactSession.id, guestId: exactSession.guestId };
     }
 
-    // 2. Buscar sesi+¦n activa del mismo buyer SIN paymentId (pre-compra)
+    // 2. Buscar sesi+ï¿½n activa del mismo buyer SIN paymentId (pre-compra)
     //    para REUSARLA y mantener el historial del chat pre-compra.
-    //    ÔÜá´©Å Solo reusamos sesiones con paymentId IS NULL ÔÇö si ya tiene
+    //    ï¿½ï¿½á´©ï¿½ Solo reusamos sesiones con paymentId IS NULL ï¿½ï¿½ï¿½ si ya tiene
     //    un paymentId asignado, pertenece a OTRA orden y NO debe reusarse.
     const existingSession = await db.query.chatSessions.findFirst({
       where: and(
@@ -212,8 +212,8 @@ export async function syncChatSession(params: {
     });
 
     if (existingSession) {
-      // Reusamos la sesi+¦n existente: vinculamos el paymentId
-      // as+¡ el cliente ve el historial completo del chat pre-compra
+      // Reusamos la sesi+ï¿½n existente: vinculamos el paymentId
+      // as+ï¿½ el cliente ve el historial completo del chat pre-compra
       await db
         .update(chatSessions)
         .set({ paymentId: params.paymentId, updatedAt: new Date() })
@@ -222,8 +222,8 @@ export async function syncChatSession(params: {
       return { success: true, sessionId: existingSession.id, guestId: targetGuestId };
     }
 
-    // 3. Si ya existe una sesi+¦n activa para este targetGuestId (ej. de otra orden previa),
-    // usaremos orderGuestId para evitar la violaci+¦n del +¡ndice +¦nico uq_chat_sessions_active_per_guest
+    // 3. Si ya existe una sesi+ï¿½n activa para este targetGuestId (ej. de otra orden previa),
+    // usaremos orderGuestId para evitar la violaci+ï¿½n del +ï¿½ndice +ï¿½nico uq_chat_sessions_active_per_guest
     const existingActiveSession = await db.query.chatSessions.findFirst({
       where: and(
         eq(chatSessions.guestId, targetGuestId),
@@ -234,7 +234,7 @@ export async function syncChatSession(params: {
 
     const finalGuestId = existingActiveSession ? orderGuestId : targetGuestId;
 
-    // 4. No hay sesi+¦n previa libre ÔåÆ CREAMOS una nueva vinculada al paymentId
+    // 4. No hay sesi+ï¿½n previa libre ï¿½ï¿½ï¿½ CREAMOS una nueva vinculada al paymentId
     const [newSession] = await db
       .insert(chatSessions)
       .values({
@@ -247,11 +247,11 @@ export async function syncChatSession(params: {
       })
       .returning();
 
-    // Mensaje de bienvenida autom+ítico
+    // Mensaje de bienvenida autom+ï¿½tico
     await db.insert(messages).values({
       sessionId: newSession.id,
       isFromStore: true,
-      content: `-íHola ${params.buyerName}! Bienvenido al canal de soporte de tu orden. -+C+¦mo podemos ayudarte?`,
+      content: `-ï¿½Hola ${params.buyerName}! Bienvenido al canal de soporte de tu orden. -+C+ï¿½mo podemos ayudarte?`,
     });
 
     return { success: true, sessionId: newSession.id, guestId: finalGuestId };
@@ -322,7 +322,7 @@ export async function verifyOrderByGoogleIdentity(
 }
 
 /**
- * Revokes the signed order-access cookie (R16) ÔÇö the server half of logout.
+ * Revokes the signed order-access cookie (R16) ï¿½ï¿½ï¿½ the server half of logout.
  *
  * Named `clearOrderAccessCookie` rather than re-exporting the module's
  * `deleteOrderAccessCookie`, because a `'use server'` file may only export
