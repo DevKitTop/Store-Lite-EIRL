@@ -1,4 +1,4 @@
-export const env = {
+﻿export const env = {
   supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
   supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   // Only available server-side — never expose to the client
@@ -87,7 +87,7 @@ export const env = {
   ycloudFbAppId: process.env.NEXT_PUBLIC_YCLOUD_FB_APP_ID || '',
   ycloudFbConfigId: process.env.NEXT_PUBLIC_YCLOUD_FB_CONFIG_ID || '',
   ycloudFbSolutionId: process.env.NEXT_PUBLIC_YCLOUD_FB_SOLUTION_ID || '',
-  // YCloud Meta Embedded Signup (FB SDK) � coexistence popup
+  // YCloud Meta Embedded Signup (FB SDK) � coexistence popup
   // WhatsApp anti-spam rate limiting (per channel/seller) — protects the Meta
   // quality rating. Kept as STRINGS on purpose; parsing lives in the send
   // guards (src/core/whatsapp/guards/whatsappSendGuards.ts). Defaults are safe.
