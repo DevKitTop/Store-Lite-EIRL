@@ -96,6 +96,10 @@ export const lookupOrderSchema = z.object({
     .min(1, 'El número de orden es requerido')
     .transform((val) => (val.startsWith('#') ? val.slice(1) : val)),
   businessSlug: z.string().min(1, 'El slug del negocio es requerido'),
-  trackingToken: z.string().min(1, 'El token de seguimiento es requerido'),
+  // Optional: only present on the "I already have this order open" retry path.
+  // When absent the caller is doing a fresh DNI+order lookup (no cookie gate);
+  // when present the route additionally requires a matching signed order-access
+  // cookie before it will echo the tracking token back.
+  trackingToken: z.string().min(1, 'El token de seguimiento es requerido').optional(),
 });
 export type LookupOrderInput = z.infer<typeof lookupOrderSchema>;

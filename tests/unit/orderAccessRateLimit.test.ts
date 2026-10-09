@@ -52,8 +52,9 @@ vi.mock('@/core/database/client', () => ({
     query: {
       payments: { findFirst: mockPaymentsFindFirst },
       // The anonymous path never reaches the seller checks, but the route
-      // reaches these tables for authenticated callers — keep them callable.
-      businesses: { findFirst: vi.fn() },
+      // resolves the tenant by slug before the payment query (R21), so this
+      // must return the business the payment fixture belongs to.
+      businesses: { findFirst: vi.fn(async () => ({ id: 'biz-1' })) },
       businessTeamMembers: { findFirst: vi.fn() },
     },
   },
