@@ -1,10 +1,15 @@
-﻿'use server';
+'use server';
 
 import { db } from '@/core/database/client';
 import { chatSessions, messages, payments } from '@/core/database/schema';
 import { transition } from '@/core/orders/orderService';
 import { ORDER_STATUS_V2, type OrderStatusV2 } from '@/core/orders/orderStatus';
 import { deleteOrderAccessCookie, setOrderAccessCookie } from '@/lib/orderAccessCookie';
+import {
+  ORDER_ACCESS_DENIED_ERROR,
+  requireOrderAccess,
+  type OrderAccessRefusalReason,
+} from '@/lib/orderAccessGate';
 import {
   checkOrderAccessRateLimitFor,
   resetOrderAccessRateLimit,
@@ -51,7 +56,7 @@ async function verifyCallerProof(paymentId: string, callerProof: CallerProof): P
   throw new Error('No autorizado');
 }
 
-// ��������� Legacy���V2 status mapping for customer actions ���������
+// ─── Legacy→V2 status mapping for customer actions ───
 const CUSTOMER_ACTION_MAP: Record<string, string> = {
   delivered: ORDER_STATUS_V2.DELIVERED,
   disputed: ORDER_STATUS_V2.DISPUTE,
@@ -64,9 +69,28 @@ export async function updateOrderStatus(
   options?: { rejectionReason?: string; callerProof?: CallerProof },
 ) {
   try {
-    // Validate caller if callerProof is provided
+    // R19: the signed access cookie is the PRIMARY authorization decision — run
+    // it BEFORE the first DB read so an unauthorized caller cannot make the
+    // server touch `payments`. `callerProof` (localStorage) is only a
+    // defense-in-depth check consulted AFTER the gate.
+    const gate = await requireOrderAccess(trackingToken);
+    if (!gate.ok) {
+      return { success: false, error: ORDER_ACCESS_DENIED_ERROR, reason: gate.reason };
+    }
+
+    // A verifying cookie + a callerProof that belongs to somebody else is NOT a
+    // re-auth situation: the access cookie is valid, the localStorage marker is
+    // stale. Label it truthfully (R20 / W2).
     if (options?.callerProof) {
-      await verifyCallerProof(paymentId, options.callerProof);
+      try {
+        await verifyCallerProof(paymentId, options.callerProof);
+      } catch {
+        return {
+          success: false,
+          error: ORDER_ACCESS_DENIED_ERROR,
+          reason: 'caller_proof_mismatch' satisfies OrderAccessRefusalReason,
+        };
+      }
     }
 
     const [current] = await db
@@ -76,7 +100,11 @@ export async function updateOrderStatus(
       .limit(1);
 
     if (!current) {
-      return { success: false, error: 'Pedido no encontrado' };
+      return {
+        success: false,
+        error: ORDER_ACCESS_DENIED_ERROR,
+        reason: 'order_not_found' satisfies OrderAccessRefusalReason,
+      };
     }
 
     const expectedVersion = current.version ?? 0;
@@ -98,24 +126,28 @@ export async function updateOrderStatus(
     });
 
     if (!result.success) {
-      return { success: false, error: result.error };
+      return {
+        success: false,
+        error: result.error,
+        reason: 'order_not_actionable' satisfies OrderAccessRefusalReason,
+      };
     }
 
     revalidatePath('/[slug]/order/[token]', 'page');
     return { success: true };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Error al actualizar el estado';
-    if (message === 'No autorizado' || message === 'Pedido no encontrado') {
-      return { success: false, error: message };
-    }
     console.error('[Action Error] updateOrderStatus:', error);
-    return { success: false, error: 'Error al actualizar el estado' };
+    return {
+      success: false,
+      error: 'Error al actualizar el estado',
+      reason: 'generic' satisfies OrderAccessRefusalReason,
+    };
   }
 }
 
 export async function verifyOrderAccess(trackingToken: string, dni: string, orderNumber?: string) {
   try {
-    // Rate limiting check ��� the SHARED auth-intent limiter keyed (client, dni),
+    // Rate limiting check — the SHARED auth-intent limiter keyed (client, dni),
     // the same primitive POST /api/order/lookup uses. Runs BEFORE the payment
     // lookup so a refused caller cannot learn whether the order exists.
     const clientId = getClientIdentifierFromHeaders(await headers());
@@ -123,7 +155,7 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
     if (!rateLimit.allowed) {
       return {
         success: false,
-        error: `Demasiados intentos. Esper+� ${Math.ceil(rateLimit.resetInMs / 1000)} segundos.`,
+        error: `Demasiados intentos. Esperá ${Math.ceil(rateLimit.resetInMs / 1000)} segundos.`,
         rateLimited: true,
       };
     }
@@ -137,7 +169,7 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
     }
 
     // P4: Normalize orderNumber comparison (handle null/empty)
-    // R15: ensure `null !== null` cannot authorize ��� an absent order number
+    // R15: ensure `null !== null` cannot authorize — an absent order number
     // must never pass when the order itself has no order number.
     const providedOrderNumber = orderNumber?.trim() || null;
     const dbOrderNumber = order.orderNumber || null;
@@ -146,7 +178,7 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
       return { success: false };
     }
 
-    // Success ��� refund this caller's own (client, dni) budget, scoped so no
+    // Success — refund this caller's own (client, dni) budget, scoped so no
     // sibling dni is handed a fresh window it has not paid for.
     resetOrderAccessRateLimit(clientId, { dni });
 
@@ -159,18 +191,18 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
 }
 
 /**
- * Sincroniza la sesi+�n de chat vinculada a un pedido espec+�fico.
+ * Sincroniza la sesión de chat vinculada a un pedido específico.
  *
- * L+�gica:
- * 1. Busca una sesi+�n activa vinculada al paymentId exacto ��� si existe, la reusa.
- * 2. Si no, busca una sesi+�n activa del mismo buyer (guestId) ��� la REUSA y
+ * Lógica:
+ * 1. Busca una sesión activa vinculada al paymentId exacto → si existe, la reusa.
+ * 2. Si no, busca una sesión activa del mismo buyer (guestId) → la REUSA y
  *    la vincula al paymentId. Esto es CLAVE para mantener el historial del
- *    chat pre-compra (donde el seller ya mand+� mensajes).
- * 3. Si no hay ninguna, CREA una nueva sesi+�n vinculada al paymentId.
+ *    chat pre-compra (donde el seller ya mandó mensajes).
+ * 3. Si no hay ninguna, CREA una nueva sesión vinculada al paymentId.
  */
 export async function syncChatSession(params: {
   guestIdFromStorage: string | null;
-  // ���� SECURITY (R17): nullable ��� the order page's public projection omits the
+  // 🔒 SECURITY (R17): nullable — the order page's public projection omits the
   // buyer DNI. A falsy value keeps the existing `guest-${paymentId}` identity,
   // so an unverified visitor can never join another buyer's `dni-{dni}` thread.
   dni: string | null;
@@ -183,7 +215,7 @@ export async function syncChatSession(params: {
     const orderGuestId = `guest-${params.paymentId}`;
     const targetGuestId = params.dni ? `dni-${params.dni}` : orderGuestId;
 
-    // 1. Buscar sesi+�n activa vinculada EXACTAMENTE a este paymentId
+    // 1. Buscar sesión activa vinculada EXACTAMENTE a este paymentId
     const exactSession = await db.query.chatSessions.findFirst({
       where: and(
         eq(chatSessions.paymentId, params.paymentId),
@@ -197,9 +229,9 @@ export async function syncChatSession(params: {
       return { success: true, sessionId: exactSession.id, guestId: exactSession.guestId };
     }
 
-    // 2. Buscar sesi+�n activa del mismo buyer SIN paymentId (pre-compra)
+    // 2. Buscar sesión activa del mismo buyer SIN paymentId (pre-compra)
     //    para REUSARLA y mantener el historial del chat pre-compra.
-    //    ��ᴩ� Solo reusamos sesiones con paymentId IS NULL ��� si ya tiene
+    //    ⚠️ Solo reusamos sesiones con paymentId IS NULL — si ya tiene
     //    un paymentId asignado, pertenece a OTRA orden y NO debe reusarse.
     const existingSession = await db.query.chatSessions.findFirst({
       where: and(
@@ -212,8 +244,8 @@ export async function syncChatSession(params: {
     });
 
     if (existingSession) {
-      // Reusamos la sesi+�n existente: vinculamos el paymentId
-      // as+� el cliente ve el historial completo del chat pre-compra
+      // Reusamos la sesión existente: vinculamos el paymentId
+      // así el cliente ve el historial completo del chat pre-compra
       await db
         .update(chatSessions)
         .set({ paymentId: params.paymentId, updatedAt: new Date() })
@@ -222,8 +254,8 @@ export async function syncChatSession(params: {
       return { success: true, sessionId: existingSession.id, guestId: targetGuestId };
     }
 
-    // 3. Si ya existe una sesi+�n activa para este targetGuestId (ej. de otra orden previa),
-    // usaremos orderGuestId para evitar la violaci+�n del +�ndice +�nico uq_chat_sessions_active_per_guest
+    // 3. Si ya existe una sesión activa para este targetGuestId (ej. de otra orden previa),
+    // usaremos orderGuestId para evitar la violación del índice único uq_chat_sessions_active_per_guest
     const existingActiveSession = await db.query.chatSessions.findFirst({
       where: and(
         eq(chatSessions.guestId, targetGuestId),
@@ -234,7 +266,7 @@ export async function syncChatSession(params: {
 
     const finalGuestId = existingActiveSession ? orderGuestId : targetGuestId;
 
-    // 4. No hay sesi+�n previa libre ��� CREAMOS una nueva vinculada al paymentId
+    // 4. No hay sesión previa libre → CREAMOS una nueva vinculada al paymentId
     const [newSession] = await db
       .insert(chatSessions)
       .values({
@@ -247,11 +279,11 @@ export async function syncChatSession(params: {
       })
       .returning();
 
-    // Mensaje de bienvenida autom+�tico
+    // Mensaje de bienvenida automático
     await db.insert(messages).values({
       sessionId: newSession.id,
       isFromStore: true,
-      content: `-�Hola ${params.buyerName}! Bienvenido al canal de soporte de tu orden. -+C+�mo podemos ayudarte?`,
+      content: `¡Hola ${params.buyerName}! Bienvenido al canal de soporte de tu orden. ¿Cómo podemos ayudarte?`,
     });
 
     return { success: true, sessionId: newSession.id, guestId: finalGuestId };
@@ -322,7 +354,7 @@ export async function verifyOrderByGoogleIdentity(
 }
 
 /**
- * Revokes the signed order-access cookie (R16) ��� the server half of logout.
+ * Revokes the signed order-access cookie (R16) — the server half of logout.
  *
  * Named `clearOrderAccessCookie` rather than re-exporting the module's
  * `deleteOrderAccessCookie`, because a `'use server'` file may only export
@@ -339,6 +371,8 @@ export async function clearOrderAccessCookie(trackingToken: string): Promise<voi
 export interface ReportIssueV2Result {
   success: boolean;
   error?: string;
+  /** R20: machine-readable refusal reason so the client never guesses. */
+  reason?: OrderAccessRefusalReason;
 }
 
 /**
@@ -353,12 +387,21 @@ export async function reportIssueV2(
   callerProof?: CallerProof,
 ): Promise<ReportIssueV2Result> {
   try {
-    // Validate caller if callerProof is provided
+    // R19: cookie gate FIRST, before the first DB read (mirrors updateOrderStatus).
+    const gate = await requireOrderAccess(trackingToken);
+    if (!gate.ok) {
+      return { success: false, error: ORDER_ACCESS_DENIED_ERROR, reason: gate.reason };
+    }
+
     if (callerProof) {
       try {
         await verifyCallerProof(paymentId, callerProof);
       } catch {
-        return { success: false, error: 'No autorizado' };
+        return {
+          success: false,
+          error: ORDER_ACCESS_DENIED_ERROR,
+          reason: 'caller_proof_mismatch' satisfies OrderAccessRefusalReason,
+        };
       }
     }
 
@@ -369,7 +412,11 @@ export async function reportIssueV2(
       .limit(1);
 
     if (!payment) {
-      return { success: false, error: 'Pedido no encontrado' };
+      return {
+        success: false,
+        error: ORDER_ACCESS_DENIED_ERROR,
+        reason: 'order_not_found' satisfies OrderAccessRefusalReason,
+      };
     }
 
     const result = await transition({
@@ -381,13 +428,21 @@ export async function reportIssueV2(
     });
 
     if (!result.success) {
-      return { success: false, error: result.error };
+      return {
+        success: false,
+        error: result.error,
+        reason: 'order_not_actionable' satisfies OrderAccessRefusalReason,
+      };
     }
 
     revalidatePath('/[slug]/order/[token]', 'page');
     return { success: true };
   } catch (error) {
     console.error('[reportIssueV2] Error:', error);
-    return { success: false, error: 'Error al reportar el problema' };
+    return {
+      success: false,
+      error: 'Error al reportar el problema',
+      reason: 'generic' satisfies OrderAccessRefusalReason,
+    };
   }
 }
