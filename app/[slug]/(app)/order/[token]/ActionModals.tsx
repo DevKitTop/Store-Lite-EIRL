@@ -4,6 +4,7 @@ import { Icon } from '@/shared/components/ui';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { updateOrderStatus } from './actions';
+import { beginOrderReauthentication } from './orderReauth';
 import type { CallerProof } from './types';
 
 function getCallerProof(token: string): CallerProof | undefined {
@@ -44,6 +45,13 @@ export default function ActionModals({
       if (res.success) {
         window.location.hash = ''; // Cerrar modal
         router.refresh(); // Refrescar datos del servidor
+      } else if ((res as any)?.reason === 'reauth_required') {
+        // W3/R20: `(res as any)?.reason` used to be ignored here, so a lapsed cookie only
+        // produced an alert and the buyer was left on a page whose gate still
+        // believed it was authenticated — every retry refused identically (R19).
+        // The reload in the handoff supersedes the alert: the buyer lands on the
+        // gate's own re-mint state, which explains itself.
+        beginOrderReauthentication(trackingToken, () => router.refresh());
       } else {
         alert(res.error);
       }
@@ -68,6 +76,9 @@ export default function ActionModals({
       if (res.success) {
         window.location.hash = ''; // Cerrar modal
         router.refresh(); // Refrescar datos del servidor
+      } else if ((res as any)?.reason === 'reauth_required') {
+        // Same recoverable refusal as `handleAccept` — see the comment there.
+        beginOrderReauthentication(trackingToken, () => router.refresh());
       } else {
         alert(res.error);
       }

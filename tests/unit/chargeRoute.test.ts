@@ -6,6 +6,9 @@
 // =====================================================
 
 import { POST } from '@/app/api/payment/charge/route';
+import type * as CulqiOrdersModule from '@/core/payments/culqiOrders';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { NextResponse } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // ── Mocks (must be before module imports — vi.mock is hoisted) ──
@@ -14,6 +17,9 @@ const {
   mockBusinessFindFirst,
   mockBusinessSettingsFindFirst,
   mockPaymentsFindFirst,
+  mockPaymentOrdersFindFirst,
+  mockGetCulqiOrder,
+  CulqiReadErrorMock,
   mockProductsFindFirst,
   mockProductsSelectWhere,
   mockProductsSelectFrom,
@@ -21,6 +27,7 @@ const {
   mockTxReturning,
   mockTxValues,
   mockTxInsert,
+  mockTxUpdateReturning,
   mockTxSet,
   mockTxWhere,
   mockTxUpdate,
@@ -29,7 +36,18 @@ const {
   const mockBusinessFindFirst = vi.fn();
   const mockBusinessSettingsFindFirst = vi.fn();
   const mockPaymentsFindFirst = vi.fn();
+  const mockPaymentOrdersFindFirst = vi.fn();
+  const mockGetCulqiOrder = vi.fn();
   const mockProductsFindFirst = vi.fn();
+
+  class CulqiReadErrorMock extends Error {
+    readonly kind: 'timeout' | 'transport';
+    constructor(kind: 'timeout' | 'transport') {
+      super(`CulqiReadError:${kind}`);
+      this.name = 'CulqiReadError';
+      this.kind = kind;
+    }
+  }
 
   const mockProductsSelectWhere = vi.fn();
   const mockProductsSelectFrom = vi.fn(() => ({ where: mockProductsSelectWhere }));
@@ -38,8 +56,11 @@ const {
   const mockTxReturning = vi.fn();
   const mockTxValues = vi.fn(() => ({ returning: mockTxReturning }));
   const mockTxInsert = vi.fn(() => ({ values: mockTxValues }));
+  const mockTxUpdateReturning = vi.fn();
   const mockTxSet = vi.fn(() => ({ where: mockTxWhere }));
-  const mockTxWhere = vi.fn();
+  // `.where()` is chainable: the payment_orders flip continues into `.returning()`,
+  // while the stock UPDATE stops at `.where()`.
+  const mockTxWhere = vi.fn(() => ({ returning: mockTxUpdateReturning }));
   const mockTxUpdate = vi.fn(() => ({ set: mockTxSet }));
   const mockTransaction = vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
     callback({
@@ -52,6 +73,9 @@ const {
     mockBusinessFindFirst,
     mockBusinessSettingsFindFirst,
     mockPaymentsFindFirst,
+    mockPaymentOrdersFindFirst,
+    mockGetCulqiOrder,
+    CulqiReadErrorMock,
     mockProductsFindFirst,
     mockProductsSelectWhere,
     mockProductsSelectFrom,
@@ -59,6 +83,7 @@ const {
     mockTxReturning,
     mockTxValues,
     mockTxInsert,
+    mockTxUpdateReturning,
     mockTxSet,
     mockTxWhere,
     mockTxUpdate,
@@ -80,12 +105,27 @@ vi.mock('@/core/database/client', () => ({
       businesses: { findFirst: mockBusinessFindFirst },
       businessSettings: { findFirst: mockBusinessSettingsFindFirst },
       payments: { findFirst: mockPaymentsFindFirst },
+      paymentOrders: { findFirst: mockPaymentOrdersFindFirst },
       products: { findFirst: mockProductsFindFirst },
     },
     select: mockProductsSelect,
     transaction: mockTransaction,
   },
 }));
+
+// Only the READ is mocked. `isCulqiOrderPaid` is the real implementation, so
+// every route test proves the actual paid predicate gates the route — mocking it
+// would let a stubbed `{state:'paid'}` (or a fictional field) keep the whole
+// suite green, which is exactly how the original `status` bug went unnoticed.
+vi.mock('@/core/payments/culqiOrders', async (importOriginal) => {
+  const actual = await importOriginal<typeof CulqiOrdersModule>();
+  return {
+    ...actual,
+    // original-impl form so restoreMocks keeps these resolved values across tests
+    getCulqiOrder: mockGetCulqiOrder,
+    CulqiReadError: CulqiReadErrorMock,
+  };
+});
 
 vi.mock('@/core/entitlements/getBusinessEntitlements', () => ({
   // original-impl form so restoreMocks keeps this resolved value across tests
@@ -94,27 +134,39 @@ vi.mock('@/core/entitlements/getBusinessEntitlements', () => ({
 
 vi.mock('@/core/payments/idempotency', () => ({
   // original-impl form so restoreMocks keeps these resolved values across tests
-  reserveIdempotencyKey: vi.fn(async () => ({ type: 'reserved', key: 'idem-1' })),
-  completeIdempotencyKey: vi.fn(async () => undefined),
+  reserveIdempotencyKey: mockReserveIdempotencyKey,
+  completeIdempotencyKey: mockCompleteIdempotencyKey,
 }));
 
 vi.mock('@/core/payments/rateLimiter', () => ({
   paymentRateLimiter: { check: vi.fn(() => true) },
 }));
 
-const mockDecrypt = vi.hoisted(() => vi.fn());
+const {
+  mockDecrypt,
+  mockReserveIdempotencyKey,
+  mockCompleteIdempotencyKey,
+  mockNotifyNewOrder,
+  mockSendOrderStatusSms,
+} = vi.hoisted(() => ({
+  mockDecrypt: vi.fn(),
+  mockReserveIdempotencyKey: vi.fn(async () => ({ type: 'reserved', key: 'idem-1' })),
+  mockCompleteIdempotencyKey: vi.fn(async () => undefined),
+  mockNotifyNewOrder: vi.fn(async () => undefined),
+  mockSendOrderStatusSms: vi.fn(async () => undefined),
+}));
 vi.mock('@/utils/crypto', () => ({
   decrypt: mockDecrypt,
 }));
 
 vi.mock('@/lib/notifications', () => ({
-  notifyNewOrder: vi.fn().mockResolvedValue(undefined),
+  notifyNewOrder: mockNotifyNewOrder,
   notifyLowStock: vi.fn().mockResolvedValue(undefined),
   notifyOutOfStock: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@/lib/twilio/orderSms', () => ({
-  sendOrderStatusSms: vi.fn().mockResolvedValue(undefined),
+  sendOrderStatusSms: mockSendOrderStatusSms,
 }));
 
 vi.mock('@/lib/email/orderEmails', () => ({
@@ -130,6 +182,15 @@ vi.stubGlobal('fetch', mockFetch);
 
 // ── Helpers ──────────────────────────────────────────
 
+/**
+ * Compile a Drizzle `where` node to SQL so a test can assert that BOTH columns
+ * are constrained. `and(a, b)` wraps the predicates in parentheses; a single
+ * `eq()` never does, so this distinguishes "scoped by both" from "scoped by one".
+ */
+function compileWhere(where: unknown): { sql: string; params: unknown[] } {
+  return new PgDialect().sqlToQuery(where as never);
+}
+
 function createValidPayload(overrides: Record<string, unknown> = {}) {
   return {
     token: 'tok_test_abc123',
@@ -139,6 +200,49 @@ function createValidPayload(overrides: Record<string, unknown> = {}) {
     productId: '660e8400-e29b-41d4-a716-446655440001',
     ...overrides,
   };
+}
+
+/**
+ * A `payment_orders` row as the gate sees it. The gate projects only
+ * `amount`, `currency` and `metadata`, so the fixture mirrors that shape:
+ * `amount` is decimal(10,2) in SOLES (create-order writes `String(amount/100)`),
+ * and the product binding lives in `metadata.productId` (absent for a
+ * product-less order).
+ */
+function createPaymentOrderRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'po-1',
+    businessId: '550e8400-e29b-41d4-a716-446655440000',
+    culqiOrderId: 'ord_culqi_abc123',
+    amount: '1500',
+    currency: 'PEN',
+    metadata: { productId: '660e8400-e29b-41d4-a716-446655440001' },
+    ...overrides,
+  };
+}
+
+function createOrderFlowPayload(overrides: Record<string, unknown> = {}) {
+  return createValidPayload({
+    token: undefined,
+    culqiOrderId: 'ord_culqi_abc123',
+    metadata: { shippingInfo: { phone: '999888777', courier: 'recojo' } },
+    ...overrides,
+  });
+}
+
+/**
+ * The real client always sends `Idempotency-Key: charge-${token || culqiOrderId}`
+ * (`paymentApi.ts:68`), so the order-flow request mirrors that deterministic key.
+ */
+function createOrderFlowRequest(payload: Record<string, unknown>) {
+  return new Request('http://localhost/api/payment/charge', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': 'charge-ord_culqi_abc123',
+    },
+    body: JSON.stringify(payload),
+  });
 }
 
 function createCulqiChargeResponse(overrides: Record<string, unknown> = {}) {
@@ -180,6 +284,11 @@ describe('POST /api/payment/charge', () => {
 
     // Default mock: no existing payment (not a replay)
     mockPaymentsFindFirst.mockResolvedValue(null);
+    mockPaymentOrdersFindFirst.mockResolvedValue(null);
+    // Real paid markers only: `state` / `paid_at`. There is no `status` on a Culqi
+    // ORDER — it belongs to the CHARGE object — so a fixture carrying it proves
+    // nothing and is deliberately absent here.
+    mockGetCulqiOrder.mockResolvedValue({ id: 'ord_culqi_abc123', state: 'paid' });
 
     // Default mock: product has stock above threshold (no low-stock alerts)
     mockProductsFindFirst.mockResolvedValue({
@@ -203,7 +312,7 @@ describe('POST /api/payment/charge', () => {
     mockTxReturning.mockResolvedValue([
       { id: 'pay-1', trackingToken: 'tt_test_token', buyerPhone: '999888777' },
     ]);
-    mockTxWhere.mockResolvedValue(undefined);
+    mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
 
     vi.stubEnv('NODE_ENV', 'development');
   });
@@ -327,5 +436,599 @@ describe('POST /api/payment/charge', () => {
 
     // Culqi API WAS called (charge proceeds)
     expect(mockFetch).toHaveBeenCalled();
+  });
+
+  // ============================================================
+  // Order flow: verify the Culqi order before trusting the order flow
+  // (R8 - R12)
+  // ============================================================
+
+  describe('order flow - Culqi order verification gate', () => {
+    test('returns 404 when the culqiOrderId does not belong to this business', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(null);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(404);
+      const body = await response.json();
+      expect(body.success).toBe(false);
+      expect(body.error).toBe('Orden de pago no encontrada');
+
+      // No side effects at all: no transaction, no idempotency key burned
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+    });
+
+    test('scopes the payment_orders read to BOTH culqiOrderId and businessId', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(null);
+
+      await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(mockPaymentOrdersFindFirst).toHaveBeenCalledTimes(1);
+      const arg = mockPaymentOrdersFindFirst.mock.calls[0][0] as { where: unknown };
+      const compiled = compileWhere(arg.where);
+      expect(compiled.sql).toMatch(/culqi_order_id.* and .*business_id/);
+      expect(compiled.params).toEqual(
+        expect.arrayContaining(['ord_culqi_abc123', '550e8400-e29b-41d4-a716-446655440000']),
+      );
+    });
+
+    test.each([
+      ['pending', 'pending'],
+      ['expired', 'expired'],
+      ['cancelled', 'cancelled'],
+    ])('returns 402 with the buyer retry text when Culqi reports %s', async (marker) => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      // The REAL `isCulqiOrderPaid` reads this fixture: a non-`paid` `state`
+      // with no `paid_at` is the denial path, not a stubbed boolean.
+      mockGetCulqiOrder.mockResolvedValue({ id: 'ord_culqi_abc123', state: marker });
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.success).toBe(false);
+      expect(body.error).toBe(
+        'Tu pago todavía se está confirmando con la pasarela. Esperá unos segundos e intentá de nuevo.',
+      );
+      expect(body.code).toBe('ORDER_NOT_PAID');
+      // chargePayment throws `data.details || data.error` — a details key would
+      // shadow the buyer-facing text.
+      expect(body).not.toHaveProperty('details');
+
+      // Zero side effects
+      expect(mockTxInsert).not.toHaveBeenCalled();
+      expect(mockTxUpdate).not.toHaveBeenCalled();
+      expect(mockTxReturning).not.toHaveBeenCalled();
+      expect(mockNotifyNewOrder).not.toHaveBeenCalled();
+      expect(mockSendOrderStatusSms).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['a fictional charge-only status marker', { status: 'paid' }],
+      ['a paid marker contradicted by a pending state', { state: 'pending', status: 'paid' }],
+      ['no marker at all', {}],
+      ['a paid state contradicted by a null paid_at', { state: 'unpaid', paid_at: null }],
+    ])('denies through the route when the Culqi order carries only %s', async (_label, fixture) => {
+      // These rows depend on the REAL `isCulqiOrderPaid`. With the predicate
+      // mocked, a stub returning `true` would keep the whole suite green — this
+      // is the exact gap that let a fictional `status` reach the route.
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockGetCulqiOrder.mockResolvedValue(fixture);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.code).toBe('ORDER_NOT_PAID');
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('allows a stale pending state when paid_at is real money evidence', async () => {
+      // The OR rule, exercised end-to-end through the route: `state` can lag a
+      // few seconds behind an async capture, and denying there would hand a real
+      // payer a free-order rejection.
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockGetCulqiOrder.mockResolvedValue({ state: 'pending', paid_at: 1757000000 });
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+    });
+
+    test('maps an aborted Culqi read to 504 and reserves nothing', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockGetCulqiOrder.mockRejectedValue(new CulqiReadErrorMock('timeout'));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(504);
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('maps a Culqi transport failure to 502 and reserves nothing', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockGetCulqiOrder.mockRejectedValue(new CulqiReadErrorMock('transport'));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(502);
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('returns 500 without committing the flip when the payment_orders update affects no row', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(500);
+      expect(mockTransaction).toHaveBeenCalledTimes(1);
+      // No committed flip and no order created downstream
+      expect(mockNotifyNewOrder).not.toHaveBeenCalled();
+      expect(mockCompleteIdempotencyKey).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        200,
+      );
+    });
+
+    test('scopes the payment_orders flip to BOTH culqiOrderId and businessId', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      // First UPDATE in the transaction is the payment_orders flip; the second
+      // one is the stock decrement.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(2);
+      const flipped = mockTxSet.mock.calls[0][0] as Record<string, unknown>;
+      expect(flipped.status).toBe('paid');
+      const whereArg = mockTxWhere.mock.calls[0][0] as unknown;
+      const compiled = compileWhere(whereArg);
+      expect(compiled.sql).toMatch(/culqi_order_id.* and .*business_id/);
+      expect(compiled.params).toEqual(
+        expect.arrayContaining(['ord_culqi_abc123', '550e8400-e29b-41d4-a716-446655440000']),
+      );
+    });
+
+    test('does not replay another tenant payment for the same culqiChargeId', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+      // A single-column lookup WOULD return the other tenant's row. Scoping the
+      // query by businessId means the params no longer identify that row.
+      mockPaymentsFindFirst.mockImplementation((arg: { where: unknown }) => {
+        const { params } = compileWhere(arg.where);
+        if (!params.includes('550e8400-e29b-41d4-a716-446655440000')) {
+          return Promise.resolve({
+            id: 'pay-other-tenant',
+            businessId: '99999999-e29b-41d4-a716-446655440099',
+            trackingToken: 'tt_other',
+            buyerEmail: 'victim@other.test',
+          });
+        }
+        return Promise.resolve(null);
+      });
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // The cross-tenant row is NOT returned; this tenant gets its own 200 insert
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.payment.id).toBe('pay-1');
+      expect(body.replayed).toBeUndefined();
+      const lookupArg = mockPaymentsFindFirst.mock.calls[0][0] as { where: unknown };
+      const lookup = compileWhere(lookupArg.where);
+      expect(lookup.sql).toMatch(/culqi_charge_id.* and .*business_id/);
+      expect(lookup.params).toEqual(
+        expect.arrayContaining(['ord_culqi_abc123', '550e8400-e29b-41d4-a716-446655440000']),
+      );
+    });
+
+    test('returns a PII-free replay body on a same-tenant duplicate', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockPaymentsFindFirst.mockResolvedValue({
+        id: 'pay-existing',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        trackingToken: 'tt_existing',
+        orderNumber: 'ORD-12345678',
+        amount: '50.00',
+        currency: 'PEN',
+        status: 'paid',
+        buyerEmail: 'buyer@test.com',
+        buyerDni: '12345678',
+        buyerPhone: '999888777',
+        shippingAddress: 'Av. Siempre Viva 742',
+        shippingPhone: '999888777',
+        metadata: { customerAuth: { authId: 'auth-1' } },
+      });
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.replayed).toBe(true);
+      expect(body.payment).toEqual({
+        id: 'pay-existing',
+        trackingToken: 'tt_existing',
+        orderNumber: 'ORD-12345678',
+        amount: '50.00',
+        currency: 'PEN',
+        status: 'paid',
+      });
+      expect(body.payment).not.toHaveProperty('buyerEmail');
+      expect(body.payment).not.toHaveProperty('buyerDni');
+      expect(body.payment).not.toHaveProperty('buyerPhone');
+      expect(body.payment).not.toHaveProperty('shippingAddress');
+      expect(body.payment).not.toHaveProperty('metadata');
+      // No second write on a replay
+      expect(mockTxInsert).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // Order flow: bind the verified payment to what gets recorded
+  // (R13 — amount/product binding, the W1 underpayment gap)
+  // ============================================================
+
+  describe('order flow - binding the verified payment to the recorded transaction', () => {
+    test('projects only the money and binding columns, never buyer PII', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(mockPaymentOrdersFindFirst).toHaveBeenCalledTimes(1);
+      const arg = mockPaymentOrdersFindFirst.mock.calls[0][0] as {
+        columns?: Record<string, boolean>;
+      };
+      expect(arg.columns).toEqual({
+        amount: true,
+        currency: true,
+        metadata: true,
+      });
+      // The gate is scoped to the caller's own tenant and reads money fields
+      // only — buyerEmail / buyerPhone are never pulled into memory.
+      expect(arg.columns).not.toHaveProperty('buyerEmail');
+      expect(arg.columns).not.toHaveProperty('buyerPhone');
+    });
+
+    test('accepts the exact decimal-string amount and rounds the float case (200)', async () => {
+      // `payment_orders.amount` is decimal(10,2) in soles; the request is in
+      // minor units. '1.00' must equal 100, and 10.99 * 100 = 1098.999... must
+      // round to 1099 rather than be rejected as a float artifact.
+      mockProductsSelectWhere.mockResolvedValue([
+        {
+          id: '660e8400-e29b-41d4-a716-446655440001',
+          price: '10.99',
+          secondPrice: null,
+        },
+      ]);
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ amount: '10.99' }));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload({ amount: 1099 })));
+
+      expect(response.status).toBe(200);
+      expect(mockTxInsert).toHaveBeenCalledTimes(1);
+      // The recorded amount is the request amount, not the order's.
+      const inserted = mockTxValues.mock.calls[0][0] as { amount: string };
+      expect(inserted.amount).toBe('10.99');
+    });
+
+    test('accepts a plain integer decimal-string amount (200)', async () => {
+      mockProductsSelectWhere.mockResolvedValue([
+        {
+          id: '660e8400-e29b-41d4-a716-446655440001',
+          price: '1.00',
+          secondPrice: null,
+        },
+      ]);
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ amount: '1' }));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload({ amount: 100 })));
+
+      expect(response.status).toBe(200);
+    });
+
+    test('denies with ORDER_AMOUNT_MISMATCH when the request amount is not the order amount', async () => {
+      // The underpayment attack: a Culqi order created for S/ 1.00, then
+      // charged with S/ 1000.00 of the same business. Without this binding the
+      // transaction would record S/ 1000.00 and decrement that product's stock.
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ amount: '1.00' }));
+
+      const response = await POST(
+        createOrderFlowRequest(createOrderFlowPayload({ amount: 150000 })),
+      );
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.success).toBe(false);
+      expect(body.error).toBe(
+        'El monto de la orden no coincide con el pago solicitado. Contactá al negocio para resolverlo.',
+      );
+      expect(body.code).toBe('ORDER_AMOUNT_MISMATCH');
+      expect(body).not.toHaveProperty('details');
+
+      // No upstream round-trip, no write, no key burned.
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['null', null],
+      ['a non-numeric string', 'not-a-number'],
+      ['an empty string', ''],
+      ['NaN-producing text', 'abc'],
+    ])('fails closed when the stored order amount is %s', async (_label, storedAmount) => {
+      // `amount` is `.notNull()` in the schema, but the comparison must not
+      // depend on that: a NaN would otherwise silently pass `!==`.
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({ amount: storedAmount as unknown as string }),
+      );
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.code).toBe('ORDER_AMOUNT_MISMATCH');
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('denies with ORDER_CURRENCY_MISMATCH when the request currency differs from the order', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ currency: 'USD' }));
+
+      const response = await POST(
+        createOrderFlowRequest(createOrderFlowPayload({ currency: 'PEN' })),
+      );
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.success).toBe(false);
+      expect(body.error).toBe(
+        'La moneda de la orden no coincide con el pago solicitado. Contactá al negocio para resolverlo.',
+      );
+      expect(body.code).toBe('ORDER_CURRENCY_MISMATCH');
+      expect(body).not.toHaveProperty('details');
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('denies with ORDER_PRODUCT_MISMATCH when the request product is not the ordered one', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({ metadata: { productId: '660e8400-e29b-41d4-a716-446655440009' } }),
+      );
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.success).toBe(false);
+      expect(body.error).toBe(
+        'La orden no corresponde a este producto. Contactá al negocio para resolverlo.',
+      );
+      expect(body.code).toBe('ORDER_PRODUCT_MISMATCH');
+      expect(body).not.toHaveProperty('details');
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['an empty object', {}],
+      ['a null value', null],
+      ['an absent key', { culqiRaw: { orderId: 'ord_culqi_abc123' } }],
+      ['a non-object value', 'productId'],
+      ['an array', [{ productId: 'x' }]],
+    ])('allows a product-less order whose metadata is %s (200)', async (_label, metadata) => {
+      // create-order permits a product-less order (createOrderRequestSchema
+      // productId is optional), so metadata.productId is legitimately absent
+      // and there is nothing to bind against.
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({ metadata: metadata as unknown }),
+      );
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+    });
+
+    test('denies a non-string metadata.productId rather than binding to it', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({
+          metadata: { productId: { toString: () => 'x' } },
+        }),
+      );
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // A non-string binding cannot be a real product id; fail closed.
+      expect(response.status).toBe(402);
+      const body = await response.json();
+      expect(body.code).toBe('ORDER_PRODUCT_MISMATCH');
+    });
+
+    test('keeps a matching binding on the happy path (200)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({ metadata: { productId: '660e8400-e29b-41d4-a716-446655440001' } }),
+      );
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      const inserted = mockTxValues.mock.calls[0][0] as { productId: string; amount: string };
+      expect(inserted.productId).toBe('660e8400-e29b-41d4-a716-446655440001');
+      expect(inserted.amount).toBe('1500');
+    });
+  });
+
+  // ============================================================
+  // Idempotency: a failed transaction must never leave the reserved
+  // key at `processing` (R14 — the W2 permanent-lockout trap)
+  // ============================================================
+
+  describe('idempotency key completion on a failed transaction', () => {
+    interface KeyRow {
+      status: string;
+      responseBody?: unknown;
+      responseStatus?: number;
+    }
+
+    /**
+     * A minimal in-memory `payment_idempotency_keys` stand-in wired into the two
+     * route mocks, so a test can assert the KEY's end state and not only the HTTP
+     * response. Mirrors `reserveIdempotencyKey` / `completeIdempotencyKey`.
+     *
+     * A FRESH store per test is mandatory: `restoreMocks` restores the
+     * `vi.fn(originalImpl)` defaults but does NOT undo a later
+     * `mockImplementation`, so a shared store would leak across cases.
+     */
+    function useFakeKeyStore() {
+      const store = new Map<string, KeyRow>();
+
+      mockReserveIdempotencyKey.mockImplementation(async (key: string | null) => {
+        if (!key) return null;
+        const existing = store.get(key);
+        if (existing?.responseBody && existing.responseStatus) {
+          return {
+            type: 'replay',
+            response: NextResponse.json(existing.responseBody as Record<string, unknown>, {
+              status: existing.responseStatus,
+            }),
+          };
+        }
+        if (existing) {
+          return {
+            type: 'processing',
+            response: NextResponse.json({ error: 'processing' }, { status: 409 }),
+          };
+        }
+        store.set(key, { status: 'processing' });
+        return { type: 'reserved', key };
+      });
+
+      mockCompleteIdempotencyKey.mockImplementation(
+        async (key: string | null, body: Record<string, unknown>, status = 200) => {
+          if (!key) return;
+          store.set(key, {
+            status: status >= 200 && status < 300 ? 'succeeded' : 'failed',
+            responseBody: body,
+            responseStatus: status,
+          });
+        },
+      );
+
+      return store;
+    }
+
+    test('completes the reserved key with the failure when the transaction throws', async () => {
+      const store = useFakeKeyStore();
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      // The flip assertion fires: `flipped.length !== 1` throws inside the tx.
+      mockTxUpdateReturning.mockResolvedValue([]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.error).toBe('Error interno procesando el pago');
+
+      // The key must NOT be left dangling at `processing`.
+      const entry = store.get('charge-ord_culqi_abc123');
+      expect(entry).toBeDefined();
+      expect(entry?.status).toBe('failed');
+      expect(entry?.responseStatus).toBe(500);
+      expect(entry?.responseBody).toEqual({ error: 'Error interno procesando el pago' });
+    });
+
+    test('a second identical request after a failed transaction is not answered 409 processing', async () => {
+      const store = useFakeKeyStore();
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([]);
+
+      const first = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(first.status).toBe(500);
+
+      // The client key is deterministic per Culqi order, so the retry hits the
+      // same key. The recorded failure is replayed — never a 409 `processing`
+      // lockout, which is what a dangling key would produce.
+      const second = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(second.status).not.toBe(409);
+      expect(second.status).toBe(500);
+      expect(store.get('charge-ord_culqi_abc123')?.status).toBe('failed');
+      // A replay is a replay: it must not re-run the transaction.
+      expect(mockTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    test('a successful charge still completes the key once, with the 200 body', async () => {
+      const store = useFakeKeyStore();
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      const completions = mockCompleteIdempotencyKey.mock.calls.filter(
+        (call) => (call[2] as number) === 200,
+      );
+      expect(completions).toHaveLength(1);
+      const entry = store.get('charge-ord_culqi_abc123');
+      expect(entry?.status).toBe('succeeded');
+      expect(entry?.responseStatus).toBe(200);
+    });
+
+    test('does not complete a key that was never reserved', async () => {
+      useFakeKeyStore();
+      // No Idempotency-Key header ⇒ `reserveIdempotencyKey` returns null.
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(createOrderFlowPayload()),
+      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([]);
+
+      const response = await POST(request);
+
+      expect(response.status).toBe(500);
+      expect(mockReserveIdempotencyKey).toHaveBeenCalledWith(null);
+      // Strongest form: no completion at all, not merely no 500-status one.
+      expect(mockCompleteIdempotencyKey).not.toHaveBeenCalled();
+    });
+
+    test('never masks the original failure when completing the key also throws', async () => {
+      useFakeKeyStore();
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([]);
+      mockCompleteIdempotencyKey.mockRejectedValue(new Error('idempotency store is down'));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // The buyer still gets the 500 for the payment, not an unhandled rejection
+      // and not a 200.
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.error).toBe('Error interno procesando el pago');
+    });
+
+    test('never re-completes a key the success path already completed', async () => {
+      useFakeKeyStore();
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+      // The success-path completion itself fails AFTER the transaction committed.
+      mockCompleteIdempotencyKey.mockRejectedValue(new Error('response write timed out'));
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // The payment committed, so a 500 is already the worst outcome; what must
+      // not happen is a SECOND completion rewriting the key to a 500 failure
+      // record for a payment that actually succeeded.
+      expect(response.status).toBe(500);
+      expect(mockCompleteIdempotencyKey).toHaveBeenCalledTimes(1);
+    });
   });
 });

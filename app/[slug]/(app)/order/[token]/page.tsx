@@ -1,6 +1,7 @@
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, businessTeamMembers, payments } from '@/core/database/schema';
+import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
 import { createClient } from '@/lib/supabase/server';
 import { Icon } from '@/shared/components/ui';
 import { and, eq } from 'drizzle-orm';
@@ -25,10 +26,60 @@ interface OrderTrackingPageProps {
   }>;
 }
 
+/**
+ * 🔒 SECURITY (R14): the columns the order page may read WITHOUT a verified
+ * signed access cookie. This is an explicit ALLOWLIST, never a denylist — a new
+ * PII column added to `payments` stays private by default.
+ *
+ * Every key here is read by this page or is the FK a selected relation resolves
+ * on (`productId`). Deliberately ABSENT:
+ *   • buyer PII      — `buyerEmail`, `buyerPhone`, `buyerDni`
+ *   • shipping PII   — `shippingAddress` and the district/province/department,
+ *                      agency, reference, phone and ubigeo columns
+ *   • secrets        — `pickupCode`, `ticketUrl`, `ticketImageUrl`,
+ *                      `deliveryCodeHash`, `deliveryCodeExpiresAt`
+ *   • `metadata`     — it carries `customerAuth` (a Supabase auth id) and
+ *                      `shippingInfo`; it must never leave the server
+ *
+ * `trackingToken` is safe to select: the visitor already holds it, it IS the URL.
+ *
+ * `tests/unit/orderPageProjection.test.ts` pins this list against a literal copy
+ * and fails if a PII key is added here.
+ */
+const PUBLIC_ORDER_COLUMNS = {
+  id: true,
+  businessId: true,
+  productId: true,
+  trackingToken: true,
+  orderNumber: true,
+  status: true,
+  amount: true,
+  currency: true,
+  paymentMethod: true,
+  shippingType: true,
+  sellerNote: true,
+  courierName: true,
+  trackingNumber: true,
+  createdAt: true,
+  updatedAt: true,
+  completedAt: true,
+} as const;
+
+/**
+ * The storefront relations both paths MUST keep loading: `product` and
+ * `business` are public storefront data, not buyer PII. It is a sibling of
+ * `columns`, never nested inside it — a `with` key inside `columns` would be read
+ * as a column name and would strip the relation from the inferred row type.
+ */
+const PUBLIC_ORDER_RELATIONS = { product: true, business: true } as const;
+
 export async function generateMetadata({ params }: OrderTrackingPageProps): Promise<Metadata> {
   const { token } = await params;
+  // 🔒 SECURITY (R14): this is a SECOND read of the payments row, so it is
+  // projected too — it only needs `business.name` for the title.
   const order = await db.query.payments.findFirst({
     where: eq(payments.trackingToken, token),
+    columns: { businessId: true },
     with: { business: true },
   });
   if (!order || !order.business) return { title: 'Orden no encontrada' };
@@ -56,11 +107,29 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
 
   if (!token || token.length < 5) notFound();
 
+  // 🔒 SECURITY (R14): the signed cookie is the ONLY thing that widens this read.
+  // Absent, expired, tampered or bound to another token, it resolves false and
+  // the row is fetched through the PII-free allowlist.
+  const hasFullAccess = await verifyOrderAccessCookie(token);
+
   let order;
   try {
     order = await db.query.payments.findFirst({
       where: eq(payments.trackingToken, token),
-      with: { product: true, business: true },
+      // No cast is needed: drizzle resolves this conditional spread to the FULL row
+      // type, so the ~1900 lines below keep their existing types and relations
+      // (design D11 predicted a cast would be required — it is not, and adding
+      // one is what broke relation inference).
+      //
+      // The row type stays the full one, which means a future `order.<pii>` read
+      // below still COMPILES even though the column is no longer selected. That
+      // gap is covered by tests/unit/orderPageProjection.test.ts, which pins this
+      // allowlist and fails if a PII key is added to it.
+      //
+      // The full-access branch keeps the relation load and only omits `columns`,
+      // so a verified request still gets the whole row.
+      with: PUBLIC_ORDER_RELATIONS,
+      ...(hasFullAccess ? {} : { columns: PUBLIC_ORDER_COLUMNS }),
     });
   } catch (_error) {
     notFound();
@@ -445,7 +514,8 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
     <OrderAuthGate
       token={token}
       businessName={order.business.name}
-      orderNumber={order.orderNumber || ''}
+      orderNumber={order.orderNumber}
+      businessSlug={slug}
       serverPreAuth={serverPreAuth}
     >
       <div className="order-root">
@@ -1245,9 +1315,9 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
               businessName={order.business.name}
               businessId={order.business.id}
               paymentId={order.id}
-              buyerEmail={order.buyerEmail}
+              buyerEmail={order.buyerEmail ?? null}
               buyerName={null}
-              buyerDni={order.buyerDni ?? ''}
+              buyerDni={order.buyerDni ?? null}
               trackingToken={token}
             />
           </div>
@@ -1470,7 +1540,7 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
                     <div style={{ gridColumn: '1 / -1' }}>
                       <span className="detail-sub">Dirección</span>
                       <span className="detail-value">
-                        {order.shippingAddress || 'Recojo en Tienda'}
+                        {order.shippingAddress || (isPickup ? 'Recojo en Tienda' : '—')}
                       </span>
                       {order.shippingDistrict && (
                         <span style={{ fontSize: '0.75rem', opacity: 0.6, display: 'block' }}>
@@ -1535,12 +1605,14 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
                 <div className="detail-body">
                   <span className="detail-label">CONTACTO</span>
                   <div className="detail-grid">
-                    <div>
-                      <span className="detail-sub">Email</span>
-                      <span className="detail-value" style={{ fontSize: '0.8rem' }}>
-                        {order.buyerEmail}
-                      </span>
-                    </div>
+                    {order.buyerEmail && (
+                      <div>
+                        <span className="detail-sub">Email</span>
+                        <span className="detail-value" style={{ fontSize: '0.8rem' }}>
+                          {order.buyerEmail}
+                        </span>
+                      </div>
+                    )}
                     {order.buyerPhone && (
                       <div>
                         <span className="detail-sub">Teléfono</span>

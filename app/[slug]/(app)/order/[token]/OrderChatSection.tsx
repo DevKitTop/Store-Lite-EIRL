@@ -17,9 +17,12 @@ interface OrderChatSectionProps {
   businessName: string;
   businessId: string;
   paymentId: string;
-  buyerEmail: string;
+  // 🔒 SECURITY (R17): nullable because the order page serves a PII-free
+  // projection to anyone without a verified access cookie. `null` here is the
+  // normal case for an unverified visitor, not an error state.
+  buyerEmail: string | null;
   buyerName: string | null;
-  buyerDni: string;
+  buyerDni: string | null;
   trackingToken: string;
 }
 
@@ -50,7 +53,7 @@ export default function OrderChatSection({
       try {
         setIsLoading(true);
         const guestIdFromStorage = localStorage.getItem('chat_guest_id');
-        const name = buyerName || buyerEmail.split('@')[0];
+        const name = buyerName || buyerEmail?.split('@')[0] || 'Cliente';
 
         const res = await syncChatSession({
           guestIdFromStorage,
@@ -103,7 +106,7 @@ export default function OrderChatSection({
   useEffect(() => {
     if (!sessionId || !guestId) return;
 
-    // ── Realtime subscription (sin server-side filter) ──
+    // ── Realtime subscription (scoped server-side a esta sesión) ──
     const channel = supabase
       .channel(`order-chat-${sessionId}`)
       .on(
@@ -112,10 +115,11 @@ export default function OrderChatSection({
           event: 'INSERT',
           schema: 'public',
           table: 'messages',
+          filter: `session_id=eq.${sessionId}`,
         },
         (payload: any) => {
           const m = payload.new;
-          // Client-side filter: solo mensajes de esta sesión Y este payment
+          // Client-side filter (defense-in-depth): solo mensajes de esta sesión Y este payment
           if (String(m.session_id) !== sessionId) return;
           if (String(m.payment_id) !== paymentId) return;
 

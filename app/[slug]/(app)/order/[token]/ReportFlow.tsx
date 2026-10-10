@@ -5,6 +5,7 @@ import { Icon } from '@/shared/components/ui';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import './FlowModals.css';
+import { beginOrderReauthentication } from './orderReauth';
 
 interface ReportFlowProps {
   paymentId: string;
@@ -40,6 +41,14 @@ export default function ReportFlow({ paymentId, trackingToken }: ReportFlowProps
       if (result.success) {
         setState('success');
         router.refresh();
+      } else if (result.reason === 'reauth_required') {
+        // R20: the same recoverable refusal `ConfirmationFlow` handles. Without
+        // this branch a buyer whose cookie lapsed got the generic error and
+        // stayed on a page whose gate still believed it was authenticated — so
+        // `rejectFinalization` would refuse them again on every retry (R19).
+        beginOrderReauthentication(trackingToken, () => router.refresh());
+        setError(result.error || 'Necesitás volver a verificar tu acceso al pedido.');
+        setState('idle');
       } else {
         setError(result.error || 'Error al enviar el reporte');
         setState('idle');

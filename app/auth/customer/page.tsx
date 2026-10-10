@@ -2,6 +2,7 @@
 
 import ConsentCheckbox from '@/features/auth/ConsentCheckbox';
 import { createClient } from '@/lib/supabase/client';
+import { isAllowedAuthReturnOrigin } from '@/shared/utils/url';
 import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
@@ -39,6 +40,9 @@ function CustomerAuthContent() {
   const storeLogo = searchParams.get('logo');
   const storeOrigin = searchParams.get('origin');
   const code = searchParams.get('code');
+  // `storeOrigin` is allowlist INPUT only — it is never passed raw to
+  // postMessage. Resolved once per render: null ⇒ close without emitting.
+  const returnOrigin = storeOrigin && isAllowedAuthReturnOrigin(storeOrigin) ? storeOrigin : null;
   const processedRef = useRef(false);
   // Store tokens in a ref so we can send them when user clicks "Continue"
   const pendingTokensRef = useRef<{ access_token: string; refresh_token: string } | null>(null);
@@ -59,6 +63,11 @@ function CustomerAuthContent() {
   useEffect(() => {
     if (processedRef.current) return;
     if (!code || !slug || !storeOrigin) return;
+    if (!returnOrigin) {
+      console.error('[CustomerAuth] origin rejected:', storeOrigin);
+      window.close();
+      return;
+    }
     processedRef.current = true;
     setStep('authenticating');
 
@@ -69,7 +78,7 @@ function CustomerAuthContent() {
       .then(({ data, error }: Awaited<ReturnType<typeof supabase.auth.exchangeCodeForSession>>) => {
         if (error || !data.session) {
           console.error('[CustomerAuth] Error exchanging code:', error);
-          window.opener?.postMessage({ type: 'AUTH_ERROR', error: error?.message }, storeOrigin);
+          window.opener?.postMessage({ type: 'AUTH_ERROR', error: error?.message }, returnOrigin);
           window.close();
           return;
         }
@@ -82,12 +91,12 @@ function CustomerAuthContent() {
             access_token: data.session.access_token,
             refresh_token: data.session.refresh_token,
           },
-          storeOrigin,
+          returnOrigin,
         );
 
         window.close();
       });
-  }, [code, slug, storeOrigin]);
+  }, [code, slug, storeOrigin, returnOrigin]);
 
   // ─── First load — check for existing session ───
   useEffect(() => {
@@ -95,6 +104,12 @@ function CustomerAuthContent() {
 
     if (!slug || !storeOrigin) {
       console.warn('[CustomerAuth] Missing required params');
+      window.close();
+      return;
+    }
+
+    if (!returnOrigin) {
+      console.error('[CustomerAuth] origin rejected:', storeOrigin);
       window.close();
       return;
     }
@@ -123,12 +138,20 @@ function CustomerAuthContent() {
           setStep('ready');
         }
       });
-  }, [code, slug, storeOrigin]);
+  }, [code, slug, storeOrigin, returnOrigin]);
 
   // ─── Continue with the current session ───
   const handleContinueWithCurrent = useCallback(() => {
     const tokens = pendingTokensRef.current;
     if (!tokens || !slug || !storeOrigin) return;
+
+    // Defense in depth: the confirmation screen only renders when this gate
+    // already passed, but a denied origin must never emit.
+    if (!returnOrigin) {
+      console.error('[CustomerAuth] origin rejected:', storeOrigin);
+      window.close();
+      return;
+    }
 
     window.opener?.postMessage(
       {
@@ -137,11 +160,11 @@ function CustomerAuthContent() {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
       },
-      storeOrigin,
+      returnOrigin,
     );
 
     window.close();
-  }, [slug, storeOrigin]);
+  }, [slug, storeOrigin, returnOrigin]);
 
   // ─── Switch to a different Google account ───
   const handleSwitchAccount = useCallback(async () => {

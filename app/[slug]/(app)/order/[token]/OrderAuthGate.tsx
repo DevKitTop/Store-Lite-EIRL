@@ -2,14 +2,17 @@
 
 import { createClient } from '@/lib/supabase/client';
 import { Icon } from '@/shared/components/ui';
-import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { verifyOrderAccess, verifyOrderByGoogleIdentity } from './actions';
 
 interface OrderAuthGateProps {
   token: string;
   businessName: string;
-  orderNumber: string;
+  /** R25: an order may legitimately have no number — the gate then renders a
+   * non-submittable dead-end instead of a form that can never succeed. */
+  orderNumber: string | null;
+  businessSlug: string;
   /** When true, the server has already verified the user's identity
    * (Google customer auth match) — skip the client-side auth gate entirely,
    * unless a logout intent marker is present in sessionStorage. */
@@ -26,10 +29,6 @@ export default function OrderAuthGate({
   serverPreAuth = false,
   children,
 }: OrderAuthGateProps) {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname();
-
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [dni, setDni] = useState('');
   const [inputOrderNumber, setInputOrderNumber] = useState('');
@@ -177,41 +176,14 @@ export default function OrderAuthGate({
         }
       }
 
-      // 2. Si no hay sesión, verificar si el DNI viene por URL (Auto-Auth)
-      const dniFromUrl = searchParams.get('dni');
-      if (dniFromUrl && dniFromUrl.length >= 8) {
-        const performAutoAuth = async () => {
-          setLoading(true);
-          try {
-            const res = await verifyOrderAccess(token, dniFromUrl);
-            if (res.success) {
-              const sessionData = {
-                dni: dniFromUrl,
-                expiresAt: Date.now() + SESSION_TTL,
-              };
-              localStorage.setItem(storageKey, JSON.stringify(sessionData));
-              setIsAuthenticated(true);
-
-              const newParams = new URLSearchParams(searchParams.toString());
-              newParams.delete('dni');
-              const query = newParams.toString() ? `?${newParams.toString()}` : '';
-              router.replace(`${pathname}${query}`);
-            }
-          } catch (err) {
-            console.error('[OrderAuthGate] Auto-auth error:', err);
-          } finally {
-            setLoading(false);
-          }
-        };
-        performAutoAuth();
-        return;
-      }
-
+      // R24: the `?dni=` auto-auth flow has been REMOVED. It was unreachable
+      // after R15 and, being a URL-driven credential, a leak in itself. The
+      // param is now inert — the buyer must always type DNI + N° de orden.
       setIsAuthenticated(false);
     };
 
     checkAuth();
-  }, [storageKey, searchParams, token, pathname, router]);
+  }, [storageKey, token]);
 
   // ─── Listen for auth tokens from popup ───
   useEffect(() => {
@@ -383,6 +355,78 @@ export default function OrderAuthGate({
       setLoading(false);
     }
   };
+
+  // R25: an order with no N° de orden cannot be verified — there is nothing to
+  // compare against, and the Google flow (`handleGoogleOrderVerify`) also
+  // requires one. Render an explicit, non-submittable dead-end BEFORE the
+  // spinner, pointing the buyer at seller contact (not Google).
+  if (orderNumber === null) {
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 9999,
+          backgroundColor: 'var(--md-sys-color-surface)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1.5rem',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '480px',
+            width: '100%',
+            backgroundColor: 'var(--md-sys-color-surface-container-highest)',
+            borderRadius: '48px',
+            padding: '3.5rem 2.5rem',
+            textAlign: 'center',
+            border: '1px solid var(--md-sys-color-outline-variant)',
+            boxShadow: '0 40px 80px rgba(0,0,0,0.12)',
+          }}
+        >
+          <div
+            style={{
+              width: 96,
+              height: 96,
+              color: 'var(--md-sys-color-on-surface)',
+              borderRadius: '32px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 2rem',
+            }}
+          >
+            <Icon size={48}>info</Icon>
+          </div>
+          <h2
+            style={{
+              fontSize: '1.75rem',
+              fontWeight: 950,
+              marginBottom: '1rem',
+              letterSpacing: '-0.03em',
+              color: 'var(--md-sys-color-on-surface)',
+            }}
+          >
+            No pudimos identificar tu pedido
+          </h2>
+          <p
+            style={{
+              fontSize: '1rem',
+              opacity: 0.7,
+              lineHeight: 1.5,
+              padding: '0 1rem',
+              color: 'var(--md-sys-color-on-surface)',
+            }}
+          >
+            Este pedido no tiene un N° de orden con el que podamos verificar tu identidad. Contactá
+            al vendedor de <b>{businessName}</b> para que te ayude a acceder al seguimiento.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (isAuthenticated === null || (loading && !isAuthenticated)) {
     return (
