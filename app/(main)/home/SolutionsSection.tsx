@@ -26,17 +26,11 @@ const CARDS = [
     issue: 'No sabes qué está funcionando o qué no.',
     fix: 'En tiempo real puedes estar en contacto con tus usuarios porque tenemos chats en tiempo real.',
   },
-  {
-    icon: 'hub',
-    issue: 'Integra tu WhatsApp directamente',
-    fix: 'Conecta WhatsApp a la misma tienda y podrás responder a tus clientes en tiempo real, sin perder ventas.',
-  },
 ] as const;
 
 const INTEGRATIONS = [
   { icon: 'credit_card', name: 'Culqi', cat: 'Pagos' },
   { icon: 'percent', name: '0 comisiones', cat: 'Por venta' },
-  { icon: 'chat', name: 'WhatsApp', cat: 'Atención' },
   { icon: 'travel_explore', name: 'Google', cat: 'Subdominio' },
   { icon: 'edit', name: 'Edita tu negocio', cat: 'A tu comodidad' },
 ] as const;
