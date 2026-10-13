@@ -34,7 +34,6 @@ const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: 'all', label: 'Todo' },
   { key: 'orders', label: 'Ventas' },
   { key: 'unread', label: 'Sin leer' },
-  { key: 'whatsapp', label: 'WhatsApp' },
 ];
 
 export function ChatSidebar({

@@ -18,7 +18,7 @@ describe('SolutionsSection — problem/solution cards and integrations', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders the six problem/solution cards, each with icon, issue and fix', () => {
+  it('renders the five problem/solution cards, each with icon, issue and fix', () => {
     render(<SolutionsSection />);
 
     const issues = [
@@ -27,7 +27,6 @@ describe('SolutionsSection — problem/solution cards and integrations', () => {
       'Gestionar envíos es un dolor de cabeza.',
       'Pierdes productos y stock en hojas de cálculo.',
       'No sabes qué está funcionando o qué no.',
-      'Integra tu WhatsApp directamente',
     ];
     const fixes = [
       'Empieza gratis, sin mensualidad ni sorpresas.',
@@ -35,40 +34,35 @@ describe('SolutionsSection — problem/solution cards and integrations', () => {
       'Supervisa pedidos desde que los envías hasta que llegan a tus usuarios. Más seguridad y tranquilidad para tus clientes.',
       'Tu catálogo siempre al día, sin esfuerzo.',
       'En tiempo real puedes estar en contacto con tus usuarios porque tenemos chats en tiempo real.',
-      'Conecta WhatsApp a la misma tienda y podrás responder a tus clientes en tiempo real, sin perder ventas.',
     ];
-    const icons = ['rocket_launch', 'payments', 'local_shipping', 'inventory_2', 'insights', 'hub'];
+    const icons = ['rocket_launch', 'payments', 'local_shipping', 'inventory_2', 'insights'];
 
     issues.forEach((issue) => expect(screen.getByText(issue)).toBeInTheDocument());
     fixes.forEach((fix) => expect(screen.getByText(fix)).toBeInTheDocument());
 
     icons.forEach((icon) => {
-      const elements = screen.getAllByText(icon);
-      const expectedLength = icon === 'hub' ? 2 : 1;
-      expect(elements).toHaveLength(expectedLength);
+      expect(screen.getAllByText(icon)).toHaveLength(1);
     });
-    expect(screen.getAllByText('check_circle')).toHaveLength(6);
+    expect(screen.getAllByText('check_circle')).toHaveLength(5);
   });
 
-  it('renders the five integration chips with name and category', () => {
+  it('renders the four integration chips with name and category', () => {
     render(<SolutionsSection />);
 
     expect(screen.getByText('Culqi')).toBeInTheDocument();
     expect(screen.getByText('Pagos')).toBeInTheDocument();
     expect(screen.getByText('0 comisiones')).toBeInTheDocument();
     expect(screen.getByText('Por venta')).toBeInTheDocument();
-    expect(screen.getByText('WhatsApp')).toBeInTheDocument();
-    expect(screen.getByText('Atención')).toBeInTheDocument();
     expect(screen.getByText('Google')).toBeInTheDocument();
     expect(screen.getByText('Subdominio')).toBeInTheDocument();
     expect(screen.getByText('Edita tu negocio')).toBeInTheDocument();
     expect(screen.getByText('A tu comodidad')).toBeInTheDocument();
   });
 
-  it('renders the five integration icons and the "more integrations" note', () => {
+  it('renders the four integration icons and the "more integrations" note', () => {
     render(<SolutionsSection />);
 
-    const intIcons = ['credit_card', 'percent', 'chat', 'travel_explore', 'edit'];
+    const intIcons = ['credit_card', 'percent', 'travel_explore', 'edit'];
     intIcons.forEach((icon) => expect(screen.getByText(icon)).toBeInTheDocument());
     expect(screen.getByText('+ Más integraciones próximamente')).toBeInTheDocument();
   });

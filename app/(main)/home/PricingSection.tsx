@@ -37,7 +37,6 @@ const PLANS: Plan[] = [
       'Dashboard con métricas de ventas',
       'SEO avanzado: meta tags, JSON-LD y sitemap',
       'Asistente de IA para generar contenido y responder',
-      'WhatsApp integrado para atención al cliente',
       'Equipo de trabajo con 2 usuarios adicionales',
     ],
     cta: 'Escalar mi negocio',
