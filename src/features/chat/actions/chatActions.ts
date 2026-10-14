@@ -1,8 +1,15 @@
 'use server';
 
 import { db } from '@/core/database/client';
-import { businesses, businessTeamMembers, chatSessions, messages } from '@/core/database/schema';
+import {
+  businesses,
+  businessTeamMembers,
+  chatSessions,
+  messages,
+  payments,
+} from '@/core/database/schema';
 import { notifyNewMessage } from '@/lib/notifications';
+import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
 import { checkPermission } from '@/lib/permissions';
 import { getPostHogClient } from '@/lib/posthogServer';
 import { createClient } from '@/lib/supabase/server';
@@ -17,10 +24,29 @@ async function getAuthenticatedUserId() {
   return user?.id ?? null;
 }
 
+/**
+ * Order-bound chat sessions (`session.paymentId != null`) are read/written by
+ * the BUYER, whose only credential on the order page is the signed order-access
+ * cookie (R19) — NOT a guessable `dni-{dni}` guestId. Reports whether the
+ * current request carries a valid marker for the order behind that payment.
+ *
+ * The cookie is read server-side from the request, so no caller-supplied token
+ * is needed: the tracking token is resolved from the session's own `paymentId`.
+ */
+async function hasOrderAccessCookie(paymentId: string): Promise<boolean> {
+  const payment = await db.query.payments.findFirst({
+    where: eq(payments.id, paymentId),
+    columns: { trackingToken: true },
+  });
+
+  if (!payment?.trackingToken) return false;
+  return verifyOrderAccessCookie(payment.trackingToken);
+}
+
 async function resolveSessionActor(sessionId: string, guestId?: string) {
   const session = await db.query.chatSessions.findFirst({
     where: eq(chatSessions.id, sessionId),
-    columns: { id: true, businessId: true, guestId: true },
+    columns: { id: true, businessId: true, guestId: true, paymentId: true },
   });
 
   if (!session) {
@@ -76,6 +102,12 @@ async function resolveSessionActor(sessionId: string, guestId?: string) {
   }
 
   if (guestId && session.guestId === guestId) {
+    // Order-bound sessions must ALSO prove order ownership: an order session's
+    // guestId is `dni-{buyerDni}` — guessable — so a bare guestId match is not
+    // proof of identity. The signed order-access cookie is.
+    if (session.paymentId && !(await hasOrderAccessCookie(session.paymentId))) {
+      return { allowed: false as const, reason: 'No autorizado' };
+    }
     return { allowed: true as const, role: 'guest' as const, session };
   }
 
@@ -245,6 +277,13 @@ export async function getActiveChatSession(guestId: string, businessId: string) 
         ),
       orderBy: (table, { desc }) => [desc(table.createdAt)],
     });
+
+    // An order-bound session (paymentId != null) is enumerable by anyone who
+    // knows a buyer DNI + a public businessId (`dni-{dni}` guestId), so it must
+    // not be disclosed without the signed order-access cookie (R19).
+    if (session?.paymentId && !(await hasOrderAccessCookie(session.paymentId))) {
+      return { success: false, error: 'No autorizado' };
+    }
 
     return { success: true, session };
   } catch (error) {
