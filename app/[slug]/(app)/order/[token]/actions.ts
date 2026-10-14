@@ -201,25 +201,61 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
  * 3. Si no hay ninguna, CREA una nueva sesión vinculada al paymentId.
  */
 export async function syncChatSession(params: {
-  guestIdFromStorage: string | null;
-  // 🔒 SECURITY (R17): nullable — the order page's public projection omits the
-  // buyer DNI. A falsy value keeps the existing `guest-${paymentId}` identity,
-  // so an unverified visitor can never join another buyer's `dni-{dni}` thread.
-  dni: string | null;
-  businessId: string;
   buyerName: string;
+  // Bound to `trackingToken` below: a cookie that verifies for token X must not
+  // let the caller reach any paymentId other than X's own order (NEW-2 IDOR).
   paymentId: string;
+  // R19: the signed access cookie is the authorization decision. This mutation
+  // inserts/updates `chatSessions` + `messages`, so it MUST carry the same proof
+  // as `updateOrderStatus` / `reportIssueV2` (same file).
+  trackingToken: string;
 }) {
   try {
+    // R19: cookie gate FIRST, before the first DB read (mirrors updateOrderStatus
+    // and reportIssueV2). Without it an anonymous caller could create or hijack a
+    // chat session by supplying any `paymentId`.
+    const gate = await requireOrderAccess(params.trackingToken);
+    if (!gate.ok) {
+      return { success: false, error: ORDER_ACCESS_DENIED_ERROR, reason: gate.reason };
+    }
+
+    // NEW-2 (IDOR): the gate proves the caller owns *this* token — it does NOT
+    // authorize the tenant or buyer identity the client sends. Resolve the order
+    // from (paymentId, trackingToken), the SAME binding `updateOrderStatus` uses,
+    // and derive `businessId` / buyer DNI from THAT row. Otherwise a valid cookie
+    // for order A plus a victim's `paymentId` would hand back order B's
+    // session/guestId, and `fetchMessages` authorizes on `guestId` alone.
+    const order = await db.query.payments.findFirst({
+      where: and(
+        eq(payments.id, params.paymentId),
+        eq(payments.trackingToken, params.trackingToken),
+      ),
+      columns: { id: true, businessId: true, buyerDni: true },
+    });
+
+    if (!order) {
+      return {
+        success: false,
+        error: ORDER_ACCESS_DENIED_ERROR,
+        reason: 'order_not_found' satisfies OrderAccessRefusalReason,
+      };
+    }
+
+    const paymentId = order.id;
+    const businessId = order.businessId;
+    // The verified order's DNI — never a client-supplied one — decides the
+    // `dni-{dni}` thread, so a stranger cannot join another buyer's chat.
+    const buyerDni = order.buyerDni;
+
     // Unique guestId for this order if shared DNI session is already active for another order
-    const orderGuestId = `guest-${params.paymentId}`;
-    const targetGuestId = params.dni ? `dni-${params.dni}` : orderGuestId;
+    const orderGuestId = `guest-${paymentId}`;
+    const targetGuestId = buyerDni ? `dni-${buyerDni}` : orderGuestId;
 
     // 1. Buscar sesión activa vinculada EXACTAMENTE a este paymentId
     const exactSession = await db.query.chatSessions.findFirst({
       where: and(
-        eq(chatSessions.paymentId, params.paymentId),
-        eq(chatSessions.businessId, params.businessId),
+        eq(chatSessions.paymentId, paymentId),
+        eq(chatSessions.businessId, businessId),
         eq(chatSessions.status, 'active'),
       ),
       orderBy: [desc(chatSessions.createdAt)],
@@ -236,7 +272,7 @@ export async function syncChatSession(params: {
     const existingSession = await db.query.chatSessions.findFirst({
       where: and(
         eq(chatSessions.guestId, targetGuestId),
-        eq(chatSessions.businessId, params.businessId),
+        eq(chatSessions.businessId, businessId),
         eq(chatSessions.status, 'active'),
         isNull(chatSessions.paymentId),
       ),
@@ -248,7 +284,7 @@ export async function syncChatSession(params: {
       // así el cliente ve el historial completo del chat pre-compra
       await db
         .update(chatSessions)
-        .set({ paymentId: params.paymentId, updatedAt: new Date() })
+        .set({ paymentId, updatedAt: new Date() })
         .where(eq(chatSessions.id, existingSession.id));
 
       return { success: true, sessionId: existingSession.id, guestId: targetGuestId };
@@ -259,7 +295,7 @@ export async function syncChatSession(params: {
     const existingActiveSession = await db.query.chatSessions.findFirst({
       where: and(
         eq(chatSessions.guestId, targetGuestId),
-        eq(chatSessions.businessId, params.businessId),
+        eq(chatSessions.businessId, businessId),
         eq(chatSessions.status, 'active'),
       ),
     });
@@ -270,8 +306,8 @@ export async function syncChatSession(params: {
     const [newSession] = await db
       .insert(chatSessions)
       .values({
-        businessId: params.businessId,
-        paymentId: params.paymentId,
+        businessId,
+        paymentId,
         guestId: finalGuestId,
         guestName: params.buyerName,
         guestGender: 'other',

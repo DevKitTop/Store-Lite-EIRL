@@ -15,24 +15,20 @@ interface Message {
 
 interface OrderChatSectionProps {
   businessName: string;
-  businessId: string;
   paymentId: string;
   // 🔒 SECURITY (R17): nullable because the order page serves a PII-free
   // projection to anyone without a verified access cookie. `null` here is the
   // normal case for an unverified visitor, not an error state.
   buyerEmail: string | null;
   buyerName: string | null;
-  buyerDni: string | null;
   trackingToken: string;
 }
 
 export default function OrderChatSection({
   businessName,
-  businessId,
   paymentId,
   buyerEmail,
   buyerName,
-  buyerDni,
   trackingToken,
 }: OrderChatSectionProps) {
   const supabase = useMemo(() => createClient(), []);
@@ -52,15 +48,12 @@ export default function OrderChatSection({
     const initChat = async () => {
       try {
         setIsLoading(true);
-        const guestIdFromStorage = localStorage.getItem('chat_guest_id');
         const name = buyerName || buyerEmail?.split('@')[0] || 'Cliente';
 
         const res = await syncChatSession({
-          guestIdFromStorage,
-          dni: buyerDni,
-          businessId,
           buyerName: name,
           paymentId,
+          trackingToken,
         });
 
         if (res.success && res.sessionId) {
@@ -75,7 +68,7 @@ export default function OrderChatSection({
       }
     };
     initChat();
-  }, [businessId, paymentId, buyerDni, buyerEmail, buyerName]);
+  }, [paymentId, buyerEmail, buyerName, trackingToken]);
 
   // Carga inicial de mensajes
   useEffect(() => {
