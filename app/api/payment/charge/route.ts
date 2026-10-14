@@ -16,6 +16,7 @@ import {
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { CulqiReadError, getCulqiOrder, isCulqiOrderPaid } from '@/core/payments/culqiOrders';
 import { completeIdempotencyKey, reserveIdempotencyKey } from '@/core/payments/idempotency';
+import { generateOrderNumber } from '@/core/payments/orderNumber';
 import { paymentRateLimiter } from '@/core/payments/rateLimiter';
 import { generateTrackingToken } from '@/core/utils/trackingToken';
 import { validateAmount } from '@/features/billing/validateAmount';
@@ -542,7 +543,7 @@ export async function POST(request: Request) {
             buyerPhone: rawShipping.phone ?? null,
             buyerDni: rawShipping.dni ?? null,
             status: 'paid',
-            orderNumber: (metadata?.orderNumber as string) ?? null,
+            orderNumber: (metadata?.orderNumber as string) ?? generateOrderNumber(),
             shippingType,
             shippingDepartment: rawShipping.department ?? null,
             shippingProvince: rawShipping.province ?? null,

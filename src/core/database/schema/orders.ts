@@ -17,6 +17,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -82,7 +83,7 @@ export const payments = pgTable(
     deliveryCodeHash: text('delivery_code_hash'),
     deliveryCodeExpiresAt: timestamp('delivery_code_expires_at', { withTimezone: true }),
     // Logistics & Shipping
-    orderNumber: text('order_number'),
+    orderNumber: text('order_number').notNull(),
     shippingType: shippingTypeEnum('shipping_type'),
     shippingDepartment: text('shipping_department'),
     shippingProvince: text('shipping_province'),
@@ -120,6 +121,7 @@ export const payments = pgTable(
     statusIdx: index('idx_payments_status').on(table.status),
     culqiChargeIdIdx: index('idx_payments_culqi_charge_id').on(table.culqiChargeId),
     createdAtIdx: index('idx_payments_created_at').on(table.createdAt.desc()),
+    orderNumberUnique: uniqueIndex('payments_order_number_unique').on(table.orderNumber),
     paymentsAmountPositive: check('payments_amount_positive', sql`${table.amount} > 0`),
   }),
 );
