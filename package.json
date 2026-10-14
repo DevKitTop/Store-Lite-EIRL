@@ -30,7 +30,7 @@
   "dependencies": {
     "@material/web": "^2.4.1",
     "@react-email/components": "^1.0.12",
-    "@sentry/nextjs": "^10.58.0",
+    "@sentry/nextjs": "^11.6.0",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.108.2",
     "@types/qrcode": "^1.5.6",
