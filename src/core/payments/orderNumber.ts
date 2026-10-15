@@ -56,6 +56,26 @@ export function generateOrderNumber(): string {
 }
 
 /**
+ * Resolves the order number to persist for a new payment (trust boundary).
+ *
+ * A client-supplied candidate is trusted ONLY if it already satisfies the
+ * anchored {@link ORDER_NUMBER_PATTERN}. Anything else — absent, empty,
+ * whitespace-only, wrong prefix, out-of-set characters, or the wrong suffix
+ * length — is discarded in favour of a freshly generated value. The client
+ * (`useCulqiCallback`) generates a time-derived number, so this keeps valid
+ * client values working while refusing malformed or tampered input that
+ * previously reached `payments.order_number` unvalidated.
+ *
+ * @param candidate - Value read from the (untrusted) request metadata.
+ * @returns A value guaranteed to match {@link ORDER_NUMBER_PATTERN}.
+ */
+export function resolveOrderNumber(candidate: string | null | undefined): string {
+  return typeof candidate === 'string' && ORDER_NUMBER_PATTERN.test(candidate)
+    ? candidate
+    : generateOrderNumber();
+}
+
+/**
  * Derive the ticket storage filename from an order number.
  *
  * Mirrors the inline sanitizer in `app/api/ticket/generate/route.ts`. It is

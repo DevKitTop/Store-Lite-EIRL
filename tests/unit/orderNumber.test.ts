@@ -1,6 +1,7 @@
 import {
   generateOrderNumber,
   ORDER_NUMBER_PATTERN,
+  resolveOrderNumber,
   sanitizeTicketFileName,
 } from '@/core/payments/orderNumber';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -81,6 +82,71 @@ describe('generateOrderNumber', () => {
     }
 
     expect(seen.size).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('resolveOrderNumber', () => {
+  test('trusts a client value that already matches the pinned pattern', () => {
+    const valid = 'ORD-abcdef012345';
+
+    expect(ORDER_NUMBER_PATTERN.test(valid)).toBe(true);
+    expect(resolveOrderNumber(valid)).toBe(valid);
+  });
+
+  test('accepts the 8-char legacy shape (a client may send an older value)', () => {
+    const legacy = 'ORD-3f9a2b1c';
+
+    expect(resolveOrderNumber(legacy)).toBe(legacy);
+  });
+
+  test('generates a fresh value when the candidate is absent, empty or whitespace', () => {
+    for (const candidate of [undefined, null, '', '   ']) {
+      const resolved = resolveOrderNumber(candidate);
+
+      expect(ORDER_NUMBER_PATTERN.test(resolved)).toBe(true);
+      // The generated shape is exactly ORD- + 12 hex chars; none of the
+      // rejected candidates could have produced it.
+      expect(resolved).toHaveLength(16);
+    }
+  });
+
+  test('discards malformed or tampered candidates and generates instead', () => {
+    const malformed = [
+      'ORD-', // empty suffix
+      'ORD-abc', // suffix too short
+      `ORD-${'a'.repeat(21)}`, // suffix too long
+      'ORD-abcdef.01234', // dot
+      'ORD-abcdef/01234', // slash (path segment break)
+      'ORD-abcdef 01234', // space
+      'ORD-abcdef%01234', // percent
+      'ABC-abcdef012345', // wrong prefix
+      'ord-abcdef012345', // lowercase prefix
+    ];
+
+    for (const candidate of malformed) {
+      const resolved = resolveOrderNumber(candidate);
+
+      expect(ORDER_NUMBER_PATTERN.test(candidate)).toBe(false);
+      expect(resolved).not.toBe(candidate);
+      expect(ORDER_NUMBER_PATTERN.test(resolved)).toBe(true);
+      expect(resolved).toHaveLength(16);
+    }
+  });
+
+  test('always returns a pattern-valid value, whatever the input', () => {
+    const candidates = [
+      undefined,
+      null,
+      '',
+      'x',
+      'ORD-00000000',
+      generateOrderNumber(),
+      'ORD-abcdef012345',
+    ];
+
+    for (const candidate of candidates) {
+      expect(ORDER_NUMBER_PATTERN.test(resolveOrderNumber(candidate))).toBe(true);
+    }
   });
 });
 
