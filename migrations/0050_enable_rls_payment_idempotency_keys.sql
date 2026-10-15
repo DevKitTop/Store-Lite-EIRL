@@ -1,0 +1,27 @@
+-- =====================================================
+-- MIGRATION: 0050_enable_rls_payment_idempotency_keys
+-- =====================================================
+-- Description: Enable Row Level Security on `payment_idempotency_keys`, the
+--              last table from the C1 audit list that was still reachable
+--              through the public (anon) Supabase key with no RLS protection.
+--              Migration 0049 covered the other five (businesses, payments,
+--              payment_orders, chat_sessions, messages).
+--
+-- Context (C1 — pre-production security verification, 2026-10):
+--   The table has NO business_id/owner column: it is a service-side dedupe
+--   ledger keyed by a client-supplied text key (`charge-` + token || culqi
+--   order id). It must never be read or written through PostgREST.
+--
+--   Design: RLS enabled with ZERO policies -> every anon/authenticated access
+--   is denied. The app keeps working because the authoritative path is Drizzle
+--   over DATABASE_URL (the `postgres` role, which BYPASSES RLS); see
+--   src/core/payments/idempotency.ts.
+--
+--   Idempotent: safe to re-run. Do NOT add any policy here.
+--
+-- Apply via operator: psql -f migrations/0050_enable_rls_payment_idempotency_keys.sql
+--             (or paste into the Supabase SQL editor)
+-- =====================================================
+
+ALTER TABLE "public"."payment_idempotency_keys" ENABLE ROW LEVEL SECURITY;
+--> statement-breakpoint
