@@ -118,21 +118,57 @@ export interface ClientHeaderReader {
 }
 
 /**
+ * Count of trusted proxy hops in front of the app. Vercel's edge terminates
+ * exactly one hop, so the client address is the RIGHTMOST `x-forwarded-for`
+ * entry; a client can only append entries to the LEFT. Overridable via
+ * `TRUSTED_PROXY_COUNT` for topologies that add more trusted hops.
+ */
+function trustedProxyCount(): number {
+  const parsed = Number.parseInt(process.env.TRUSTED_PROXY_COUNT ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : 1;
+}
+
+/**
+ * Resolves the client IP without trusting spoofable, client-supplied
+ * `x-forwarded-for` entries.
+ *
+ * `x-forwarded-for` is comma-separated, oldest-first: the leftmost tokens are
+ * written by whoever sent the request (attacker-controlled), and each trusted
+ * proxy appends the address it saw on the right. Only the entries written by
+ * `TRUSTED_PROXY_COUNT` trusted hops from the RIGHT are trustworthy. Falls back
+ * to `x-real-ip` (set by the edge, not the client), then `cf-connecting-ip`,
+ * then the `'unknown'` sentinel.
+ */
+export function getClientIp(headers: ClientHeaderReader): string {
+  const forwarded = headers.get('x-forwarded-for');
+  if (forwarded) {
+    const parts = forwarded
+      .split(',')
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    if (parts.length > 0) {
+      // Never fall back to index 0: if the configured hop count exceeds the
+      // entries we actually received (misconfiguration), clamp to the RIGHTMOST
+      // entry — the closest-to-us, least-spoofable one — instead of the
+      // leftmost, which is attacker-controlled.
+      const index = parts.length - trustedProxyCount();
+      return parts[index >= 0 ? index : parts.length - 1];
+    }
+  }
+  return headers.get('x-real-ip') ?? headers.get('cf-connecting-ip') ?? 'unknown';
+}
+
+/**
  * Extracts a client identifier from any header reader.
- * Priority: x-forwarded-for > x-real-ip > cf-connecting-ip > fallback
+ * Priority: trusted x-forwarded-for hop > x-real-ip > cf-connecting-ip > fallback
  */
 export function getClientIdentifierFromHeaders(headers: ClientHeaderReader): string {
-  return (
-    headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
-    headers.get('x-real-ip') ??
-    headers.get('cf-connecting-ip') ??
-    'unknown'
-  );
+  return getClientIp(headers);
 }
 
 /**
  * Extracts a client identifier from the request.
- * Priority: x-forwarded-for > x-real-ip > cf-connecting-ip > fallback
+ * Priority: trusted rightmost x-forwarded-for hop > x-real-ip > cf-connecting-ip > 'unknown'
  */
 export function getClientIdentifier(request: NextRequest): string {
   return getClientIdentifierFromHeaders(request.headers);
