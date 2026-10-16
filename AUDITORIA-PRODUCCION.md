@@ -194,9 +194,9 @@
 - [ ] VerificaciÃ³n server-side de `culqiOrderId` en `/api/payment/charge` (C2) â€” PR #203 draft, sin mergear
 - [x] Allowlist de origin en /auth/customer postMessage (C3) �? ya implementado en pp/auth/customer/page.tsx con isAllowedAuthReturnOrigin + allowlist (same-origin + NEXT_PUBLIC_AUTH_ORIGIN). Verificado con tests 	ests/unit/url.test.ts y 	ests/unit/customerAuthPage.test.tsx (66 passed), PR #199/#201/#202. Residual: SSR guard en isAllowedAuthReturnOrigin no cr�tico (sólo se invoca client-side).
 - [ ] Datos sensibles de la orden detrÃ¡s de verificaciÃ³n server-side + fix `orderNumber IS NULL` (C4) â€” PR #205 draft, sin mergear
-- [ ] Auth + ownership en `/api/ticket/generate` (C5)
-- [ ] `getMemberPermissions` en `ticketActions`/`finalizationActions` + abort si actor no resuelve (C6)
-- [ ] Rol admin para `/api/billing/sunat-report` (C7)
+- [x] Auth + ownership en `/api/ticket/generate` (C5) → ya implementado: gate owner-or-buyer en `app/api/ticket/generate/route.ts:105` (`requireOwnedBusinessById(payment.businessId)`) con fallback a comparación de `trackingToken` (`safeTokenEqual`, 401 en `:114`). Commit `5513219f` (PR #195). Test `tests/unit/ticketGenerateRoute.test.ts`.
+- [x] `getMemberPermissions` en `ticketActions`/`finalizationActions` + abort si actor no resuelve (C6) → ya implementado: `requireOrderManager()` en `ticketActions.ts:68-76` y `finalizationActions.ts:72-80`, vía `checkPermission(businessId, actorId, 'orders.manage')`; aborta `{ok:false}` si `getAuthenticatedUserId()` es null. Commit `771b697` (PR #195/#221). Tests `ticketActionsRoute` + `finalization*`.
+- [x] Rol admin para `/api/billing/sunat-report` (C7) → ya implementado: `route.ts:23-35` acepta `x-sass-key === env.sassApiKey` (con guard `!!env.sassApiKey`) o exige `env.platformAdminIds.includes(userId)`; 401 si no. Documentado en JSDoc `:10-17`.
 - [ ] ~~Filtro server-side de `session_id` en `OrderChatSection` realtime (C10)~~ â†’ **cÃ³digo ya hecho en `5ce5c1f7`; â›” residual bloqueado por C1. NO tildar hasta que C1 estÃ© verificado contra la DB live**
 - [ ] ~~Rate limit en `verifyOrderAccessByDniAndOrderNumber` (C11)~~ â†’ **funciÃ³n eliminada en `f0efd09`; no hay nada que rate-limitar**. El riesgo residual vive en las 2 superficies de abajo
 - [ ] â¬†ï¸ Gate por cookie firmada en `updateOrderStatus`/`reportIssueV2`/`confirmFinalization` (W-A1 reescalado â€” C4 volviÃ³ permanente `paymentId` en el payload pÃºblico)
