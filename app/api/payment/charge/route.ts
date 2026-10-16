@@ -15,7 +15,11 @@ import {
 } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { CulqiReadError, getCulqiOrder, isCulqiOrderPaid } from '@/core/payments/culqiOrders';
-import { completeIdempotencyKey, reserveIdempotencyKey } from '@/core/payments/idempotency';
+import {
+  completeIdempotencyKey,
+  releaseIdempotencyKey,
+  reserveIdempotencyKey,
+} from '@/core/payments/idempotency';
 import { resolveOrderNumber } from '@/core/payments/orderNumber';
 import { paymentRateLimiter } from '@/core/payments/rateLimiter';
 import { generateTrackingToken } from '@/core/utils/trackingToken';
@@ -357,6 +361,10 @@ export async function POST(request: Request) {
     const isOrderFlow = !!culqiOrderId;
     const isTokenFlow = !!token;
 
+    // ─── ORDER FLOW — LOCAL PRE-CHECKS ──────────────────────────────
+    // Everything here reads only our own DB and touches no external system, so
+    // it must run BEFORE the reservation: a rejected request (unknown order,
+    // underpayment, wrong product) must not burn an idempotency key.
     if (isOrderFlow) {
       // ORDER-BASED: Culqi Checkout ya cobró contra la orden
       // Solo creamos el payment en DB y marcamos la orden como pagada
@@ -426,18 +434,45 @@ export async function POST(request: Request) {
           { status: 402 },
         );
       }
+    }
 
+    // ─── RESERVE THE IDEMPOTENCY KEY BEFORE ANY EXTERNAL CALL (W-P1) ──
+    // The key exists to stop two in-flight requests from both charging the
+    // buyer. Reserving AFTER the Culqi call (the previous order of operations)
+    // let two concurrent requests with the same key execute the external call
+    // twice and only then race on the key. Reserving first makes the call
+    // single-flight. Any attempt that fails before money moves releases the
+    // reservation (see `releaseIdempotencyKey`) so a genuine retry still works.
+    const idempotencyReservation = await reserveIdempotencyKey(idempotencyKey);
+    if (
+      idempotencyReservation?.type === 'replay' ||
+      idempotencyReservation?.type === 'processing'
+    ) {
+      return idempotencyReservation.response;
+    }
+    reservedIdempotencyKey = idempotencyReservation?.key ?? null;
+
+    // ─── EXTERNAL CALLS ─────────────────────────────────────────────
+    if (isOrderFlow) {
       const { secretKey, error: keyError } = await resolveCulqiSecretKey(businessId);
-      if (keyError) return keyError;
+      if (keyError) {
+        await releaseIdempotencyKey(reservedIdempotencyKey);
+        return keyError;
+      }
 
       let culqiOrderPaid = false;
       try {
         culqiOrderPaid = isCulqiOrderPaid(await getCulqiOrder(culqiOrderId as string, secretKey));
       } catch (err) {
+        await releaseIdempotencyKey(reservedIdempotencyKey);
         return culqiReadErrorResponse(err);
       }
 
       if (!culqiOrderPaid) {
+        // Not paid yet is recoverable: the buyer may retry once Culqi confirms.
+        // The order-flow key is deterministic per Culqi order, so leaving it
+        // reserved would replay this 402 forever.
+        await releaseIdempotencyKey(reservedIdempotencyKey);
         return NextResponse.json(
           {
             success: false,
@@ -450,7 +485,10 @@ export async function POST(request: Request) {
     } else if (isTokenFlow) {
       // TOKEN-BASED: Ejecutar el cargo contra Culqi con la key del negocio
       const { secretKey, error: keyError } = await resolveCulqiSecretKey(businessId);
-      if (keyError) return keyError;
+      if (keyError) {
+        await releaseIdempotencyKey(reservedIdempotencyKey);
+        return keyError;
+      }
 
       const { culqiData: chargeResult, error: chargeError } = await executeCulqiCharge({
         token,
@@ -464,18 +502,12 @@ export async function POST(request: Request) {
         businessId,
         productId,
       });
-      if (chargeError) return chargeError;
+      if (chargeError) {
+        await releaseIdempotencyKey(reservedIdempotencyKey);
+        return chargeError;
+      }
       culqiData = chargeResult;
     }
-
-    const idempotencyReservation = await reserveIdempotencyKey(idempotencyKey);
-    if (
-      idempotencyReservation?.type === 'replay' ||
-      idempotencyReservation?.type === 'processing'
-    ) {
-      return idempotencyReservation.response;
-    }
-    reservedIdempotencyKey = idempotencyReservation?.key ?? null;
 
     const culqiChargeIdForLookup = culqiOrderId || culqiData?.id || null;
     if (culqiChargeIdForLookup) {

@@ -136,6 +136,7 @@ vi.mock('@/core/payments/idempotency', () => ({
   // original-impl form so restoreMocks keeps these resolved values across tests
   reserveIdempotencyKey: mockReserveIdempotencyKey,
   completeIdempotencyKey: mockCompleteIdempotencyKey,
+  releaseIdempotencyKey: mockReleaseIdempotencyKey,
 }));
 
 vi.mock('@/core/payments/rateLimiter', () => ({
@@ -146,12 +147,14 @@ const {
   mockDecrypt,
   mockReserveIdempotencyKey,
   mockCompleteIdempotencyKey,
+  mockReleaseIdempotencyKey,
   mockNotifyNewOrder,
   mockSendOrderStatusSms,
 } = vi.hoisted(() => ({
   mockDecrypt: vi.fn(),
   mockReserveIdempotencyKey: vi.fn(async () => ({ type: 'reserved', key: 'idem-1' })),
   mockCompleteIdempotencyKey: vi.fn(async () => undefined),
+  mockReleaseIdempotencyKey: vi.fn(async () => undefined),
   mockNotifyNewOrder: vi.fn(async () => undefined),
   mockSendOrderStatusSms: vi.fn(async () => undefined),
 }));
@@ -256,9 +259,84 @@ function createCulqiChargeResponse(overrides: Record<string, unknown> = {}) {
 
 // ── Suite ────────────────────────────────────────────
 
+/**
+ * A minimal in-memory `payment_idempotency_keys` stand-in wired into the route
+ * mocks, so a test can assert the KEY's end state (not only the HTTP response).
+ * Mirrors `reserveIdempotencyKey` / `completeIdempotencyKey` /
+ * `releaseIdempotencyKey`.
+ *
+ * A FRESH store per test is mandatory: `restoreMocks` restores the
+ * `vi.fn(originalImpl)` defaults but does NOT undo a later `mockImplementation`,
+ * so a shared store would leak across cases.
+ *
+ * Declared at module scope because the order-flow gate tests (W-P1) and the
+ * failed-transaction tests both need to inspect the key store.
+ */
+interface FakeKeyRow {
+  status: string;
+  responseBody?: unknown;
+  responseStatus?: number;
+}
+
+function useFakeKeyStore() {
+  const store = new Map<string, FakeKeyRow>();
+
+  mockReserveIdempotencyKey.mockImplementation(async (key: string | null) => {
+    if (!key) return null;
+    const existing = store.get(key);
+    if (existing?.responseBody && existing.responseStatus) {
+      return {
+        type: 'replay',
+        response: NextResponse.json(existing.responseBody as Record<string, unknown>, {
+          status: existing.responseStatus,
+        }),
+      };
+    }
+    if (existing) {
+      return {
+        type: 'processing',
+        response: NextResponse.json({ error: 'processing' }, { status: 409 }),
+      };
+    }
+    store.set(key, { status: 'processing' });
+    return { type: 'reserved', key };
+  });
+
+  mockCompleteIdempotencyKey.mockImplementation(
+    async (key: string | null, body: Record<string, unknown>, status = 200) => {
+      if (!key) return;
+      store.set(key, {
+        status: status >= 200 && status < 300 ? 'succeeded' : 'failed',
+        responseBody: body,
+        responseStatus: status,
+      });
+    },
+  );
+
+  // Deletion guarded by `processing`, mirroring `releaseIdempotencyKey`.
+  mockReleaseIdempotencyKey.mockImplementation(async (key: string | null) => {
+    if (!key) return;
+    if (store.get(key)?.status === 'processing') {
+      store.delete(key);
+    }
+  });
+
+  return store;
+}
+
 describe('POST /api/payment/charge', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+
+    // `clearAllMocks` clears calls but NOT implementations, and the fake key
+    // store used by several suites installs its own `mockImplementation`. Re-seed
+    // the idempotency trio here so no implementation leaks between tests.
+    mockReserveIdempotencyKey.mockReset();
+    mockReserveIdempotencyKey.mockImplementation(async () => ({ type: 'reserved', key: 'idem-1' }));
+    mockCompleteIdempotencyKey.mockReset();
+    mockCompleteIdempotencyKey.mockImplementation(async () => undefined);
+    mockReleaseIdempotencyKey.mockReset();
+    mockReleaseIdempotencyKey.mockImplementation(async () => undefined);
 
     // Default mock: business is active and not blocked
     mockBusinessFindFirst.mockResolvedValue({
@@ -516,6 +594,7 @@ describe('POST /api/payment/charge', () => {
       // is the exact gap that let a fictional `status` reach the route.
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockGetCulqiOrder.mockResolvedValue(fixture);
+      const store = useFakeKeyStore();
 
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
 
@@ -523,7 +602,12 @@ describe('POST /api/payment/charge', () => {
       const body = await response.json();
       expect(body.code).toBe('ORDER_NOT_PAID');
       expect(mockTransaction).not.toHaveBeenCalled();
-      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+      // W-P1: the key is reserved before the Culqi read, then RELEASED because
+      // the order is not paid yet. A later retry (same deterministic key) must
+      // be able to attempt again instead of replaying this 402 forever.
+      expect(mockReserveIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(mockReleaseIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(store.has('charge-ord_culqi_abc123')).toBe(false);
     });
 
     test('allows a stale pending state when paid_at is real money evidence', async () => {
@@ -538,26 +622,33 @@ describe('POST /api/payment/charge', () => {
       expect(response.status).toBe(200);
     });
 
-    test('maps an aborted Culqi read to 504 and reserves nothing', async () => {
+    test('maps an aborted Culqi read to 504 and releases the reservation', async () => {
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockGetCulqiOrder.mockRejectedValue(new CulqiReadErrorMock('timeout'));
+      const store = useFakeKeyStore();
 
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
 
       expect(response.status).toBe(504);
       expect(mockTransaction).not.toHaveBeenCalled();
-      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+      // Resubscribing after a transient upstream timeout must be possible.
+      expect(mockReserveIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(mockReleaseIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(store.has('charge-ord_culqi_abc123')).toBe(false);
     });
 
-    test('maps a Culqi transport failure to 502 and reserves nothing', async () => {
+    test('maps a Culqi transport failure to 502 and releases the reservation', async () => {
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockGetCulqiOrder.mockRejectedValue(new CulqiReadErrorMock('transport'));
+      const store = useFakeKeyStore();
 
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
 
       expect(response.status).toBe(502);
       expect(mockTransaction).not.toHaveBeenCalled();
-      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(mockReleaseIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(store.has('charge-ord_culqi_abc123')).toBe(false);
     });
 
     test('returns 500 without committing the flip when the payment_orders update affects no row', async () => {
@@ -872,59 +963,6 @@ describe('POST /api/payment/charge', () => {
   // ============================================================
 
   describe('idempotency key completion on a failed transaction', () => {
-    interface KeyRow {
-      status: string;
-      responseBody?: unknown;
-      responseStatus?: number;
-    }
-
-    /**
-     * A minimal in-memory `payment_idempotency_keys` stand-in wired into the two
-     * route mocks, so a test can assert the KEY's end state and not only the HTTP
-     * response. Mirrors `reserveIdempotencyKey` / `completeIdempotencyKey`.
-     *
-     * A FRESH store per test is mandatory: `restoreMocks` restores the
-     * `vi.fn(originalImpl)` defaults but does NOT undo a later
-     * `mockImplementation`, so a shared store would leak across cases.
-     */
-    function useFakeKeyStore() {
-      const store = new Map<string, KeyRow>();
-
-      mockReserveIdempotencyKey.mockImplementation(async (key: string | null) => {
-        if (!key) return null;
-        const existing = store.get(key);
-        if (existing?.responseBody && existing.responseStatus) {
-          return {
-            type: 'replay',
-            response: NextResponse.json(existing.responseBody as Record<string, unknown>, {
-              status: existing.responseStatus,
-            }),
-          };
-        }
-        if (existing) {
-          return {
-            type: 'processing',
-            response: NextResponse.json({ error: 'processing' }, { status: 409 }),
-          };
-        }
-        store.set(key, { status: 'processing' });
-        return { type: 'reserved', key };
-      });
-
-      mockCompleteIdempotencyKey.mockImplementation(
-        async (key: string | null, body: Record<string, unknown>, status = 200) => {
-          if (!key) return;
-          store.set(key, {
-            status: status >= 200 && status < 300 ? 'succeeded' : 'failed',
-            responseBody: body,
-            responseStatus: status,
-          });
-        },
-      );
-
-      return store;
-    }
-
     test('completes the reserved key with the failure when the transaction throws', async () => {
       const store = useFakeKeyStore();
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
@@ -1029,6 +1067,95 @@ describe('POST /api/payment/charge', () => {
       // record for a payment that actually succeeded.
       expect(response.status).toBe(500);
       expect(mockCompleteIdempotencyKey).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ============================================================
+  // W-P1: the idempotency key is reserved BEFORE any external call
+  // ============================================================
+
+  describe('idempotency reservation precedes the external Culqi call (W-P1)', () => {
+    test('reserves before reading the Culqi order (order flow)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(response.status).toBe(200);
+
+      const reserveOrder = mockReserveIdempotencyKey.mock.invocationCallOrder[0];
+      const readOrder = mockGetCulqiOrder.mock.invocationCallOrder[0];
+      expect(reserveOrder).toBeLessThan(readOrder);
+    });
+
+    test('reserves before executing the Culqi charge (token flow)', async () => {
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'charge-tok_test_abc123',
+        },
+        body: JSON.stringify(createValidPayload()),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const reserveOrder = mockReserveIdempotencyKey.mock.invocationCallOrder[0];
+      const chargeOrder = mockFetch.mock.invocationCallOrder[0];
+      expect(reserveOrder).toBeLessThan(chargeOrder);
+    });
+
+    test('a key already reserved (processing) is rejected with 409 and no Culqi call', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockReserveIdempotencyKey.mockResolvedValue({
+        type: 'processing',
+        response: NextResponse.json(
+          { error: 'Este pago ya se está procesando. Esperá la confirmación antes de reintentar.' },
+          { status: 409 },
+        ),
+      });
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(409);
+      // Single-flight: the second in-flight request never reaches the gateway.
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    test('a replayed key returns the stored response without a Culqi call', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockReserveIdempotencyKey.mockResolvedValue({
+        type: 'replay',
+        response: NextResponse.json({ success: true, replayed: true }, { status: 200 }),
+      });
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.replayed).toBe(true);
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
+    test('a replay skips the gateway and the transaction entirely', async () => {
+      // The order pre-checks (a local DB read) run before the reservation so a
+      // rejected binding never burns a key; a replay therefore still performs
+      // that read. What must never happen on a replay is an external call or a
+      // second write.
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockReserveIdempotencyKey.mockResolvedValue({
+        type: 'replay',
+        response: NextResponse.json({ success: true, replayed: true }, { status: 200 }),
+      });
+
+      await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockTxInsert).not.toHaveBeenCalled();
+      expect(mockCompleteIdempotencyKey).not.toHaveBeenCalled();
     });
   });
 });
