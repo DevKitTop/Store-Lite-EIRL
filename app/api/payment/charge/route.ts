@@ -14,6 +14,7 @@ import {
   products,
 } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
+import { buildBuyerRateLimitKey } from '@/core/payments/buyerRateLimitKey';
 import { CulqiReadError, getCulqiOrder, isCulqiOrderPaid } from '@/core/payments/culqiOrders';
 import {
   completeIdempotencyKey,
@@ -304,6 +305,24 @@ export async function POST(request: Request) {
 
     // ─── Rate Limit Check ──────────────────────────────────────────
     if (!paymentRateLimiter.check(`${businessId}:${productId}`)) {
+      return NextResponse.json(
+        { error: 'Demasiados intentos. Esperá unos segundos antes de reintentar.' },
+        { status: 429 },
+      );
+    }
+
+    // ─── Buyer-scoped Rate Limit Check (W-P2) ──────────────────────
+    // A second, independent bucket scoped to the buyer so a single buyer can't
+    // fan out across many product/business combinations. Skipped when the
+    // request carries no buyer identity (nothing to scope by).
+    const buyerRateLimitKey = buildBuyerRateLimitKey({
+      businessId,
+      productId,
+      email: email || customerAuth?.email,
+      dni: rawShipping.dni,
+      authId: customerAuth?.authId,
+    });
+    if (buyerRateLimitKey && !paymentRateLimiter.check(buyerRateLimitKey)) {
       return NextResponse.json(
         { error: 'Demasiados intentos. Esperá unos segundos antes de reintentar.' },
         { status: 429 },

@@ -140,7 +140,7 @@ vi.mock('@/core/payments/idempotency', () => ({
 }));
 
 vi.mock('@/core/payments/rateLimiter', () => ({
-  paymentRateLimiter: { check: vi.fn(() => true) },
+  paymentRateLimiter: { check: mockRateLimiterCheck },
 }));
 
 const {
@@ -148,6 +148,7 @@ const {
   mockReserveIdempotencyKey,
   mockCompleteIdempotencyKey,
   mockReleaseIdempotencyKey,
+  mockRateLimiterCheck,
   mockNotifyNewOrder,
   mockSendOrderStatusSms,
 } = vi.hoisted(() => ({
@@ -155,6 +156,7 @@ const {
   mockReserveIdempotencyKey: vi.fn(async () => ({ type: 'reserved', key: 'idem-1' })),
   mockCompleteIdempotencyKey: vi.fn(async () => undefined),
   mockReleaseIdempotencyKey: vi.fn(async () => undefined),
+  mockRateLimiterCheck: vi.fn(() => true),
   mockNotifyNewOrder: vi.fn(async () => undefined),
   mockSendOrderStatusSms: vi.fn(async () => undefined),
 }));
@@ -337,6 +339,9 @@ describe('POST /api/payment/charge', () => {
     mockCompleteIdempotencyKey.mockImplementation(async () => undefined);
     mockReleaseIdempotencyKey.mockReset();
     mockReleaseIdempotencyKey.mockImplementation(async () => undefined);
+
+    mockRateLimiterCheck.mockReset();
+    mockRateLimiterCheck.mockImplementation(() => true);
 
     // Default mock: business is active and not blocked
     mockBusinessFindFirst.mockResolvedValue({
@@ -1156,6 +1161,88 @@ describe('POST /api/payment/charge', () => {
       expect(mockTransaction).not.toHaveBeenCalled();
       expect(mockTxInsert).not.toHaveBeenCalled();
       expect(mockCompleteIdempotencyKey).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // W-P2: the charge limiter also enforces a buyer-scoped bucket
+  // ============================================================
+
+  describe('buyer-scoped rate limiting (W-P2)', () => {
+    test('rejects with 429 when only the buyer bucket is exhausted', async () => {
+      // Business bucket available, buyer bucket exhausted.
+      mockRateLimiterCheck.mockImplementation((key: string) => !String(key).includes(':buyer:'));
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(429);
+      // The buyer dimension is what tripped it: no external call was made.
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    test('checks a buyer key that hashes the identity and never embeds the raw email', async () => {
+      const seenKeys: string[] = [];
+      mockRateLimiterCheck.mockImplementation((key: string) => {
+        seenKeys.push(String(key));
+        return true;
+      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // The pre-existing business:product bucket is still checked...
+      expect(seenKeys).toContain(
+        '550e8400-e29b-41d4-a716-446655440000:660e8400-e29b-41d4-a716-446655440001',
+      );
+      // ...and the buyer bucket is checked with a digest, not the raw email.
+      const buyerKey = seenKeys.find((k) => k.includes(':buyer:'));
+      expect(buyerKey).toBeTruthy();
+      expect(buyerKey).not.toContain('buyer@test.com');
+      expect(buyerKey?.startsWith('550e8400-e29b-41d4-a716-446655440000:660e8400')).toBe(true);
+    });
+
+    test('falls back to the shipping DNI, hashed, when there is no email', async () => {
+      const seenKeys: string[] = [];
+      mockRateLimiterCheck.mockImplementation((key: string) => {
+        seenKeys.push(String(key));
+        return true;
+      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({
+            email: '',
+            metadata: { shippingInfo: { dni: '87654321' } },
+          }),
+        ),
+      );
+
+      const buyerKey = seenKeys.find((k) => k.includes(':buyer:'));
+      expect(buyerKey).toBeTruthy();
+      expect(buyerKey).not.toContain('87654321');
+    });
+
+    test('skips the buyer bucket entirely when no identity is available', async () => {
+      const seenKeys: string[] = [];
+      mockRateLimiterCheck.mockImplementation((key: string) => {
+        seenKeys.push(String(key));
+        return true;
+      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({ email: '', metadata: { shippingInfo: {} } }),
+        ),
+      );
+
+      expect(seenKeys.some((k) => k.includes(':buyer:'))).toBe(false);
+      expect(seenKeys).toContain(
+        '550e8400-e29b-41d4-a716-446655440000:660e8400-e29b-41d4-a716-446655440001',
+      );
     });
   });
 });
