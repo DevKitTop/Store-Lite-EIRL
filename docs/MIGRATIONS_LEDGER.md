@@ -8,15 +8,15 @@
 
 Read-only audit of `migrations/` on 2026-10-17:
 
-| Fact | Value |
-| --- | --- |
-| `.sql` migration files | **78** |
-| Entries in `migrations/meta/_journal.json` | **24** (idx 0–24, **idx 11 missing**) |
-| Files reachable by `drizzle-kit migrate` | **24** |
-| Files **not** in the journal (invisible to drizzle-kit) | **54** |
-| Duplicate numeric prefixes | **21** (e.g. `0000`, `0013` ×3, `0019` ×4) |
-| Dangling journal tags (tag with no `.sql`) | **0** |
-| `meta/*_snapshot.json` files | 24 (stop at `0025`) |
+| Fact                                                    | Value                                      |
+| ------------------------------------------------------- | ------------------------------------------ |
+| `.sql` migration files                                  | **78**                                     |
+| Entries in `migrations/meta/_journal.json`              | **24** (idx 0–24, **idx 11 missing**)      |
+| Files reachable by `drizzle-kit migrate`                | **24**                                     |
+| Files **not** in the journal (invisible to drizzle-kit) | **54**                                     |
+| Duplicate numeric prefixes                              | **21** (e.g. `0000`, `0013` ×3, `0019` ×4) |
+| Dangling journal tags (tag with no `.sql`)              | **0**                                      |
+| `meta/*_snapshot.json` files                            | 24 (stop at `0025`)                        |
 
 ## 2. Root cause
 
@@ -50,7 +50,7 @@ In practice:
   already applied — which then fails on any environment where they ran.
 - **There is no single source of truth.** Actual application happened through
   Supabase MCP (`apply_migration`), which records into
-  `supabase_migrations.schema_migrations` — a *different* ledger from
+  `supabase_migrations.schema_migrations` — a _different_ ledger from
   `drizzle.__drizzle_migrations`. Neither ledger is complete on its own.
 
 ## 4. What this change does
