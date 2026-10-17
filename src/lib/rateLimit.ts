@@ -45,8 +45,22 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
   orderVerifyIp: { windowMs: 60 * 1000, maxRequests: 30 }, // 30 requests per minute
 };
 
-// In-memory store (per-edge-instance). For MVP this is fine.
-// Future: swap with Upstash Redis for production multi-instance support.
+// In-memory store (per-edge-instance).
+//
+// KNOWN LIMITATION — ACCEPTED, tracked (audit finding W-I1).
+// On a multi-instance deployment each instance keeps its own counters, so the
+// effective limit is roughly N x the configured value. This is a deliberate MVP
+// decision, not an oversight: the money path is protected by idempotency
+// (reserve-before-external-call), and adding a shared store requires provisioning
+// a third-party service that cannot be verified from this repo.
+//
+// REVISIT TRIGGER — before scaling beyond one instance for these routes, before a
+// public beta at volume, or on observed enumeration/card-testing abuse.
+// See the "Decision - W-I1" section in
+// docs/PREPRODUCTION_READINESS_2026-10_VERIFICATION.md.
+//
+// Fix path: Vercel WAF rate limiting, or a shared store (Upstash Redis / Vercel KV)
+// behind the existing checkRateLimit/resetRateLimit signatures (no call-site changes).
 const store = new Map<string, RateLimitEntry>();
 
 // Periodic cleanup to prevent memory leaks
