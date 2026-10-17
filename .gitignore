@@ -108,6 +108,15 @@ opencode.json
 # change folders (proposal/design/tasks, local-only drafts) never leak into commits.
 !openspec/specs/**/*.md
 
+# Brand brain is versioned and MUST survive the blanket `*.md` rule above.
+# The Playbook is the source of truth for brand content; brand/ holds the
+# knowledge index and the index resolver used by the content-manager skill.
+!docs/BRAND_CONTENT_PLAYBOOK.md
+!brand/**
+
+# Parked-work status doc: tracked so the parked PR documents itself.
+!docs/PARKED_SOCIAL_PUBLISHING.md
+
 # Explicitly ignore analysis files created in the workspace
 informe_detallado_archivos_grandes.md
 tareas_prs_prioritizadas.md

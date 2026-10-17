@@ -1,0 +1,22 @@
+﻿version: 1
+always_load:
+  - docs/BRAND_CONTENT_PLAYBOOK.md
+docs:
+  - path: README.md
+    purpose: Product overview and positioning
+    tags: [identity, positioning]
+  - path: docs/SAAS_BUSINESS_LOGIC.md
+    purpose: ICP, business model, pricing narrative
+    tags: [audience, business]
+  - path: docs/UI_GUIDELINES.md
+    purpose: Visual/brand system
+    tags: [brand, visual]
+  - path: docs/SAAS_TECHNICAL_LOGIC.md
+    purpose: Product capabilities
+    tags: [product, features]
+  - path: openspec/specs/storefront-public-info/spec.md
+    purpose: Public storefront facts
+    tags: [product, storefront]
+catalog:
+  tables: [products, businesses]
+  source: src/core/database/schema/
