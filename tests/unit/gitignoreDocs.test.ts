@@ -15,14 +15,21 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, test } from 'vitest';
 
-/** True when git's ignore rules exclude `path`. */
-function isIgnored(path: string): boolean {
+/**
+ * True when git's ignore RULES exclude `path`, independent of the index.
+ *
+ * `--no-index` is essential. Without it, `git check-ignore` reports a TRACKED
+ * path as "not ignored" regardless of .gitignore, so this function would
+ * return false for a committed doc even if the whitelist were deleted — a
+ * silent no-op guard. With it, the rules themselves are evaluated.
+ */
+function isIgnoredByRules(path: string): boolean {
   try {
     // Exit 0 => path is ignored. Exit 1 => path is NOT ignored (throws).
     // The command is the fixed literal 'git'; no caller-controlled value is
     // ever used as the executable, so PATH resolution is not attacker-reachable.
     // eslint-disable-next-line sonarjs/no-os-command-from-path
-    execFileSync('git', ['check-ignore', '-q', path], {
+    execFileSync('git', ['check-ignore', '-q', '--no-index', path], {
       cwd: process.cwd(),
       stdio: 'ignore',
     });
@@ -48,10 +55,10 @@ function isTracked(path: string): boolean {
 }
 
 describe('project documentation is versioned', () => {
-  // These paths MUST stay untracked: git's ignore rules only apply to
-  // untracked files, so a tracked path reports as "not ignored" regardless
-  // of .gitignore. Using a tracked path here would make this suite pass
-  // even with the whitelist removed — a silent no-op guard.
+  // These paths ARE tracked on purpose: a fresh clone must contain them.
+  // Because they are tracked, the checks MUST use isIgnoredByRules (--no-index);
+  // an index-aware check would report them as "not ignored" even if the
+  // whitelist were removed, making this suite pass for the wrong reason.
   const versionedDocs = [
     'docs/compliance/05-DATA-PRIVACY.md',
     'docs/compliance/04-SECURITY-CHECKLIST.md',
@@ -60,16 +67,23 @@ describe('project documentation is versioned', () => {
     'docs/roadmap/seo-competitivo.md',
   ];
 
-  test.each(versionedDocs)('%s is NOT git-ignored', (path) => {
-    expect(isTracked(path)).toBe(false);
-    expect(isIgnored(path)).toBe(false);
+  test.each(versionedDocs)('%s is not excluded by the ignore rules', (path) => {
+    expect(isIgnoredByRules(path)).toBe(false);
+  });
+
+  test.each(versionedDocs)('%s is actually committed', (path) => {
+    expect(isTracked(path)).toBe(true);
   });
 });
 
 describe('auto-generated analysis files stay ignored', () => {
   const analysisFiles = ['informe_detallado_archivos_grandes.md', 'tareas_prs_prioritizadas.md'];
 
-  test.each(analysisFiles)('%s is still git-ignored', (path) => {
-    expect(isIgnored(path)).toBe(true);
+  test.each(analysisFiles)('%s is excluded by the ignore rules', (path) => {
+    expect(isIgnoredByRules(path)).toBe(true);
+  });
+
+  test.each(analysisFiles)('%s is not committed', (path) => {
+    expect(isTracked(path)).toBe(false);
   });
 });
