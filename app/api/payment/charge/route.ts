@@ -6,16 +6,11 @@
  */
 
 import { db } from '@/core/database/client';
-import {
-  businesses,
-  businessSettings,
-  paymentOrders,
-  payments,
-  products,
-} from '@/core/database/schema';
+import { businesses, paymentOrders, payments, products } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { buildBuyerRateLimitKey } from '@/core/payments/buyerRateLimitKey';
 import { CulqiReadError, getCulqiOrder, isCulqiOrderPaid } from '@/core/payments/culqiOrders';
+import { resolveCulqiSecretKey } from '@/core/payments/culqiSecretKey';
 import {
   completeIdempotencyKey,
   releaseIdempotencyKey,
@@ -34,7 +29,6 @@ import { createClient } from '@/lib/supabase/server';
 import { sendOrderStatusSms } from '@/lib/twilio/orderSms';
 import { splitFullName } from '@/shared/payments/fullName';
 import type { CulqiChargeResponse } from '@/types/culqi';
-import { decrypt } from '@/utils/crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
@@ -127,54 +121,6 @@ interface ShippingInfoData {
   reference?: string | null;
   courier?: string;
   ubigeo?: string;
-}
-
-// ─── Helper: Resolve and validate Culqi secret key ──────────────────
-async function resolveCulqiSecretKey(
-  businessId: string,
-): Promise<{ secretKey: string; error: NextResponse | null }> {
-  const settings = await db.query.businessSettings.findFirst({
-    where: eq(businessSettings.businessId, businessId),
-    columns: { culqiSecretKey: true },
-  });
-
-  if (!settings?.culqiSecretKey) {
-    return {
-      secretKey: '',
-      error: NextResponse.json(
-        { error: 'El negocio no tiene configurada pasarela de pagos' },
-        { status: 400 },
-      ),
-    };
-  }
-
-  const secretKey = decrypt(settings.culqiSecretKey);
-  const isProd = process.env.NODE_ENV === 'production';
-  const isKeyLive = secretKey.startsWith('sk_live');
-
-  if (isProd && !isKeyLive) {
-    return {
-      secretKey: '',
-      error: NextResponse.json(
-        { error: 'Configuración inválida: Se requiere una llave de producción (sk_live).' },
-        { status: 400 },
-      ),
-    };
-  }
-
-  if (!isProd && isKeyLive) {
-    return {
-      secretKey: '',
-      error: NextResponse.json(
-        {
-          error: 'Configuración inválida: No se permiten llaves sk_live en entorno de desarrollo.',
-        },
-        { status: 400 },
-      ),
-    };
-  }
-
-  return { secretKey, error: null };
 }
 
 // ─── Helper: Execute Culqi charge API call ──────────────────────────
