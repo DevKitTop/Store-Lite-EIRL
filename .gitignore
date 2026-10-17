@@ -114,6 +114,9 @@ opencode.json
 !docs/BRAND_CONTENT_PLAYBOOK.md
 !brand/**
 
+# Parked-work status doc: tracked so the parked PR documents itself.
+!docs/PARKED_SOCIAL_PUBLISHING.md
+
 # Explicitly ignore analysis files created in the workspace
 informe_detallado_archivos_grandes.md
 tareas_prs_prioritizadas.md
