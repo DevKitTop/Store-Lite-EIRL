@@ -108,6 +108,14 @@ opencode.json
 # change folders (proposal/design/tasks, local-only drafts) never leak into commits.
 !openspec/specs/**/*.md
 
+# Project documentation is the source of truth and MUST be versioned.
+# Same failure mode as the rule above: the blanket `*.md` rule silently
+# excluded the whole `docs/` tree, so a fresh clone was missing the
+# architecture, compliance, ADR and payment-flow documentation. Files
+# committed before the rule were unaffected, which is why the gap went
+# unnoticed. Guarded by tests/unit/gitignoreDocs.test.ts.
+!docs/**/*.md
+
 # Explicitly ignore analysis files created in the workspace
 informe_detallado_archivos_grandes.md
 tareas_prs_prioritizadas.md
