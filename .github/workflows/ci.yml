@@ -28,6 +28,9 @@ jobs:
       - name: Run quality check
         run: pnpm quality
 
+      - name: Check migrations ledger (C9 drift guard)
+        run: pnpm check:migrations
+
       - name: Check formatting
         run: pnpm format:check
 
