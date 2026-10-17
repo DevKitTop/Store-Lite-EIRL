@@ -1,5 +1,20 @@
 ﻿# AuditorÃ­a de ProducciÃ³n â€” Store Lite
 
+> **DOCUMENTO SUPERADO (SUPERSEDED) — NO usar como estado actual.**
+>
+> Este es el audit original (contenido 24/09–02/10/2026). Su estado por hallazgo
+> quedó desactualizado: varias fichas marcadas como abiertas ya fueron
+> remediadas, y otras migraron a hallazgos nuevos.
+>
+> **Fuente de verdad actual:** `docs/PREPRODUCTION_READINESS_2026-10_VERIFICATION.md`
+> (ver la sección "Current status" al inicio, que supersede las tablas de rondas
+> anteriores).
+>
+> Se conserva como registro histórico del audit inicial.
+>
+> Nota: este archivo tiene mojibake en los acentos (doble-encoding UTF-8/Latin-1),
+> p. ej. "AuditorÃ­a". Se preserva tal cual para no alterar el registro histórico.
+
 > **Proyecto:** Store Lite (multi-tenant SaaS de tiendas)
 > **Fecha auditorÃ­a:** 24/09/2026
 > **MÃ©todo:** 5 agentes de auditorÃ­a read-only en paralelo (auth/sesiones, checkout/Culqi, panel/admin, WhatsApp/YCloud, infra/datos/observabilidad) + verificaciÃ³n manual de claims.

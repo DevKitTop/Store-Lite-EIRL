@@ -5,6 +5,64 @@
 **Companion doc**: `docs/PREPRODUCTION_READINESS_2026-10.md` (Round 1 — kept intact as historical record)
 **Verification tip**: `origin/develop` = HEAD = `a19783fa799a90a9250fb5f9ab830a411c800a0e` (merge of PR #227)
 
+---
+
+## Current status (2026-10-17) — SUPERSEDES the verdicts below
+
+This round is a **dated snapshot** (tip `a19783f` = merge of PR #227). The sections
+below are kept as the historical record. This section is the **current** status,
+re-verified against code with `file:line` evidence.
+
+Several Round-2 verdicts are now **stale**: the fixes landed after this round.
+
+| #                | Round-2 verdict                | Current                      | Evidence / note                                                                                                                                                                                                                                                                                                                                       |
+| ---------------- | ------------------------------ | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **NEW-1**        | HIGH — unguarded server action | ✅ **FIXED**                 | The sweep was **moved off the RPC surface**. `src/features/dashboard/actions/finalizationAutoFinalize.ts` is a plain module (no `'use server'`), so Next.js generates no action id to invoke. Rationale + why a user-permission guard was the wrong shape: file header `:1-23`.                                                                       |
+| **NEW-2**        | HIGH — unguarded mutation      | ✅ **FIXED**                 | `app/[slug]/(app)/order/[token]/actions.ts`: cookie gate runs **before the first DB read** (`:217-220`), and the order is resolved from `(paymentId, trackingToken)` with `businessId` / `buyerDni` derived from **that** row (`:228-248`) — the IDOR (cookie for order A + victim `paymentId`) is closed.                                            |
+| **NEW-3** / W-P4 | MEDIUM — schema drift          | ✅ **FIXED**                 | `src/core/database/schema/orders.ts:86` = `orderNumber: text('order_number').notNull()`; `:124` = `uniqueIndex('payments_order_number_unique').on(table.orderNumber)`. The schema now matches the DB. **This doc cited `:85` and `:116-122` — those lines no longer exist, which is what proves this round predates the fix.**                        |
+| **W-D1..D4**     | FIXED (Round 1)                | ✅ **CONFIRMED**             | `app/api/business/penalties/route.ts:33-41`; `app/api/business/penalty-status/route.ts:48-59` (two-branch, owner-only debt/count); `app/api/business/penalties/pay/route.ts:19-26,39-47`. Helper: `src/features/storage/actions/authz.ts:10-20` (real `supabase.auth.getUser()`, throws unauthenticated) and `:123-139` (`ownerId === userId`).       |
+| **W-I2**         | MEDIUM — CSP                   | ⚠️ **PARTIAL**               | `'unsafe-eval'` is now added **only outside production** (`next.config.ts:14-19`) → that part is FIXED. `'unsafe-inline'` remains in `script-src` (`:16`), explicitly documented as a tracked follow-up (`:10-13`): it needs a nonce strategy **plus** a production smoke test. `style-src 'unsafe-inline'` (`:54`) is retained and is not a finding. |
+| **W-I1**         | HIGH — in-memory rate limits   | 🟨 **ACCEPTED (documented)** | Decision recorded below. `src/lib/rateLimit.ts:50` is still a per-instance `Map`.                                                                                                                                                                                                                                                                     |
+| **C9**           | MEDIUM — migrations            | ⚠️ **ADDRESSED**             | Delivered a frozen baseline + CI guard so **new** drift cannot land silently: `migrations/ledger.json`, `scripts/migrations-check.mjs`, `pnpm check:migrations` in CI, `tests/unit/migrationsLedger.test.ts`. The durable fix (a live-DB baseline) still requires database access. See `docs/MIGRATIONS_LEDGER.md`.                                   |
+| **C1**           | CRITICAL — no RLS              | 🟥 **OPEN (unchanged)**      | Requires a **live** DB: enable RLS + policies and confirm the default grants. Cannot be verified or fixed from the repo. Operational.                                                                                                                                                                                                                 |
+| **C8**           | credential committed           | ✅ **DOWNGRADED**            | Round 2 already disproved it (placeholders only). Residual: rotate defensively if you want to be exhaustive. Operational.                                                                                                                                                                                                                             |
+
+**Bottom line: no open _code-level_ security CRITICAL remains.** What is left is
+operational (C1 live-DB RLS, C8 rotation), one accepted-and-documented risk (W-I1),
+one partial awaiting a nonce strategy (W-I2), and the product feature gaps in §4
+(pickup deadline, dispute arbitration, penalty floor, notification wiring, cron).
+
+### Decision — W-I1 (in-memory rate limits): ACCEPTED, with a revisit trigger
+
+**Context.** `src/lib/rateLimit.ts:50` stores counters in a per-instance `Map`. On
+a multi-instance deployment (Vercel serverless/edge) the effective limit is roughly
+_N ×_ the configured value, because each instance keeps its own state. The
+leftmost-XFF spoofing problem is already fixed (the trusted rightmost hop is used),
+so what remains is the shared-state problem only.
+
+**Decision.** Accepted as a known MVP constraint. Redis/KV is **not** added now:
+
+1. It requires provisioning and paying for a third-party service — a business
+   decision, not a code decision, and it cannot be verified from this repo.
+2. Untested infrastructure code (fail-open vs fail-closed behaviour, bootstrapping,
+   outage handling) is a **larger** risk than a documented limitation.
+3. The real protection on the money path is **idempotency** (`W-P1`), which is
+   shipped and ordered before the external Culqi call.
+4. This closure path is explicitly allowed by the audit's own recommendation
+   ("move rate limits to a shared store **or document single-instance assumption**").
+
+**Revisit trigger — do this before any of:**
+
+- the deployment scales beyond a single instance for the throttled routes, or
+- a public beta opens to untrusted traffic at volume, or
+- card-testing / enumeration abuse is observed.
+
+**Remediation paths when the trigger fires** (either is sufficient):
+
+- Vercel WAF rate limiting (platform-level, no app state), or
+- a shared store (`@upstash/redis` / Vercel KV) behind the existing
+  `checkRateLimit` / `resetRateLimit` signatures — no call-site changes needed.
+
 ## Why a Round 2
 
 Round 1 contained one confirmed method error: finding **W-I4** used a literal `Test-Path "app/[slug]/terminos/page.tsx"`, which fails on Next.js route groups (`(public)`/`(app)` are not part of the URL). The page actually exists. That raised the question: _if one test was wrong, others might be too._ Round 2 re-tests every deliverable claim with a corrected method (glob/rg, never literal `Test-Path` over route groups), and adds an **adversarial** pass whose job is to _refute_ the "FIXED" verdicts rather than confirm them.
