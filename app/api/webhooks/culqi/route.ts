@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 
 import { db } from '@/core/database/client';
-import { paymentOrders, payments, planPayments } from '@/core/database/schema';
+import { businesses, paymentOrders, payments, planPayments } from '@/core/database/schema';
+import { resolveOrderNumber } from '@/core/payments/orderNumber';
+import { buildWebhookPaymentValues } from '@/core/payments/webhookPaymentValues';
+import { generateTrackingToken } from '@/core/utils/trackingToken';
 import type { OrderStatus } from '@/types/order';
 import { eq } from 'drizzle-orm';
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -153,6 +156,91 @@ async function applyRefundStatus(chargeId: string, status: 'refunded' | 'failed'
     .where(eq(planPayments.culqiChargeId, chargeId));
 }
 
+/**
+ * Applies a terminal status to a charge (W-P3.1).
+ *
+ * Idempotent UPSERT keyed on `payments.culqiChargeId`:
+ * - Row already exists → UPDATE its status (the previous, correct behaviour).
+ * - Row not yet present → the webhook out-raced the charge route's insert (or
+ *   the payment was created out-of-band). INSERT a complete row so the
+ *   confirmation is not lost. The conflict target also makes a duplicate
+ *   delivery safe.
+ *
+ * When the payload cannot yield a valid row (no resolvable business/product,
+ * missing owner, or bad amount) the builder returns null and we fall back to
+ * update-only, warning loudly so the gap is observable.
+ */
+async function applyChargeStatus(
+  chargeId: string,
+  status: 'paid' | 'failed',
+  data:
+    | {
+        id?: string;
+        amount?: number;
+        currency_code?: string;
+        email?: string;
+        reference_code?: string;
+        metadata?: unknown;
+      }
+    | undefined,
+) {
+  const now = new Date();
+
+  const existing = await db.query.payments.findFirst({
+    where: eq(payments.culqiChargeId, chargeId),
+    columns: { id: true },
+  });
+
+  if (existing) {
+    await db
+      .update(payments)
+      .set({ status, updatedAt: now })
+      .where(eq(payments.culqiChargeId, chargeId));
+    return;
+  }
+
+  const businessId = (() => {
+    const metadata = data?.metadata;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+    const value = (metadata as Record<string, unknown>).businessId;
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+  })();
+
+  const owner = businessId
+    ? await db.query.businesses.findFirst({
+        where: eq(businesses.id, businessId),
+        columns: { ownerId: true },
+      })
+    : null;
+
+  const values = buildWebhookPaymentValues({
+    chargeId,
+    data,
+    sellerUserId: owner?.ownerId,
+    trackingToken: generateTrackingToken(),
+    orderNumber: resolveOrderNumber(undefined),
+  });
+
+  if (!values) {
+    console.warn(
+      `[culqi-webhook] Cannot upsert payment for charge ${chargeId} (missing business/product/owner); applied update-only`,
+    );
+    await db
+      .update(payments)
+      .set({ status, updatedAt: now })
+      .where(eq(payments.culqiChargeId, chargeId));
+    return;
+  }
+
+  await db
+    .insert(payments)
+    .values({ ...values, status })
+    .onConflictDoUpdate({
+      target: payments.culqiChargeId,
+      set: { status, updatedAt: now },
+    });
+}
+
 export async function POST(request: Request) {
   const rawBody = await request.text();
   if (!rawBody) {
@@ -197,6 +285,10 @@ export async function POST(request: Request) {
       charge_id?: string;
       reference_code?: string;
       status?: string;
+      amount?: number;
+      currency_code?: string;
+      email?: string;
+      metadata?: unknown;
       outcome?: { type?: string };
     };
   };
@@ -221,17 +313,11 @@ export async function POST(request: Request) {
   try {
     switch (eventType) {
       case 'charge.paid': {
-        await db
-          .update(payments)
-          .set({ status: 'paid', updatedAt: new Date() })
-          .where(eq(payments.culqiChargeId, chargeId));
+        await applyChargeStatus(chargeId, 'paid', event.data);
         break;
       }
       case 'charge.failed': {
-        await db
-          .update(payments)
-          .set({ status: 'failed', updatedAt: new Date() })
-          .where(eq(payments.culqiChargeId, chargeId));
+        await applyChargeStatus(chargeId, 'failed', event.data);
         break;
       }
       // Canonical Culqi event: refund.creation.succeeded. 'refund.created' kept

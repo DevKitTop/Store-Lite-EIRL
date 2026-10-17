@@ -1,0 +1,446 @@
+{
+  "version": 1,
+  "generatedAt": "2026-10-17T16:10:27.378Z",
+  "counts": {
+    "sql": 78,
+    "journal": 24,
+    "unjournaled": 54
+  },
+  "files": [
+    {
+      "file": "0000_special_crystal.sql",
+      "prefix": "0000",
+      "method": "manual"
+    },
+    {
+      "file": "0000_superb_master_mold.sql",
+      "prefix": "0000",
+      "method": "journal"
+    },
+    {
+      "file": "0001_puzzling_hairball.sql",
+      "prefix": "0001",
+      "method": "journal"
+    },
+    {
+      "file": "0002_add_product_fields.sql",
+      "prefix": "0002",
+      "method": "journal"
+    },
+    {
+      "file": "0002_clean_multi_business.sql",
+      "prefix": "0002",
+      "method": "manual"
+    },
+    {
+      "file": "0003_add_business_details.sql",
+      "prefix": "0003",
+      "method": "manual"
+    },
+    {
+      "file": "0003_condemned_avengers.sql",
+      "prefix": "0003",
+      "method": "journal"
+    },
+    {
+      "file": "0004_add_product_categories.sql",
+      "prefix": "0004",
+      "method": "journal"
+    },
+    {
+      "file": "0004_add_product_stock.sql",
+      "prefix": "0004",
+      "method": "manual"
+    },
+    {
+      "file": "0005_create_storage_bucket.sql",
+      "prefix": "0005",
+      "method": "manual"
+    },
+    {
+      "file": "0005_overjoyed_mercury.sql",
+      "prefix": "0005",
+      "method": "journal"
+    },
+    {
+      "file": "0006_dazzling_colossus.sql",
+      "prefix": "0006",
+      "method": "journal"
+    },
+    {
+      "file": "0006_fix_storage_rls.sql",
+      "prefix": "0006",
+      "method": "manual"
+    },
+    {
+      "file": "0007_fix_profiles_rls.sql",
+      "prefix": "0007",
+      "method": "manual"
+    },
+    {
+      "file": "0007_shipping_fields.sql",
+      "prefix": "0007",
+      "method": "journal"
+    },
+    {
+      "file": "0008_lyrical_wilson_fisk.sql",
+      "prefix": "0008",
+      "method": "journal"
+    },
+    {
+      "file": "0009_bouncy_morg.sql",
+      "prefix": "0009",
+      "method": "journal"
+    },
+    {
+      "file": "0010_aromatic_boomer.sql",
+      "prefix": "0010",
+      "method": "journal"
+    },
+    {
+      "file": "0010_restrict_profiles_public_access.sql",
+      "prefix": "0010",
+      "method": "manual"
+    },
+    {
+      "file": "0011_reassert_profiles_rls.sql",
+      "prefix": "0011",
+      "method": "manual"
+    },
+    {
+      "file": "0012_oval_rocket_racer.sql",
+      "prefix": "0012",
+      "method": "journal"
+    },
+    {
+      "file": "0013_sync_businesses_schema.sql",
+      "prefix": "0013",
+      "method": "manual"
+    },
+    {
+      "file": "0013_worried_shotgun.sql",
+      "prefix": "0013",
+      "method": "manual"
+    },
+    {
+      "file": "0013_zippy_joshua_kane.sql",
+      "prefix": "0013",
+      "method": "journal"
+    },
+    {
+      "file": "0014_team_collaboration.sql",
+      "prefix": "0014",
+      "method": "manual"
+    },
+    {
+      "file": "0014_true_queen_noir.sql",
+      "prefix": "0014",
+      "method": "journal"
+    },
+    {
+      "file": "0015_crazy_sharon_ventura.sql",
+      "prefix": "0015",
+      "method": "journal"
+    },
+    {
+      "file": "0015_team_roles_permissions.sql",
+      "prefix": "0015",
+      "method": "manual"
+    },
+    {
+      "file": "0016_business_slug_aliases.sql",
+      "prefix": "0016",
+      "method": "manual"
+    },
+    {
+      "file": "0016_heavy_hannibal_king.sql",
+      "prefix": "0016",
+      "method": "journal"
+    },
+    {
+      "file": "0017_add_payment_ticket_url.sql",
+      "prefix": "0017",
+      "method": "manual"
+    },
+    {
+      "file": "0017_medical_nick_fury.sql",
+      "prefix": "0017",
+      "method": "journal"
+    },
+    {
+      "file": "0018_add_hero_images.sql",
+      "prefix": "0018",
+      "method": "journal"
+    },
+    {
+      "file": "0018_create_tickets_bucket.sql",
+      "prefix": "0018",
+      "method": "manual"
+    },
+    {
+      "file": "0018_order_flow_v2_schema.sql",
+      "prefix": "0018",
+      "method": "journal"
+    },
+    {
+      "file": "0019_add_order_cancelled_event.sql",
+      "prefix": "0019",
+      "method": "manual"
+    },
+    {
+      "file": "0019_add_validando_status.sql",
+      "prefix": "0019",
+      "method": "manual"
+    },
+    {
+      "file": "0019_lazy_marrow.sql",
+      "prefix": "0019",
+      "method": "journal"
+    },
+    {
+      "file": "0019_notifications_table.sql",
+      "prefix": "0019",
+      "method": "manual"
+    },
+    {
+      "file": "0020_add_en_reparto_status.sql",
+      "prefix": "0020",
+      "method": "manual"
+    },
+    {
+      "file": "0020_ancient_winter_soldier.sql",
+      "prefix": "0020",
+      "method": "journal"
+    },
+    {
+      "file": "0020_fix_notifications_realtime.sql",
+      "prefix": "0020",
+      "method": "manual"
+    },
+    {
+      "file": "0021_add_order_events_and_version.sql",
+      "prefix": "0021",
+      "method": "manual"
+    },
+    {
+      "file": "0022_add_payment_id_to_chat_sessions.sql",
+      "prefix": "0022",
+      "method": "manual"
+    },
+    {
+      "file": "0022_charming_excalibur.sql",
+      "prefix": "0022",
+      "method": "journal"
+    },
+    {
+      "file": "0023_rename_enterprise_ai_to_enterprise_pro.sql",
+      "prefix": "0023",
+      "method": "journal"
+    },
+    {
+      "file": "0023_verification_otps.sql",
+      "prefix": "0023",
+      "method": "manual"
+    },
+    {
+      "file": "0024_add_business_location_fields.sql",
+      "prefix": "0024",
+      "method": "manual"
+    },
+    {
+      "file": "0024_messy_nehzno.sql",
+      "prefix": "0024",
+      "method": "journal"
+    },
+    {
+      "file": "0025_add_google_auth_to_chat_sessions.sql",
+      "prefix": "0025",
+      "method": "manual"
+    },
+    {
+      "file": "0025_import_jobs.sql",
+      "prefix": "0025",
+      "method": "manual"
+    },
+    {
+      "file": "0025_lonely_firebird.sql",
+      "prefix": "0025",
+      "method": "manual"
+    },
+    {
+      "file": "0026_public_metadata.sql",
+      "prefix": "0026",
+      "method": "manual"
+    },
+    {
+      "file": "0027_payment_idempotency_keys.sql",
+      "prefix": "0027",
+      "method": "manual"
+    },
+    {
+      "file": "0028_recojo_pickup_flow.sql",
+      "prefix": "0028",
+      "method": "manual"
+    },
+    {
+      "file": "0029_auto_create_profiles_trigger.sql",
+      "prefix": "0029",
+      "method": "manual"
+    },
+    {
+      "file": "0030_add_payment_id_to_messages.sql",
+      "prefix": "0030",
+      "method": "manual"
+    },
+    {
+      "file": "0031_add_social_links_to_businesses.sql",
+      "prefix": "0031",
+      "method": "manual"
+    },
+    {
+      "file": "0032_platform_business.sql",
+      "prefix": "0032",
+      "method": "manual"
+    },
+    {
+      "file": "0033_saas_issuer_config_seed.sql",
+      "prefix": "0033",
+      "method": "manual"
+    },
+    {
+      "file": "0034_feedback_system.sql",
+      "prefix": "0034",
+      "method": "manual"
+    },
+    {
+      "file": "0035_feedback_request_type.sql",
+      "prefix": "0035",
+      "method": "manual"
+    },
+    {
+      "file": "0036_add_performance_composite_indexes.sql",
+      "prefix": "0036",
+      "method": "manual"
+    },
+    {
+      "file": "0037_add_integrity_constraints.sql",
+      "prefix": "0037",
+      "method": "manual"
+    },
+    {
+      "file": "0038_messages_not_null.sql",
+      "prefix": "0038",
+      "method": "manual"
+    },
+    {
+      "file": "0039_chat_sessions_active_per_guest.sql",
+      "prefix": "0039",
+      "method": "manual"
+    },
+    {
+      "file": "0040_profiles_rls_own.sql",
+      "prefix": "0040",
+      "method": "manual"
+    },
+    {
+      "file": "0041_business_subscription_lifecycle_check.sql",
+      "prefix": "0041",
+      "method": "manual"
+    },
+    {
+      "file": "0042_payment_inventory_safety_checks.sql",
+      "prefix": "0042",
+      "method": "manual"
+    },
+    {
+      "file": "0043_payments_status_sanitize.sql",
+      "prefix": "0043",
+      "method": "manual"
+    },
+    {
+      "file": "0044_secure_tickets_bucket.sql",
+      "prefix": "0044",
+      "method": "manual"
+    },
+    {
+      "file": "0045_add_shipping_ubigeo.sql",
+      "prefix": "0045",
+      "method": "manual"
+    },
+    {
+      "file": "0046_remove_duplicate_verification_otp_indexes.sql",
+      "prefix": "0046",
+      "method": "manual"
+    },
+    {
+      "file": "0047_pricing_restructure.sql",
+      "prefix": "0047",
+      "method": "manual"
+    },
+    {
+      "file": "0048_payments_order_number_integrity.sql",
+      "prefix": "0048",
+      "method": "manual"
+    },
+    {
+      "file": "0048_whatsapp_connection_status.sql",
+      "prefix": "0048",
+      "method": "manual"
+    },
+    {
+      "file": "0049_enable_rls_sensitive_tables.sql",
+      "prefix": "0049",
+      "method": "manual"
+    },
+    {
+      "file": "0050_enable_rls_payment_idempotency_keys.sql",
+      "prefix": "0050",
+      "method": "manual"
+    }
+  ],
+  "duplicatePrefixes": {
+    "0000": ["0000_special_crystal.sql", "0000_superb_master_mold.sql"],
+    "0002": ["0002_add_product_fields.sql", "0002_clean_multi_business.sql"],
+    "0003": ["0003_add_business_details.sql", "0003_condemned_avengers.sql"],
+    "0004": ["0004_add_product_categories.sql", "0004_add_product_stock.sql"],
+    "0005": ["0005_create_storage_bucket.sql", "0005_overjoyed_mercury.sql"],
+    "0006": ["0006_dazzling_colossus.sql", "0006_fix_storage_rls.sql"],
+    "0007": ["0007_fix_profiles_rls.sql", "0007_shipping_fields.sql"],
+    "0010": ["0010_aromatic_boomer.sql", "0010_restrict_profiles_public_access.sql"],
+    "0013": [
+      "0013_sync_businesses_schema.sql",
+      "0013_worried_shotgun.sql",
+      "0013_zippy_joshua_kane.sql"
+    ],
+    "0014": ["0014_team_collaboration.sql", "0014_true_queen_noir.sql"],
+    "0015": ["0015_crazy_sharon_ventura.sql", "0015_team_roles_permissions.sql"],
+    "0016": ["0016_business_slug_aliases.sql", "0016_heavy_hannibal_king.sql"],
+    "0017": ["0017_add_payment_ticket_url.sql", "0017_medical_nick_fury.sql"],
+    "0018": [
+      "0018_add_hero_images.sql",
+      "0018_create_tickets_bucket.sql",
+      "0018_order_flow_v2_schema.sql"
+    ],
+    "0019": [
+      "0019_add_order_cancelled_event.sql",
+      "0019_add_validando_status.sql",
+      "0019_lazy_marrow.sql",
+      "0019_notifications_table.sql"
+    ],
+    "0020": [
+      "0020_add_en_reparto_status.sql",
+      "0020_ancient_winter_soldier.sql",
+      "0020_fix_notifications_realtime.sql"
+    ],
+    "0022": ["0022_add_payment_id_to_chat_sessions.sql", "0022_charming_excalibur.sql"],
+    "0023": ["0023_rename_enterprise_ai_to_enterprise_pro.sql", "0023_verification_otps.sql"],
+    "0024": ["0024_add_business_location_fields.sql", "0024_messy_nehzno.sql"],
+    "0025": [
+      "0025_add_google_auth_to_chat_sessions.sql",
+      "0025_import_jobs.sql",
+      "0025_lonely_firebird.sql"
+    ],
+    "0048": ["0048_payments_order_number_integrity.sql", "0048_whatsapp_connection_status.sql"]
+  },
+  "danglingJournalTags": []
+}
