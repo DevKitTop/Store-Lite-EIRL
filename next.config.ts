@@ -7,20 +7,9 @@ const supabaseHostname = process.env.NEXT_PUBLIC_SUPABASE_URL
   ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname
   : '';
 
-// CSP script-src. `'unsafe-eval'` is required by Next.js dev/HMR (React
-// Refresh) but must NEVER ship in production, so it is only added outside
-// production. `'unsafe-inline'` is still present and remains a tracked
-// follow-up (it needs a nonce strategy + a prod smoke test before removal).
-const scriptSrc = [
-  "'self'",
-  "'unsafe-inline'",
-  ...(process.env.NODE_ENV !== 'production' ? ["'unsafe-eval'"] : []),
-  'https://checkout.culqi.com',
-  'https://*.culqi.com',
-  'https://*.posthog.com',
-  'https://connect.facebook.net',
-  'https://*.facebook.net',
-].join(' ');
+// CSP is now managed in middleware.ts with a per-request nonce and
+// 'strict-dynamic'. Only the script-src and style-src differ from the
+// baseline; the nonce-based CSP is set by middleware for HTML responses.
 
 const nextConfig: NextConfig = {
   // Exponer explícitamente vars al build para que el Edge Runtime las tenga disponibles
@@ -40,22 +29,6 @@ const nextConfig: NextConfig = {
           {
             key: 'Permissions-Policy',
             value: 'camera=(), microphone=(), geolocation=(), payment=(self)',
-          },
-          {
-            key: 'Content-Security-Policy',
-            value: [
-              "default-src 'self'",
-              "base-uri 'self'",
-              "frame-ancestors 'none'",
-              "form-action 'self'",
-              "img-src 'self' data: https: blob:",
-              `script-src ${scriptSrc}`,
-              "worker-src 'self' blob:",
-              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-              "font-src 'self' data: https://fonts.gstatic.com",
-              "frame-src 'self' https://checkout.culqi.com https://*.culqi.com",
-              "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.culqi.com https://checkout.culqi.com https://*.culqi.com https://*.posthog.com https://graph.facebook.com https://www.facebook.com",
-            ].join('; '),
           },
           {
             key: 'Strict-Transport-Security',

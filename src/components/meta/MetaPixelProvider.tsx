@@ -77,6 +77,7 @@ export default function MetaPixelProvider() {
       <Script
         id="meta-pixel-base"
         strategy="afterInteractive"
+        nonce={undefined}
         dangerouslySetInnerHTML={{ __html: FBQ_BASE_CODE }}
       />
       <Script

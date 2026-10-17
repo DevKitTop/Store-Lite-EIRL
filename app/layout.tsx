@@ -95,11 +95,16 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+import { headers } from 'next/headers';
+
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const headersList = await headers();
+  const nonce = headersList.get('x-nonce') ?? undefined;
+
   return (
     <html
       lang="es"
@@ -109,6 +114,7 @@ export default function RootLayout({
       <head>
         {/* FOUC prevention - runs before any styles */}
         <script
+          nonce={nonce}
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
@@ -136,6 +142,7 @@ export default function RootLayout({
         {/* Site-level structured data: Organization + WebSite knowledge graph */}
         <script
           type="application/ld+json"
+          nonce={nonce}
           dangerouslySetInnerHTML={{ __html: JSON.stringify(siteJsonLd) }}
         />
         <CSPostHogProvider>
