@@ -145,6 +145,7 @@ reescribe en `proxy.ts` al slug correspondiente. El costo real es **operativo**
 escalón que convierte al seller de "probador" a "pagador del tier caro".
 
 **Detalle completo**: ver
+
 - `docs/roadmap/custom-domains-premium.md`
 - `docs/roadmap/seo-competitivo.md`
 
@@ -159,7 +160,7 @@ escalón que convierte al seller de "probador" a "pagador del tier caro".
 | Facturación SUNAT          | ⏳ Solo cuando un cliente lo demande  | Abr 2026 |
 | Modelo de ingresos inicial | Solo planes de suscripción            | Abr 2026 |
 | SEO: higiene técnica       | ✅ Gratis para todos (core)           | Ago 2026 |
-| SEO: competitivo + dominio | ⏳ Tier premium futuro               | Ago 2026 |
+| SEO: competitivo + dominio | ⏳ Tier premium futuro                | Ago 2026 |
 
 ---
 
