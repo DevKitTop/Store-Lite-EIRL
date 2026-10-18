@@ -16,6 +16,7 @@ import { getMemberPermissions } from '@/lib/permissions';
 import { createClient } from '@/lib/supabase/server';
 import { buildHomeBreadcrumbs } from '@/shared/seo/buildStorefrontBreadcrumbs';
 import { buildStoreDescription, buildStoreTitle } from '@/shared/seo/buildStorefrontMeta';
+import { toSafeJsonLd } from '@/shared/utils/safeJsonLd';
 import { getCanonicalBusinessUrl } from '@/shared/utils/url';
 import type { Business } from '@/types/business';
 import { eq } from 'drizzle-orm';
@@ -177,13 +178,13 @@ export default async function BusinessPage({ params }: Props) {
       {jsonLd && (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          dangerouslySetInnerHTML={{ __html: toSafeJsonLd(jsonLd) }}
         />
       )}
       {breadcrumbJsonLd && (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+          dangerouslySetInnerHTML={{ __html: toSafeJsonLd(breadcrumbJsonLd) }}
         />
       )}
       <style dangerouslySetInnerHTML={{ __html: ssrThemeStyleTag }} />

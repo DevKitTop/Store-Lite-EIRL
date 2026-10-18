@@ -7,6 +7,7 @@ import { ThemeBoot } from '@/shared/components/ThemeBoot';
 import { WebVitalsReporter } from '@/shared/components/WebVitalsReporter';
 import { ThemeProvider } from '@/shared/context/ThemeContext';
 import { CSPostHogProvider } from '@/shared/providers/PostHogProvider';
+import { toSafeJsonLd } from '@/shared/utils/safeJsonLd';
 import { buildSiteJsonLd, SITE_DESCRIPTION, SITE_NAME } from '@/shared/utils/siteJsonLd';
 import type { Metadata } from 'next';
 import localFont from 'next/font/local';
@@ -143,7 +144,7 @@ export default async function RootLayout({
         <script
           type="application/ld+json"
           nonce={nonce}
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(siteJsonLd) }}
+          dangerouslySetInnerHTML={{ __html: toSafeJsonLd(siteJsonLd) }}
         />
         <CSPostHogProvider>
           <ThemeProvider>
