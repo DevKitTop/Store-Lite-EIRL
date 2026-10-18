@@ -15,22 +15,23 @@ re-verified against code with `file:line` evidence.
 
 Several Round-2 verdicts are now **stale**: the fixes landed after this round.
 
-| #                | Round-2 verdict                | Current                      | Evidence / note                                                                                                                                                                                                                                                                                                                                       |
-| ---------------- | ------------------------------ | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **NEW-1**        | HIGH — unguarded server action | ✅ **FIXED**                 | The sweep was **moved off the RPC surface**. `src/features/dashboard/actions/finalizationAutoFinalize.ts` is a plain module (no `'use server'`), so Next.js generates no action id to invoke. Rationale + why a user-permission guard was the wrong shape: file header `:1-23`.                                                                       |
-| **NEW-2**        | HIGH — unguarded mutation      | ✅ **FIXED**                 | `app/[slug]/(app)/order/[token]/actions.ts`: cookie gate runs **before the first DB read** (`:217-220`), and the order is resolved from `(paymentId, trackingToken)` with `businessId` / `buyerDni` derived from **that** row (`:228-248`) — the IDOR (cookie for order A + victim `paymentId`) is closed.                                            |
-| **NEW-3** / W-P4 | MEDIUM — schema drift          | ✅ **FIXED**                 | `src/core/database/schema/orders.ts:86` = `orderNumber: text('order_number').notNull()`; `:124` = `uniqueIndex('payments_order_number_unique').on(table.orderNumber)`. The schema now matches the DB. **This doc cited `:85` and `:116-122` — those lines no longer exist, which is what proves this round predates the fix.**                        |
-| **W-D1..D4**     | FIXED (Round 1)                | ✅ **CONFIRMED**             | `app/api/business/penalties/route.ts:33-41`; `app/api/business/penalty-status/route.ts:48-59` (two-branch, owner-only debt/count); `app/api/business/penalties/pay/route.ts:19-26,39-47`. Helper: `src/features/storage/actions/authz.ts:10-20` (real `supabase.auth.getUser()`, throws unauthenticated) and `:123-139` (`ownerId === userId`).       |
-| **W-I2**         | MEDIUM — CSP                   | ⚠️ **PARTIAL**               | `'unsafe-eval'` is now added **only outside production** (`next.config.ts:14-19`) → that part is FIXED. `'unsafe-inline'` remains in `script-src` (`:16`), explicitly documented as a tracked follow-up (`:10-13`): it needs a nonce strategy **plus** a production smoke test. `style-src 'unsafe-inline'` (`:54`) is retained and is not a finding. |
-| **W-I1**         | HIGH — in-memory rate limits   | 🟨 **ACCEPTED (documented)** | Decision recorded below. `src/lib/rateLimit.ts:50` is still a per-instance `Map`.                                                                                                                                                                                                                                                                     |
-| **C9**           | MEDIUM — migrations            | ⚠️ **ADDRESSED**             | Delivered a frozen baseline + CI guard so **new** drift cannot land silently: `migrations/ledger.json`, `scripts/migrations-check.mjs`, `pnpm check:migrations` in CI, `tests/unit/migrationsLedger.test.ts`. The durable fix (a live-DB baseline) still requires database access. See `docs/MIGRATIONS_LEDGER.md`.                                   |
-| **C1**           | CRITICAL — no RLS              | 🟥 **OPEN (unchanged)**      | Requires a **live** DB: enable RLS + policies and confirm the default grants. Cannot be verified or fixed from the repo. Operational.                                                                                                                                                                                                                 |
-| **C8**           | credential committed           | ✅ **DOWNGRADED**            | Round 2 already disproved it (placeholders only). Residual: rotate defensively if you want to be exhaustive. Operational.                                                                                                                                                                                                                             |
+| #                | Round-2 verdict                | Current                      | Evidence / note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------- | ------------------------------ | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **NEW-1**        | HIGH — unguarded server action | ✅ **FIXED**                 | The sweep was **moved off the RPC surface**. `src/features/dashboard/actions/finalizationAutoFinalize.ts` is a plain module (no `'use server'`), so Next.js generates no action id to invoke. Rationale + why a user-permission guard was the wrong shape: file header `:1-23`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **NEW-2**        | HIGH — unguarded mutation      | ✅ **FIXED**                 | `app/[slug]/(app)/order/[token]/actions.ts`: cookie gate runs **before the first DB read** (`:217-220`), and the order is resolved from `(paymentId, trackingToken)` with `businessId` / `buyerDni` derived from **that** row (`:228-248`) — the IDOR (cookie for order A + victim `paymentId`) is closed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **NEW-3** / W-P4 | MEDIUM — schema drift          | ✅ **FIXED**                 | `src/core/database/schema/orders.ts:86` = `orderNumber: text('order_number').notNull()`; `:124` = `uniqueIndex('payments_order_number_unique').on(table.orderNumber)`. The schema now matches the DB. **This doc cited `:85` and `:116-122` — those lines no longer exist, which is what proves this round predates the fix.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **W-D1..D4**     | FIXED (Round 1)                | ✅ **CONFIRMED**             | `app/api/business/penalties/route.ts:33-41`; `app/api/business/penalty-status/route.ts:48-59` (two-branch, owner-only debt/count); `app/api/business/penalties/pay/route.ts:19-26,39-47`. Helper: `src/features/storage/actions/authz.ts:10-20` (real `supabase.auth.getUser()`, throws unauthenticated) and `:123-139` (`ownerId === userId`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **W-I2**         | MEDIUM — CSP                   | ✅ **IMPLEMENTED**           | `'unsafe-inline'` **removed** from `script-src`. CSP no longer lives in `next.config.ts`; it is built **per request in middleware** with a nonce + `'strict-dynamic'`: `src/middleware.ts:20-48` (`buildCsp`), `:73-75` sets `x-nonce` + `Content-Security-Policy` on **both** the request and the response. `app/layout.tsx:99-103` reads the nonce via `headers()` — which makes **every** route dynamic (accepted cost) — and signs the theme-boot inline script (`:115`) and the JSON-LD script (`:141`); `MetaPixelProvider.tsx:37-40,81` accepts and forwards a nonce to the FBQ base script. `style-src 'unsafe-inline'` is **retained deliberately** (our inline CSS blocks would need a nonce per tag otherwise). `'unsafe-eval'` stays non-production only. Commit `39e23ea` on `develop`, CI green. **Residual: production smoke test before launch** (Culqi checkout, Meta Pixel, PostHog). |
+| **W-I1**         | HIGH — in-memory rate limits   | 🟨 **ACCEPTED (documented)** | Decision recorded below. `src/lib/rateLimit.ts:50` is still a per-instance `Map`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **C9**           | MEDIUM — migrations            | ⚠️ **ADDRESSED**             | Delivered a frozen baseline + CI guard so **new** drift cannot land silently: `migrations/ledger.json`, `scripts/migrations-check.mjs`, `pnpm check:migrations` in CI, `tests/unit/migrationsLedger.test.ts`. The durable fix (a live-DB baseline) still requires database access. See `docs/MIGRATIONS_LEDGER.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **C1**           | CRITICAL — no RLS              | 🟥 **OPEN (operational)**    | The code fix **exists and is verified correct** — `migrations/0049_enable_rls_sensitive_tables.sql` and `migrations/0050_enable_rls_payment_idempotency_keys.sql` — but **neither is registered in `migrations/meta/_journal.json`**, so `drizzle-kit migrate` can never apply them. Their production state is therefore **unreadable from the repo**. See **"C1 — go-live runbook"** below for the exact apply + verify SQL.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **C8**           | credential committed           | ✅ **DOWNGRADED**            | Round 2 already disproved it (placeholders only). Residual: rotate defensively if you want to be exhaustive. Operational.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 **Bottom line: no open _code-level_ security CRITICAL remains.** What is left is
 operational (C1 live-DB RLS, C8 rotation), one accepted-and-documented risk (W-I1),
-one partial awaiting a nonce strategy (W-I2), and the product feature gaps in §4
-(pickup deadline, dispute arbitration, penalty floor, notification wiring, cron).
+one implemented-but-not-yet-smoke-tested hardening (W-I2 nonce CSP), and the
+product feature gaps in §4 (pickup deadline, dispute arbitration, penalty floor,
+notification wiring, cron).
 
 ### Decision — W-I1 (in-memory rate limits): ACCEPTED, with a revisit trigger
 
@@ -62,6 +63,109 @@ so what remains is the shared-state problem only.
 - Vercel WAF rate limiting (platform-level, no app state), or
 - a shared store (`@upstash/redis` / Vercel KV) behind the existing
   `checkRateLimit` / `resetRateLimit` signatures — no call-site changes needed.
+
+### C1 — go-live runbook (journal gap + apply/verify SQL)
+
+**Status: the code fix is verified correct, but its application state is UNKNOWN.**
+This section is the operator checklist to close C1.
+
+#### 1. Why the runner can never apply it
+
+`migrations/meta/_journal.json` holds **24 entries**, `idx 0..24` with **`idx 11`
+missing**, and its **last tag is `0024_messy_nehzno`**. Migrations
+`0049_enable_rls_sensitive_tables.sql` and `0050_enable_rls_payment_idempotency_keys.sql`
+exist on disk but are **not in the journal**, so `drizzle-kit migrate` skips them
+entirely. `scripts/migrate.js` applies nothing either (it prints Supabase MCP
+instructions only). Net effect: migrations in this repo have been applied
+**manually**, and there is no automated guarantee for 0049/0050.
+
+> **Do NOT** hand-edit `_journal.json` and **do NOT** renumber migration files.
+> Both break the ledger and `pnpm check:migrations`.
+
+#### 2. Verified schema assumptions (0049 is safe to apply)
+
+Every column 0049 references exists in the Drizzle schema:
+
+| Column                                           | Evidence                                            |
+| ------------------------------------------------ | --------------------------------------------------- |
+| `businesses.id` / `.owner_id`                    | `src/core/database/schema/businesses.ts:38` / `:39` |
+| `business_team_members.business_id` / `.user_id` | `businesses.ts:291` / `:294`                        |
+| `payments.business_id`                           | `src/core/database/schema/orders.ts:45`             |
+| `payment_orders.business_id`                     | `orders.ts:318`                                     |
+| `chat_sessions.business_id`                      | `src/core/database/schema/chat.ts:20`               |
+| `messages.session_id`                            | `chat.ts:59`                                        |
+
+Design notes: the helper `public.is_business_member` is `SECURITY DEFINER` with
+`SET search_path = ''` so it cannot hit _"infinite recursion detected in policy"_
+(the existing `team_can_view_members` policy on `business_team_members` is
+self-referential); only `FOR SELECT` policies are created, so **all writes keep
+going through Drizzle** (the `postgres` role bypasses RLS); both files are
+idempotent and safe to re-run.
+
+#### 3. Apply
+
+```bash
+psql "$DATABASE_URL" -f migrations/0049_enable_rls_sensitive_tables.sql
+psql "$DATABASE_URL" -f migrations/0050_enable_rls_payment_idempotency_keys.sql
+```
+
+(Paste both files into the Supabase SQL editor instead, if that is the operator's
+workflow — the content is identical.)
+
+#### 4. Verify (run immediately after applying)
+
+```sql
+-- 4.1 RLS must be ON on all six tables
+SELECT c.relname, c.relrowsecurity AS rls_enabled
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relname IN ('businesses','payments','payment_orders','chat_sessions','messages','payment_idempotency_keys')
+ORDER BY 1;
+-- EXPECT: six rows, rls_enabled = true for every one of them
+```
+
+```sql
+-- 4.2 Five membership-scoped SELECT policies, none for anon, none on the ledger
+SELECT tablename, policyname, cmd, roles
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename IN ('businesses','payments','payment_orders','chat_sessions','messages','payment_idempotency_keys')
+ORDER BY 1, 2;
+-- EXPECT: exactly 5 rows, cmd = 'SELECT', roles = '{authenticated}',
+--         names ending in '_select_member'.
+--         payment_idempotency_keys: 0 rows (RLS on, zero policies = fully denied)
+```
+
+```sql
+-- 4.3 The whole point of C1: anon must be DENIED
+SET ROLE anon;
+SELECT count(*) FROM public.businesses;   -- EXPECT: 0 (RLS hides every row)
+SELECT count(*) FROM public.payments;     -- EXPECT: 0
+RESET ROLE;
+```
+
+#### 5. Accepted degradation to re-test by hand after applying
+
+Enabling RLS **denies unauthenticated buyers' Supabase Realtime** subscriptions
+to `payments` (`OrderRealtimeHandler`) and `messages` (`OrderChatSection`), because
+Realtime honours RLS. Chat falls back to its existing 5s polling; order status
+degrades to manual refresh. Restoring buyer realtime requires anonymous auth —
+tracked as a follow-up, out of scope here.
+
+Smoke checklist after the apply:
+
+- [ ] seller login → `/{business}/dashboard` loads (the `businesses` SELECT still works)
+- [ ] seller opens a chat session
+- [ ] buyer opens `/{slug}/order/{token}` → order data is visible
+- [ ] chat still works via polling
+- [ ] creating an order and paying end-to-end still works (writes go through Drizzle, unaffected)
+
+#### 6. After a successful apply
+
+Record it here and in `docs/MIGRATIONS_LEDGER.md` (applied timestamps + operator).
+Then decide whether to register 0049/0050 in `_journal.json` **through drizzle-kit**
+(never by hand) so the next `drizzle-kit migrate` run is aware of them.
 
 ## Why a Round 2
 
