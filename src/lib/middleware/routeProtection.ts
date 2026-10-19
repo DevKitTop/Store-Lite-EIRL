@@ -80,37 +80,65 @@ export function buildLoginRedirectPath(originalUrl: URL): string {
 }
 
 /**
- * Validates a post-login return target and returns it as a same-origin
- * relative `pathname + search` string, or null when the value is not safe.
- *
- * Rejects: empty values, anything without a leading slash, protocol-relative
- * URLs (`//host`, `/\host`), any backslash, control characters and Unicode
- * line separators (CRLF header injection), scheme smuggling (`:` before the
- * first `/` after the leading one), oversized values, and the login route
- * itself (redirect-loop guard).
+ * True when `value` has a hostile shape for a same-origin redirect target:
+ * no leading slash, protocol-relative prefixes (`//host`, `/\host`), any
+ * backslash, control characters / Unicode line separators (header injection),
+ * or scheme smuggling (`:` before the first `/` after the leading one).
  */
-export function sanitizeRedirectTarget(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  if (raw.length > MAX_REDIRECT_TARGET_LENGTH) return null;
-  if (!raw.startsWith('/')) return null;
-  if (raw.startsWith('//') || raw.startsWith('/\\')) return null;
-  if (raw.includes('\\')) return null;
+function hasHostileShape(value: string): boolean {
+  if (!value.startsWith('/')) return true;
+  if (value.startsWith('//') || value.startsWith('/\\')) return true;
+  if (value.includes('\\')) return true;
 
-  for (let index = 0; index < raw.length; index += 1) {
-    if (DISALLOWED_CODEPOINTS.has(raw.charCodeAt(index))) return null;
+  for (let index = 0; index < value.length; index += 1) {
+    if (DISALLOWED_CODEPOINTS.has(value.charCodeAt(index))) return true;
   }
 
   // Scheme smuggling: a ':' before the first '/' after the leading slash
   // ("/javascript:alert(1)", "/\x01javascript:..." — the latter is already
   // caught by the control-character check above).
-  const afterLeadingSlash = raw.slice(1);
+  const afterLeadingSlash = value.slice(1);
   const nextSlashIndex = afterLeadingSlash.indexOf('/');
   const head =
     nextSlashIndex === -1 ? afterLeadingSlash : afterLeadingSlash.slice(0, nextSlashIndex);
-  if (head.includes(':')) return null;
+  return head.includes(':');
+}
+
+/**
+ * Validates a post-login return target and returns the ORIGINAL, un-decoded
+ * `pathname + search` string, or null when the value is not safe.
+ *
+ * Validation is applied to both the raw value and its percent-DECODED form
+ * (decoded exactly once), so encoded smuggling such as `/%2f%2fevil.com`
+ * (→ `//evil.com`) or `/%5c%5cevil.com` (→ `/\evil.com`) is rejected even
+ * though the raw text contains no literal slash or backslash in the second
+ * position. A malformed percent sequence (e.g. `/%zz`) fails to decode and is
+ * rejected outright.
+ *
+ * Rejects: empty values, anything without a leading slash, protocol-relative
+ * URLs (`//host`, `/\host`), any backslash, control characters and Unicode
+ * line separators (CRLF header injection), scheme smuggling (`:` before the
+ * first `/` after the leading one), oversized values, and the login route in
+ * ANY casing (redirect-loop guard — `/AUTH` loops just like `/auth`).
+ */
+export function sanitizeRedirectTarget(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  if (raw.length > MAX_REDIRECT_TARGET_LENGTH) return null;
+  if (hasHostileShape(raw)) return null;
+
+  // Percent-encoded smuggling: validate the once-decoded form too. Returning
+  // the value stays raw-only — consumers never see the decoded string.
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return null; // malformed %-sequence (e.g. "/%zz")
+  }
+  if (hasHostileShape(decoded)) return null;
 
   // Never bounce back into login: /auth, /auth/... and /auth?... would loop.
-  const pathPart = raw.split(/[?#]/, 1)[0];
+  // Case-insensitive because the platform route is case-insensitive at runtime.
+  const pathPart = raw.split(/[?#]/, 1)[0].toLowerCase();
   if (pathPart === '/auth' || pathPart.startsWith('/auth/')) return null;
 
   return raw;

@@ -129,6 +129,12 @@ export default async function proxy(request: NextRequest) {
   // subdomains, so this gate evaluates the internal /{slug}/... route.
   // `/`, platform paths (/auth*, /pricing, /onboarding, ...) and /api/* keep
   // their existing behaviour.
+  //
+  // DENY-BY-DEFAULT (deliberate): this is an auth boundary, so the default is
+  // closed — fail-closed beats fail-open here. An unknown multi-segment path
+  // such as /beta/foo therefore lands on login (302) rather than 404: a future
+  // seller surface stays protected even before anyone lists it in the
+  // allow-list. Do NOT "fix" this into a 404.
   if (!user) {
     const loggedOutPathname = request.nextUrl.pathname;
     const mustRedirectToLogin =
@@ -141,6 +147,10 @@ export default async function proxy(request: NextRequest) {
         new URL(buildLoginRedirectPath(request.nextUrl), request.url),
         302,
       );
+      // The decision depends on the session cookie: never let a shared cache
+      // store an auth redirect.
+      loginRedirect.headers.set('Cache-Control', 'no-store');
+      loginRedirect.headers.set('Vary', 'Cookie');
       copySessionCookies(response, loginRedirect);
       return loginRedirect;
     }

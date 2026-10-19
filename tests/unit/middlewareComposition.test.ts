@@ -166,6 +166,23 @@ describe('middleware entry point — layers are reachable', () => {
       expect(new URL(location!).searchParams.get('redirect')).toBe('/tienda1/dashboard');
     });
 
+    test('the blocked redirect is never cacheable: no-store + Vary: Cookie', async () => {
+      const response = await proxy(createRequest('/tienda1/dashboard', PLATFORM_HOST));
+
+      expect(response.status).toBe(302);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(response.headers.get('vary')?.toLowerCase()).toContain('cookie');
+    });
+
+    test('deny-by-default: an unknown multi-segment path lands on login, not 404', async () => {
+      const response = await proxy(createRequest('/beta/foo', PLATFORM_HOST));
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('location');
+      expect(location).toContain('/auth?redirect=');
+      expect(new URL(location!).searchParams.get('redirect')).toBe('/beta/foo');
+    });
+
     test('a logged-out request to /{slug}/order/verify/{orderNumber} is NOT redirected', async () => {
       const response = await proxy(createRequest('/tienda1/order/verify/ORD-45', PLATFORM_HOST));
 

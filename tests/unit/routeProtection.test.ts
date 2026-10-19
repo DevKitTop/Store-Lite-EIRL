@@ -144,6 +144,27 @@ describe('sanitizeRedirectTarget — open-redirect defense', () => {
     });
   });
 
+  describe('rejects percent-encoded hostile shapes (checked after one decode)', () => {
+    test.each([
+      ['/%2f%2fevil.com', 'encoded protocol-relative //evil.com'],
+      ['/%2F%2Fevil.com', 'encoded protocol-relative, uppercase hex'],
+      ['/%5c%5cevil.com', 'encoded backslash protocol-relative'],
+      ['/%5Cevil.com', 'encoded single-backslash form'],
+      ['/%zz', 'malformed percent sequence'],
+    ])('rejects %s (%s)', (raw) => {
+      expect(sanitizeRedirectTarget(raw)).toBeNull();
+    });
+  });
+
+  describe('accepts legitimately encoded paths (original returned, never the decoded form)', () => {
+    test.each([['/tienda1/product/a%20b'], ['/tienda1/dashboard?a=1%202']])(
+      'accepts %s and returns it unchanged',
+      (raw) => {
+        expect(sanitizeRedirectTarget(raw)).toBe(raw);
+      },
+    );
+  });
+
   describe('rejects scheme smuggling after the leading slash', () => {
     test.each([
       ['/javascript:alert(1)'],
@@ -200,6 +221,14 @@ describe('sanitizeRedirectTarget — open-redirect defense', () => {
 
   describe('rejects the login route to prevent redirect loops', () => {
     test.each([['/auth'], ['/auth/callback'], ['/auth?redirect=%2Fauth']])('rejects %s', (raw) => {
+      expect(sanitizeRedirectTarget(raw)).toBeNull();
+    });
+
+    test.each([
+      ['/AUTH', 'uppercase login route'],
+      ['/Auth/callback', 'mixed-case auth callback'],
+      ['/AUTH/CALLBACK', 'fully uppercase auth callback'],
+    ])('rejects %s (case-insensitive loop guard)', (raw) => {
       expect(sanitizeRedirectTarget(raw)).toBeNull();
     });
 
