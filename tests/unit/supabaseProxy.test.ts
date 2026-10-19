@@ -1,6 +1,11 @@
 // =====================================================
 // SUPABASE PROXY (updateProxy) — Unit tests
 // =====================================================
+// ⚠️ WIRING WARNING: `updateProxy` is NOT called by the running middleware.
+// These tests prove the protection RULES are correct in isolation — they pass
+// whether or not the function is ever invoked. Live wiring is covered by
+// tests/unit/middlewareComposition.test.ts.
+//
 // Verifies the session-layer route protection rules:
 // - /pricing is PUBLIC for anonymous visitors (SEO requirement:
 //   crawlers must see plan prices without a session)
