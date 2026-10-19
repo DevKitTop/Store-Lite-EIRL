@@ -28,7 +28,8 @@
 // =====================================
 
 import { env } from '@/config/env';
-import { runProxyPipeline } from '@/lib/middleware/proxyPipeline';
+import { isPlatformOnlyPath, runProxyPipeline } from '@/lib/middleware/proxyPipeline';
+import { buildLoginRedirectPath, isPublicStorefrontPath } from '@/lib/middleware/routeProtection';
 import { applySecurityHeaders, buildCsp, createCspNonce } from '@/lib/middleware/securityHeaders';
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
@@ -122,9 +123,28 @@ export default async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Unauthenticated visitors render public pages; protected routes are gated
-  // by their own layouts (see app/[slug]/(app)/dashboard/layout.tsx).
+  // Logged-out visitors reach the public storefront; every other storefront
+  // route bounces to login with a sanitized return URL (PR B's callback will
+  // honour it). The pipeline above already rewrote the pathname for tenant
+  // subdomains, so this gate evaluates the internal /{slug}/... route.
+  // `/`, platform paths (/auth*, /pricing, /onboarding, ...) and /api/* keep
+  // their existing behaviour.
   if (!user) {
+    const loggedOutPathname = request.nextUrl.pathname;
+    const mustRedirectToLogin =
+      loggedOutPathname !== '/' &&
+      !isPlatformOnlyPath(loggedOutPathname) &&
+      !isPublicStorefrontPath(loggedOutPathname);
+
+    if (mustRedirectToLogin) {
+      const loginRedirect = NextResponse.redirect(
+        new URL(buildLoginRedirectPath(request.nextUrl), request.url),
+        302,
+      );
+      copySessionCookies(response, loginRedirect);
+      return loginRedirect;
+    }
+
     return finishResponse({ sessionResponse: response, rewriteUrl, requestHeaders, nonce, isDev });
   }
 
@@ -172,17 +192,26 @@ function finishResponse(context: {
 
   const rewritten = NextResponse.rewrite(rewriteUrl, { request: { headers: requestHeaders } });
 
-  sessionResponse.cookies.getAll().forEach((cookie) => {
-    rewritten.cookies.set(
+  copySessionCookies(sessionResponse, rewritten);
+
+  applySecurityHeaders(rewritten, nonce, isDev);
+
+  return rewritten;
+}
+
+/**
+ * Carries refreshed session cookies from the session layer's response onto
+ * another response (rewrite or redirect). Re-applies the shared cookie domain
+ * because `cookies.getAll()` drops the options.
+ */
+function copySessionCookies(from: NextResponse, to: NextResponse): void {
+  from.cookies.getAll().forEach((cookie) => {
+    to.cookies.set(
       cookie.name,
       cookie.value,
       env.sharedCookieDomain ? { domain: env.sharedCookieDomain } : undefined,
     );
   });
-
-  applySecurityHeaders(rewritten, nonce, isDev);
-
-  return rewritten;
 }
 
 export const config = {

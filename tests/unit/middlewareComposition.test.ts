@@ -147,4 +147,52 @@ describe('middleware entry point — layers are reachable', () => {
       expect(response.headers.get('location')).toBe('https://storelite.app/pricing');
     });
   });
+
+  describe('logged-out storefront gate (route protection)', () => {
+    test('a logged-out request to /{slug}/dashboard redirects to /auth with the original path', async () => {
+      const response = await proxy(createRequest('/tienda1/dashboard', PLATFORM_HOST));
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('location');
+      expect(location).toContain('/auth?redirect=');
+      expect(new URL(location!).searchParams.get('redirect')).toBe('/tienda1/dashboard');
+    });
+
+    test('the gate evaluates the rewritten path on a tenant subdomain', async () => {
+      const response = await proxy(createRequest('/dashboard'));
+
+      const location = response.headers.get('location');
+      expect(location).toContain('/auth?redirect=');
+      expect(new URL(location!).searchParams.get('redirect')).toBe('/tienda1/dashboard');
+    });
+
+    test('a logged-out request to /{slug}/order/verify/{orderNumber} is NOT redirected', async () => {
+      const response = await proxy(createRequest('/tienda1/order/verify/ORD-45', PLATFORM_HOST));
+
+      expect(response.headers.get('location')).toBeNull();
+      expect(response.status).not.toBe(302);
+    });
+
+    test('a logged-in request to /{slug}/dashboard is NOT redirected', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
+
+      const response = await proxy(createRequest('/tienda1/dashboard', PLATFORM_HOST));
+
+      expect(response.headers.get('location')).toBeNull();
+      expect(response.status).toBe(200);
+    });
+
+    test('/pricing stays reachable while logged out', async () => {
+      const response = await proxy(createRequest('/pricing', PLATFORM_HOST));
+
+      expect(response.headers.get('location')).toBeNull();
+    });
+
+    test('static assets are never bounced to login', async () => {
+      const response = await proxy(createRequest('/tienda1/dashboard.png', PLATFORM_HOST));
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('location')).toBeNull();
+    });
+  });
 });
