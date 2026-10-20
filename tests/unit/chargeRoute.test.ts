@@ -967,6 +967,182 @@ describe('POST /api/payment/charge', () => {
   // key at `processing` (R14 — the W2 permanent-lockout trap)
   // ============================================================
 
+  // ============================================================
+  // Stock decrement — silent oversell must stay impossible
+  // ============================================================
+
+  describe('stock decrement (oversell)', () => {
+    test('decrements stock with an atomic availability predicate scoped to the business', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      // UPDATE #1 is the payment_orders flip; UPDATE #2 is the stock decrement.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(2);
+
+      const stockWhere = compileWhere(mockTxWhere.mock.calls[1][0]);
+      // The decrement must be conditional and tenant-scoped: a plain `id = ?`
+      // update decrements whatever row the id happens to point at, and carries
+      // no evidence that the units were actually available.
+      expect(stockWhere.sql).toMatch(
+        /"products"\."id" = .* and "products"\."business_id" = .* and "products"\."stock" >= /,
+      );
+      expect(stockWhere.params).toEqual([
+        '660e8400-e29b-41d4-a716-446655440001',
+        '550e8400-e29b-41d4-a716-446655440000',
+        1,
+      ]);
+    });
+
+    test('never clamps the new stock value with GREATEST', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      const stockSet = mockTxSet.mock.calls[1][0] as Record<string, unknown>;
+      const compiled = compileWhere(stockSet.stock);
+      // GREATEST(x - qty, 0) turns an oversell into "stock is 0, sale recorded",
+      // which is exactly the silent part of the bug. The predicate in WHERE is
+      // what makes the subtraction safe.
+      expect(compiled.sql).not.toMatch(/greatest/i);
+      expect(compiled.sql).toMatch(/stock" - /);
+    });
+
+    test('records the sale and reports oversold when the availability predicate matches no row', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      // The flip succeeds; the conditional stock decrement matches nothing.
+      mockTxUpdateReturning.mockResolvedValueOnce([{ id: 'po-1' }]).mockResolvedValueOnce([]);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // The money was already captured by Culqi before this transaction opened:
+      // throwing here would keep the charge and drop the order record.
+      expect(response.status).toBe(200);
+      expect(mockTransaction).toHaveBeenCalledTimes(1);
+      expect(mockNotifyNewOrder).toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('oversold'),
+        expect.objectContaining({ productId: '660e8400-e29b-41d4-a716-446655440001' }),
+      );
+    });
+
+    test('does not report oversold when the predicate matches (happy path)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning
+        .mockResolvedValueOnce([{ id: 'po-1' }])
+        .mockResolvedValueOnce([{ id: '660e8400-e29b-41d4-a716-446655440001' }]);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('oversold'),
+        expect.anything(),
+      );
+    });
+
+    test('uses the real quantity in the availability predicate, not a hard-coded 1', async () => {
+      // The order-flow gate compares the Culqi order amount against the client
+      // amount before validateAmount runs, so the row must carry the same total.
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ amount: '3000' }));
+      // 2 units x S/ 1500.00 = S/ 3000.00
+      mockProductsSelectWhere.mockResolvedValue([
+        {
+          id: '660e8400-e29b-41d4-a716-446655440001',
+          price: '1500.00',
+          secondPrice: null,
+        },
+      ]);
+
+      const response = await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({
+            amount: 300000,
+            metadata: {
+              shippingInfo: { phone: '999888777', courier: 'recojo' },
+              cartItems: [{ id: '660e8400-e29b-41d4-a716-446655440001', quantity: 2 }],
+            },
+          }),
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      const stockWhere = compileWhere(mockTxWhere.mock.calls[1][0]);
+      // The predicate must compare against the requested quantity: a fixed 1
+      // would let a 2-unit sale through with 1 unit in stock.
+      expect(stockWhere.params).toEqual([
+        '660e8400-e29b-41d4-a716-446655440001',
+        '550e8400-e29b-41d4-a716-446655440000',
+        2,
+      ]);
+    });
+
+    test('reports only the line that ran out in a multi-item cart', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ amount: '1600' }));
+      mockProductsSelectWhere.mockResolvedValue([
+        { id: '660e8400-e29b-41d4-a716-446655440001', price: '1500.00', secondPrice: null },
+        { id: '770e8400-e29b-41d4-a716-446655440002', price: '100.00', secondPrice: null },
+      ]);
+      // flip, line A, line B: only B finds no available row.
+      mockTxUpdateReturning
+        .mockResolvedValueOnce([{ id: 'po-1' }])
+        .mockResolvedValueOnce([{ id: '660e8400-e29b-41d4-a716-446655440001' }])
+        .mockResolvedValueOnce([]);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const response = await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({
+            amount: 160000, // 1500 + 100
+            metadata: {
+              shippingInfo: { phone: '999888777', courier: 'recojo' },
+              cartItems: [
+                { id: '660e8400-e29b-41d4-a716-446655440001', quantity: 1 },
+                { id: '770e8400-e29b-41d4-a716-446655440002', quantity: 1 },
+              ],
+            },
+          }),
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      // One decrement per line, plus the payment_orders flip.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(3);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('oversold'),
+        expect.objectContaining({ productId: '770e8400-e29b-41d4-a716-446655440002' }),
+      );
+    });
+
+    test('does not report oversold when the transaction fails to commit', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      // The stock decrement matches no row, but the commit then fails: reporting
+      // oversold here would raise a phantom incident for a sale that never
+      // happened. The signal is emitted only after the transaction resolves.
+      mockTxUpdateReturning.mockResolvedValueOnce([{ id: 'po-1' }]).mockResolvedValueOnce([]);
+      mockTransaction.mockImplementationOnce(
+        async (callback: (tx: unknown) => Promise<unknown>) => {
+          await callback({ insert: mockTxInsert, update: mockTxUpdate });
+          throw new Error('commit failed');
+        },
+      );
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(500);
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('oversold'),
+        expect.anything(),
+      );
+    });
+  });
+
   describe('idempotency key completion on a failed transaction', () => {
     test('completes the reserved key with the failure when the transaction throws', async () => {
       const store = useFakeKeyStore();
