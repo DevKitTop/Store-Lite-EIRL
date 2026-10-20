@@ -232,6 +232,18 @@ describe('sanitizeRedirectTarget — open-redirect defense', () => {
       expect(sanitizeRedirectTarget(raw)).toBeNull();
     });
 
+    test.each([
+      ['/Auth%2Fcallback', 'encoded slash reaching the login route once decoded'],
+      ['/%41UTH', 'percent-encoded first letter of the login route'],
+      ['/auth%2Fcallback', 'lowercase login route with an encoded slash'],
+      ['/AUTH%2F', 'uppercase login route with a trailing encoded slash'],
+    ])('rejects %s (decoded-form loop guard)', (raw) => {
+      // The value arrives already decoded once by `searchParams.get`, so the
+      // guard must look at the decoded form too — otherwise a crafted link
+      // lands the user on a dead "/Auth%2Fcallback" path after login.
+      expect(sanitizeRedirectTarget(raw)).toBeNull();
+    });
+
     test('does not reject lookalike platform paths', () => {
       expect(sanitizeRedirectTarget('/authorize')).toBe('/authorize');
       expect(sanitizeRedirectTarget('/authentication-helper')).toBe('/authentication-helper');
