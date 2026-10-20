@@ -25,6 +25,8 @@ const {
   mockProductsSelectFrom,
   mockProductsSelect,
   mockTxReturning,
+  mockTxClaimReturning,
+  mockTxOutcomeReturning,
   mockTxValues,
   mockTxInsert,
   mockTxUpdateReturning,
@@ -54,7 +56,15 @@ const {
   const mockProductsSelect = vi.fn(() => ({ from: mockProductsSelectFrom }));
 
   const mockTxReturning = vi.fn();
-  const mockTxValues = vi.fn(() => ({ returning: mockTxReturning }));
+  // The CAS claim terminal: `insert(stockMovements).values().onConflictDoNothing().returning()`.
+  const mockTxClaimReturning = vi.fn();
+  // The truthful-outcome correction terminal: `.onConflictDoUpdate(...).returning()`.
+  const mockTxOutcomeReturning = vi.fn();
+  const mockTxValues = vi.fn(() => ({
+    returning: mockTxReturning,
+    onConflictDoNothing: () => ({ returning: mockTxClaimReturning }),
+    onConflictDoUpdate: () => ({ returning: mockTxOutcomeReturning }),
+  }));
   const mockTxInsert = vi.fn(() => ({ values: mockTxValues }));
   const mockTxUpdateReturning = vi.fn();
   const mockTxSet = vi.fn(() => ({ where: mockTxWhere }));
@@ -66,6 +76,7 @@ const {
     callback({
       insert: mockTxInsert,
       update: mockTxUpdate,
+      select: mockProductsSelect,
     }),
   );
 
@@ -81,6 +92,8 @@ const {
     mockProductsSelectFrom,
     mockProductsSelect,
     mockTxReturning,
+    mockTxClaimReturning,
+    mockTxOutcomeReturning,
     mockTxValues,
     mockTxInsert,
     mockTxUpdateReturning,
@@ -250,6 +263,15 @@ function createOrderFlowRequest(payload: Record<string, unknown>) {
   });
 }
 
+/**
+ * DB row uuids the fulfillment claim keys MUST use (R2). They are deliberately
+ * distinct from each other and from the Culqi text ids ('ord_culqi_abc123',
+ * 'chr_…'): `stock_movements.source_id` is a uuid column, and two triggers
+ * sharing one slot is exactly the exactly-once break this contract closes.
+ */
+const PO_ROW_UUID = '11111111-2222-4333-8444-555555555555';
+const PAY_ROW_UUID = '99999999-8888-4777-a666-555555555555';
+
 function createCulqiChargeResponse(overrides: Record<string, unknown> = {}) {
   return {
     id: 'ch_abc123',
@@ -396,6 +418,10 @@ describe('POST /api/payment/charge', () => {
       { id: 'pay-1', trackingToken: 'tt_test_token', buyerPhone: '999888777' },
     ]);
     mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+    // Default mock: the CAS claim wins (one stock_movements row returned).
+    mockTxClaimReturning.mockResolvedValue([{ id: 'mv-1' }]);
+    // Default mock: an oversell correction upsert finds exactly its row.
+    mockTxOutcomeReturning.mockResolvedValue([{ id: 'mv-2' }]);
 
     vi.stubEnv('NODE_ENV', 'development');
   });
@@ -809,9 +835,15 @@ describe('POST /api/payment/charge', () => {
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload({ amount: 1099 })));
 
       expect(response.status).toBe(200);
-      expect(mockTxInsert).toHaveBeenCalledTimes(1);
+      // One `payments` insert. The fulfillment marker also INSERTs into
+      // `stock_movements` (the CAS claim), so count the payments insert
+      // specifically by its `amount` payload rather than all inserts.
+      const paymentInserts = mockTxValues.mock.calls.filter(
+        (call) => (call[0] as { amount?: string }).amount !== undefined,
+      );
+      expect(paymentInserts).toHaveLength(1);
       // The recorded amount is the request amount, not the order's.
-      const inserted = mockTxValues.mock.calls[0][0] as { amount: string };
+      const inserted = paymentInserts[0][0] as { amount: string };
       expect(inserted.amount).toBe('10.99');
     });
 
@@ -1140,6 +1172,144 @@ describe('POST /api/payment/charge', () => {
         expect.stringContaining('oversold'),
         expect.anything(),
       );
+    });
+  });
+
+  // ============================================================
+  // Fulfillment marker: the CAS claim joins the charge transaction
+  // (NEW-8, design D1/D4/D5)
+  // ============================================================
+
+  describe('fulfillment marker (stock_movements ledger)', () => {
+    test('claims a payments-keyed stock_movements row inside the charged transaction', async () => {
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'charge-tok_test_abc123',
+        },
+        body: JSON.stringify(createValidPayload()),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      // The claim is an INSERT ... ON CONFLICT DO NOTHING, never a third UPDATE.
+      expect(mockTxClaimReturning).toHaveBeenCalledTimes(1);
+      const claim = mockTxValues.mock.calls.find(
+        (call) => (call[0] as { sourceType?: string }).sourceType === 'payments',
+      )?.[0] as Record<string, unknown>;
+      expect(claim).toMatchObject({
+        sourceType: 'payments',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+      });
+    });
+
+    test('claims the ordered key set: payment_orders FIRST, then payments (order flow)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(response.status).toBe(200);
+
+      const sourceTypes = mockTxValues.mock.calls
+        .map((call) => (call[0] as { sourceType?: string }).sourceType)
+        .filter(Boolean);
+      // payments row insert has no sourceType (it is the `payments` insert);
+      // the two claims are ordered payment_orders then payments.
+      expect(sourceTypes).toEqual(['payment_orders', 'payments']);
+    });
+
+    test('claims the marker BEFORE the stock decrement', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(response.status).toBe(200);
+
+      const claimOrder = mockTxClaimReturning.mock.invocationCallOrder[0];
+      const decrementOrder = mockTxUpdate.mock.invocationCallOrder[1];
+      expect(claimOrder).toBeLessThan(decrementOrder);
+    });
+
+    test('a losing CAS claim (already fulfilled) skips the decrement but keeps the sale', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+      // Both keys conflict: the sale is already claimed. The flip still happens
+      // (UPDATE #1), but NO stock decrement runs (there is no UPDATE #2).
+      mockTxClaimReturning.mockResolvedValue([]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      // Only the payment_orders flip; the decrement is skipped entirely.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    test('keys both order-flow claims to DB row ids, never Culqi text ids (R2)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      // The flip returns the payment_orders ROW uuid; the payments insert returns its own.
+      mockTxUpdateReturning.mockResolvedValue([{ id: PO_ROW_UUID }]);
+      mockTxReturning.mockResolvedValue([
+        { id: PAY_ROW_UUID, trackingToken: 'tt_test_token', buyerPhone: '999888777' },
+      ]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(response.status).toBe(200);
+
+      const claims = mockTxValues.mock.calls
+        .map((call) => call[0] as Record<string, unknown>)
+        .filter((values) => values.sourceType !== undefined);
+      expect(claims.map((claim) => claim.sourceType)).toEqual(['payment_orders', 'payments']);
+      // The payment_orders slot is the id the flip's .returning() yielded (R5).
+      expect(claims[0].sourceId).toBe(PO_ROW_UUID);
+      // The payments slot is the payments INSERT row id — never a copy of the
+      // order key (two triggers would then win one slot each).
+      expect(claims[1].sourceId).toBe(PAY_ROW_UUID);
+      expect(claims[1].sourceId).not.toBe(claims[0].sourceId);
+    });
+
+    test('no claim key ever carries a Culqi text id (uuid-column regression guard)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: PO_ROW_UUID }]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(response.status).toBe(200);
+
+      const sourceIds = mockTxValues.mock.calls
+        .map((call) => call[0] as { sourceType?: string; sourceId?: unknown })
+        .filter((values) => values.sourceType !== undefined)
+        .map((values) => String(values.sourceId));
+      expect(sourceIds).toHaveLength(2);
+      for (const sourceId of sourceIds) {
+        expect(sourceId.startsWith('ord_')).toBe(false);
+        expect(sourceId.startsWith('chr_')).toBe(false);
+      }
+      // The claim is keyed to the order ROW the flip actually updated.
+      expect(sourceIds).toContain(PO_ROW_UUID);
+    });
+
+    test('a token-only sale keys its single claim to the payments row id', async () => {
+      mockTxReturning.mockResolvedValue([
+        { id: PAY_ROW_UUID, trackingToken: 'tt_test_token', buyerPhone: '999888777' },
+      ]);
+
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'charge-tok_test_abc123',
+        },
+        body: JSON.stringify(createValidPayload()),
+      });
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const claims = mockTxValues.mock.calls
+        .map((call) => call[0] as Record<string, unknown>)
+        .filter((values) => values.sourceType !== undefined);
+      expect(claims).toHaveLength(1);
+      expect(claims[0]).toMatchObject({ sourceType: 'payments', sourceId: PAY_ROW_UUID });
     });
   });
 

@@ -370,6 +370,44 @@ export type PaymentIdempotencyKey = typeof paymentIdempotencyKeys.$inferSelect;
 export type NewPaymentIdempotencyKey = typeof paymentIdempotencyKeys.$inferInsert;
 
 // =====================================================
+// TABLE: stock_movements — exactly-once fulfillment ledger (NEW-8)
+// =====================================================
+// One row per CLAIM. The unique (source_type, source_id) pair is the CAS unit:
+// `INSERT ... ON CONFLICT DO NOTHING ... RETURNING` lets the first trigger win
+// and every later trigger observe 0 rows (design D1-D3). `source_id` is
+// deliberately polymorphic (no FK): it points at either a `payments` row or a
+// `payment_orders` row depending on `source_type`. RLS is enabled with zero
+// policies in migration 0051 (0050 pattern) — Drizzle connects as `postgres`
+// and bypasses it, while PostgREST anon is denied.
+
+export const stockMovements = pgTable(
+  'stock_movements',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'restrict' }),
+    sourceType: text('source_type', { enum: ['payments', 'payment_orders'] }).notNull(),
+    sourceId: uuid('source_id').notNull(),
+    items: jsonb('items')
+      .$type<{ productId: string; quantity: number; applied: boolean }[]>()
+      .notNull()
+      .default([]),
+    outcome: text('outcome', { enum: ['fulfilled', 'partial', 'no_product'] }).notNull(),
+    fallbackQty1: boolean('fallback_qty1').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    sourceUnique: unique('stock_movements_source_unique').on(table.sourceType, table.sourceId),
+    businessIdIdx: index('idx_stock_movements_business_id').on(table.businessId),
+    createdAtIdx: index('idx_stock_movements_created_at').on(table.createdAt.desc()),
+  }),
+);
+
+export type StockMovement = typeof stockMovements.$inferSelect;
+export type NewStockMovement = typeof stockMovements.$inferInsert;
+
+// =====================================================
 // TYPE EXPORTS
 // =====================================================
 

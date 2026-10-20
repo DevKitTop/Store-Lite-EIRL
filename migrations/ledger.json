@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-17T16:10:27.378Z",
+  "generatedAt": "2026-10-20T15:55:43.094Z",
   "counts": {
-    "sql": 78,
+    "sql": 79,
     "journal": 24,
-    "unjournaled": 54
+    "unjournaled": 55
   },
   "files": [
     {
@@ -395,6 +395,11 @@
     {
       "file": "0050_enable_rls_payment_idempotency_keys.sql",
       "prefix": "0050",
+      "method": "manual"
+    },
+    {
+      "file": "0051_stock_movements_ledger.sql",
+      "prefix": "0051",
       "method": "manual"
     }
   ],
