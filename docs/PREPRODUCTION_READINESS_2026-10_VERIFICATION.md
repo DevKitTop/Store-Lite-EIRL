@@ -7,13 +7,20 @@
 
 ---
 
-## Current status (2026-10-17) — SUPERSEDES the verdicts below
+## Current status (2026-10-19) — SUPERSEDES the verdicts below
 
-This round is a **dated snapshot** (tip `a19783f` = merge of PR #227). The sections
+This round is a **dated snapshot** (tip `f83a150` = merge of PR #258). The sections
 below are kept as the historical record. This section is the **current** status,
 re-verified against code with `file:line` evidence.
 
 Several Round-2 verdicts are now **stale**: the fixes landed after this round.
+
+**Latest delta (2026-10-19).** The storefront auth gate (**NEW-5**) and the post-login
+return target (**NEW-6**) landed in PRs #257/#258. A fresh independent pass
+re-adjudicated the seven "critical" claims of a third-party audit of the payment flow:
+three were already fixed, one is accepted, one is bounded — **one is real and open
+(NEW-7, oversell)**. Full verdicts, the design trap around NEW-7, and the live backlog
+are in **§9**.
 
 | #                | Round-2 verdict                            | Current                            | Evidence / note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ---------------- | ------------------------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -331,3 +338,183 @@ Terse record of what was hardened in the P1 batch and what stays open, with the 
 - **C9** — Migration journal (ends at idx 24, 76 `.sql` files, two `0048` files, missing `0021` tag) is NOT reconciled — document-only until prod applied-state is known.
 - **Cron** — `/api/cron/order-timeouts` has no `crons` entry in `vercel.json`; trigger is external/undocumented — documented only.
 - **NEW-3** — Drizzle `payments.orderNumber` aligned to the DB (`.notNull()` + named unique index `payments_order_number_unique`).
+
+---
+
+## 9) Verification pass 2026-10-19 (tip `f83a150`)
+
+Independent check of the seven "critical" claims of a third-party audit of the payment
+flow, plus the two security PRs merged after the 2026-10-17 snapshot. Every verdict was
+re-derived from code at `f83a150`, never from the audit text. **Purpose: stop the same
+claims from being re-litigated.**
+
+### 9.0 Findings closed after the 2026-10-17 snapshot
+
+| ID        | Finding                                                                                                                                                                                                                                   | Status                            | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **NEW-5** | Storefront seller surfaces had **no auth gate**: an anonymous visitor could load `/dashboard`, `/settings`, `/storage`, `/notifications`, `/chat`, `/ayuda` and `/soporte` directly; the middleware only handled platform and auth paths. | ✅ **FIXED** (PR #257, `302c352`) | `src/lib/middleware/routeProtection.ts` allow-list: prefix match for `product` and `order` (covers `order/verify/[orderNumber]`), exact match for legal paths; everything else under `/{slug}` is protected. Logged-out branch returns `/auth?redirect=…` with `Cache-Control: no-store` + `Vary: Cookie`. Unknown multi-segment paths are **deny-by-default** (a documented, test-pinned choice: fail closed at an auth boundary).                                                               |
+| **NEW-6** | The gate emitted `?redirect=` but the OAuth callback always redirected to `/onboarding`, so the deep link was silently dropped.                                                                                                           | ✅ **FIXED** (PR #258, `f83a150`) | Sanitizer extracted to `src/shared/utils/redirectTarget.ts` (zero imports, so a route handler does not pull in the middleware pipeline). `buildAuthCallbackUrl` **degrades to the bare callback** instead of returning `null` (returning null would let one crafted param break sign-in). The callback re-sanitizes the param and honours it, carrying it through the `!code` and `exchange_failed` bounces. The login-path loop guard now also checks the **decoded** form (`/Auth%2Fcallback`). |
+
+**Supabase allow-list:** adding `?redirect=` to the `redirect_to` URL was verified
+**differentially against GoTrue** (`GET /auth/v1/authorize`) for both
+`http://localhost:3000` and `https://storelite.app`: the plain callback and the
+param-carrying URL both return `302` to Google, so the allow-list does not break OAuth.
+
+### 9.1 Claim adjudication
+
+| #   | Claim                                           | Verdict                           | Evidence                                                                                                                                                                                                                                                                                                                               |
+| --- | ----------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Client controls the charged amount              | **FALSE — already fixed**         | `src/features/billing/validateAmount.ts:47` filters by `businessId` + `inArray(ids)` (foreign or missing product ⇒ reject); invoked at `app/api/payment/charge/route.ts:22,242` and `app/api/payment/create-order/route.ts:12,77`.                                                                                                     |
+| 2   | `culqiOrderId` trusted blindly                  | **FALSE — already fixed**         | `getCulqiOrder`/`isCulqiOrderPaid` imported `charge/route.ts:12`, used `:430`; duplicate-charge lookup `:477-491`; order flip is **fail-closed** (0 rows ⇒ throw) `:577-579`, scoped by `businessId` `:570`.                                                                                                                           |
+| 3   | Silent oversell on stock                        | **TRUE — OPEN (NEW-7)**           | `charge/route.ts:586-591`: `GREATEST(stock - qty, 0)` with no availability predicate; no pre-check anywhere in the handler.                                                                                                                                                                                                            |
+| 4   | In-memory rate limiter unusable on serverless   | **TRUE — ACCEPTED**               | Same decision as W-I1; `src/lib/rateLimit.ts:50` is still a per-instance `Map`.                                                                                                                                                                                                                                                        |
+| 5   | Webhook accepts unauthenticated requests in dev | **TRUE — bounded and local-only** | `verifyBasicAuth` allows when `CULQI_WEBHOOK_*` are unset **outside production** (`app/api/webhooks/culqi/route.ts:46-49`); the no-header branch behaves the same (`:265-269`). Vercel previews run a production build, so `NODE_ENV === 'production'` there ⇒ **local dev only**, not a staging/preview exposure.                     |
+| 6   | `charge.paid` handler validates nothing         | **FALSE — already fixed**         | `applyChargeStatus` (`app/api/webhooks/culqi/route.ts:173`) builds a full row (amount/currency/email/owner) via `buildWebhookPaymentValues`, falls back to update-only with a loud warning when it cannot (`:224-233`), then upserts on `culqiChargeId` (`:235-241`). Reconciliation cron: `app/api/cron/reconcile-payments/route.ts`. |
+| 7   | Complexity silenced with `eslint-disable`       | **TRUE — tech debt**              | `charge/route.ts:199` and `:503`.                                                                                                                                                                                                                                                                                                      |
+
+**Net:** of seven claims, one is a real open bug, one is real tech debt, one is a true
+but accepted constraint, one is bounded and documented, and three were already fixed.
+The audit that produced them ran against a stale checkout — its citations do not match
+`f83a150`.
+
+### 9.2 NEW-7 — oversell: a design decision, not a predicate
+
+**Status: PARTIALLY FIXED (2026-10-19).** The silent part is gone; the oversell itself
+is still possible under concurrency, and the order flow has no pre-charge window at all
+(see below). What landed:
+
+- `charge/route.ts:582-612` no longer uses `GREATEST(stock - qty, 0)`. The decrement is
+  now `WHERE id = ? AND business_id = ? AND stock >= qty` with `.returning()`, so it is
+  **atomic** and **tenant-scoped**.
+- If the predicate matches no row (units gone), the handler **does not throw**: the
+  money was captured by Culqi before the transaction opened, so aborting would keep the
+  charge and drop the payment record. It records the sale and logs a structured
+  `[charge] oversold` error with `businessId`, `productId` and `requested` units.
+
+Verified: 4 new tests in `tests/unit/chargeRoute.test.ts` (`describe('stock decrement
+(oversell)')`), RED before the change (4 failed), GREEN after (57/57), and mutation-proof
+(reverting to `GREATEST` + `WHERE id` fails the predicate and clamp tests).
+
+**What is still open:** the oversell itself. Closing it requires reserving units _before_
+charging. That is only possible in the **token flow** (Culqi is called at `:163`). In the
+**order flow** there is no such moment — `getCulqiOrder` at `:430` confirms a charge that
+Culqi already captured. Preventing oversell there means reserving at order creation.
+
+**The trap to avoid.** The tempting fix — "check availability inside the transaction
+with `WHERE stock >= qty`" — would be **worse than the bug** if it threw, because the
+money is captured _before_ the transaction opens:
+
+- Culqi charge: `app/api/payment/charge/route.ts:163`
+- `db.transaction`: `:502`
+- stock decrement: `:582-612`
+
+A throw inside the transaction rolls back the payment row **after** the card was
+charged: money taken, no order, no payment record. The three viable designs:
+
+| Design                                                                                    | Closes oversell?                                 | Cost                                                    |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------- |
+| **A.** Pre-flight read before charging                                                    | No — only shrinks the window to real concurrency | Low                                                     |
+| **B.** Conditional reservation before charging + compensating release if the charge fails | Yes (atomic)                                     | Medium: rollback/TTL + the existing reconciliation cron |
+| **C.** Conditional decrement after charging; 0 rows ⇒ flag oversold, refund path, alert   | Yes, and never lies to the buyer                 | Medium: operational path for refunds/backorders         |
+
+**Implemented today = C without the refund path**: the flag/alert exists, the refund
+path does not. Moving to A or B is a separate decision, and for the order flow B needs
+the reservation to move to order creation.
+
+Side effect worth knowing: an oversold sale no longer forces stock to `0`, so it no
+longer fires a bogus `stock_out` notification. A legitimate 1 → 0 sale still does.
+
+**Fresh-context review (2026-10-20): SHIP WITH FIXES, no CRITICAL.** The atomicity
+argument was confirmed from first principles: under READ COMMITTED the second concurrent
+UPDATE re-evaluates `WHERE stock >= qty` against the committed version (EvalPlanQual),
+sees no units and updates 0 rows — no `FOR UPDATE` needed. `.returning()` returns `[]`
+on a zero-row update, so the check is correct. Replay is guarded by the deterministic
+idempotency key, the reserve-before-external-call, the duplicate `culqiChargeId` lookup
+and `payments.culqiChargeId UNIQUE`; the unique violation rolls back the losing
+transaction. Tenant scoping is defense-in-depth (`validateAmount` already filters).
+
+Three review items were acted on or rejected on evidence:
+
+- **Accepted — missing tests.** Added: rollback-does-not-log (pins the post-commit
+  placement of the signal), multi-item cart where only one line runs out, and
+  `quantity > 1` in the predicate (a hard-coded `1` would let a 2-unit sale through with
+  1 unit in stock). 60/60 in `tests/unit/chargeRoute.test.ts`.
+- **Rejected — "gate the flip on `payment_orders.status = 'pending'`".** It looks like
+  free hardening, but the dual-path design makes it a regression: if the **webhook lands
+  first** (`order.status.changed` already set the order to `paid`), the client's charge
+  then flips `paid → paid` and succeeds. With a `pending` guard the flip matches 0 rows,
+  the fail-closed throw rolls back a legitimate payment, and the buyer gets a 500 for
+  money that was captured. The flip must stay idempotent; the unique constraint is the
+  real guard.
+- **Deferred — durable `oversold` marker on the payment row.** `payments.metadata` is
+  `jsonb`, so flagging needs no migration, but nothing would read the flag until the
+  refund/backorder path exists (same workstream as NEW-8). Recorded in the backlog
+  instead of defining an ops contract by accident.
+
+**New finding while evaluating the alerting path — B-07 (2026-10-20).** Routing the
+oversold alert through `src/lib/logger.ts` (which dual-writes to Sentry) **destroys the
+identifiers**: `scrubPII`'s `PHONE_REGEX` (`piiScrubber.ts:13`) matches any 6-11 digit
+run, so `"…-446655440001"` becomes `"…-44665[REDACTED_PHONE]"`. Every UUID logged
+through the structured logger is corrupted, which makes Sentry logs useless for joining
+back to rows. The oversold alert therefore stays on `console.error` (with a comment
+explaining why), and `PHONE_REGEX` is left alone on purpose: tightening it wrongly is a
+PII-leak compliance risk, not a quick fix. Needs its own change with tests against real
+UUIDs and real phone formats.
+
+### 9.3 NEW-8 — the webhook path never decrements stock (found 2026-10-19)
+
+Discovered while scoping NEW-7, and **not fixed** (it needs its own design):
+
+- `products.stock` is written in exactly **one** place in the repo:
+  `app/api/payment/charge/route.ts:582-612`.
+- `applyChargeStatus` (`app/api/webhooks/culqi/route.ts:173-242`) can **insert** a paid
+  `payments` row for a charge it has never seen, and `order.status.changed`
+  (`:338-369`) only updates `paymentOrders` rows that already exist. Neither touches
+  stock.
+- `app/api/cron/reconcile-payments/route.ts` only updates `payments`.
+
+**Reachable failure:** Culqi captures the charge; the client's call to
+`/api/payment/charge` fails or times out (the Culqi request has a 15s abort); the webhook
+arrives and records the payment as `paid`. Result: a paid sale whose stock was **never
+decremented** — oversell by drift, not by concurrency.
+
+The fix is not "copy the same loop into the webhook": it needs an **idempotent
+fulfillment step** (one function, invoked from both paths, keyed on the payment id) plus a
+decision about which cart lines a webhook-only payment can fulfill. The webhook has no
+`cartItems`; `buildWebhookPaymentValues` resolves a single `productId`. Scope it as its
+own change, with NEW-7's design (A/B/C) as input.
+
+**Non-findings, recorded so they are not re-opened:**
+
+- The stock update is not scoped by `businessId` (`:590`), but `validateAmount:47`
+  already rejects foreign product ids from the same list ⇒ hardening, **not** a
+  cross-tenant vulnerability.
+- Rejecting `%`-containing paths in the post-login return target is **deliberate**
+  (it is what catches `/%zz`); a product named `50%off` falls back gracefully.
+
+### 9.4 Live backlog
+
+| ID          | Item                                                                                                | Evidence                                                                             | Blocker / next step                                                                                    | Effort |
+| ----------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | ------ |
+| **NEW-7**   | Oversell: silent clamp **fixed**; oversell still possible under concurrency and in the order flow   | `charge/route.ts:582-612`                                                            | Prevention needs design A/B/C (`C` partially landed: loud flag, **no refund path, no durable marker**) | M      |
+| **NEW-8**   | Webhook-only payments never decrement stock                                                         | `webhooks/culqi/route.ts:173-242,338-369`; the only stock writer is `charge:582-612` | Needs an idempotent fulfillment helper + cart-mapping decision                                         | M      |
+| **B-07**    | `scrubPII` mangles UUIDs (`PHONE_REGEX` matches 6-11 digits) ⇒ every UUID in Sentry logs is corrupt | `src/lib/piiScrubber.ts:13`; seen as `…44665[REDACTED_PHONE]`                        | Fix with UUID/phone test matrix; **do not** loosen PII coverage blindly                                | S/M    |
+| **B-01**    | `eslint-disable complexity` ×2 in the charge handler                                                | `charge/route.ts:199,503`                                                            | Extract helpers now that NEW-7 landed                                                                  | M      |
+| **B-02**    | `copySessionCookies` drops `httpOnly`/`secure`/`sameSite`                                           | `proxy.ts` (cookie copy in the OAuth path)                                           | Pre-existing, latent; touches the session flow ⇒ own PR (flagged in #257)                              | S/M    |
+| **B-03**    | `signInWithFacebook` logs env-derived values via `console.warn`                                     | `src/features/auth/index.tsx`                                                        | Remove or gate the debug log                                                                           | S      |
+| **B-04**    | Footer links to absolute `/{slug}/terminos`                                                         | footer component                                                                     | Duplicates the slug under `FEATURE_SUBDOMAIN_REWRITE` (W-I4 residual, not re-verified this pass)       | S      |
+| **B-05**    | Settings copy says "empty ⇒ hidden" but the page renders a placeholder                              | settings page (W-I4 residual, not re-verified this pass)                             | Product decision: `notFound()` vs copy                                                                 | S      |
+| **B-06**    | W-I2 production smoke test (Culqi checkout, Meta Pixel, PostHog)                                    | W-I2 residual above                                                                  | Requires a deploy                                                                                      | S      |
+| **W-I1**    | Shared rate-limit store + storefront limiter                                                        | `src/lib/rateLimit.ts:50`                                                            | Accepted; revisit trigger recorded above                                                               | M      |
+| **C1**      | Apply/verify RLS in the live DB                                                                     | `migrations/0049`, `0050`                                                            | Operational; runbook above                                                                             | S      |
+| **C8**      | Defensive credential rotation                                                                       | —                                                                                    | Optional                                                                                               | S      |
+| **C9**      | Live-DB migration baseline                                                                          | `docs/MIGRATIONS_LEDGER.md`                                                          | Needs DB access                                                                                        | M      |
+| **Product** | Pickup deadline, dispute arbitration, penalty floor, notification wiring, cron                      | §4                                                                                   | Out of security scope                                                                                  | L      |
+
+**Ordering rule:** NEW-7 needs a design decision before any code. B-01 must land
+_after_ it — refactoring the same function twice doubles the review cost for no
+benefit. Everything else is independent and small.
+
+**Provenance:** rows NEW-7, B-01, B-02, B-03, W-I1, C1, C8, C9 were re-verified at
+`f83a150` in this pass. B-04 and B-05 are carried over from the W-I4 residual and are
+marked as **not re-verified**; confirm the behaviour before scheduling them.
