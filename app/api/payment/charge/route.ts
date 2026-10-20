@@ -29,7 +29,7 @@ import { createClient } from '@/lib/supabase/server';
 import { sendOrderStatusSms } from '@/lib/twilio/orderSms';
 import { splitFullName } from '@/shared/payments/fullName';
 import type { CulqiChargeResponse } from '@/types/culqi';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, gte, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
 const LOW_STOCK_THRESHOLD = 5;
@@ -499,6 +499,11 @@ export async function POST(request: Request) {
     }
 
     // 🔥 ATOMICITY: Transacción de Base de Datos
+    // Declared outside the transaction on purpose: the oversold signal must only
+    // be emitted once the transaction COMMITS. Logging inside the callback would
+    // report a rollback as a real oversold event.
+    let oversoldItems: { productId: string; requested: number }[] = [];
+
     const result = await db.transaction(
       // eslint-disable-next-line complexity
       async (tx) => {
@@ -579,20 +584,58 @@ export async function POST(request: Request) {
           }
         }
 
-        // 5. Actualizar Stock
+        // 5. Actualizar Stock — decremento condicional (atómico).
+        // GREATEST(stock - qty, 0) silenciaba la sobreventa: dejaba el stock en 0
+        // y registraba la venta como si las unidades hubieran estado disponibles.
+        // El predicado `stock >= qty` hace la operación atómica: la fila se
+        // actualiza solo si todavía hay unidades. Si no las hay, NO se lanza un
+        // error: Culqi ya cobró antes de abrir esta transacción, así que abortar
+        // dejaría el cobro hecho y la venta sin registrar. Se registra la venta y
+        // se reporta la sobreventa de forma observable.
         const cartItems = (metadata?.cartItems as { id: string; quantity: number }[]) || [];
         const itemsToUpdate = cartItems.length > 0 ? cartItems : [{ id: productId, quantity: 1 }];
+        const oversoldInTx: { productId: string; requested: number }[] = [];
 
         for (const item of itemsToUpdate) {
-          await tx
+          const requested = Math.max(1, item.quantity);
+          const applied = await tx
             .update(products)
-            .set({ stock: sql`GREATEST(${products.stock} - ${Math.max(1, item.quantity)}, 0)` })
-            .where(eq(products.id, item.id));
+            .set({ stock: sql`${products.stock} - ${requested}` })
+            .where(
+              and(
+                eq(products.id, item.id),
+                eq(products.businessId, businessId),
+                gte(products.stock, requested),
+              ),
+            )
+            .returning({ id: products.id });
+
+          if (!applied || applied.length === 0) {
+            oversoldInTx.push({ productId: item.id, requested });
+          }
         }
+
+        oversoldItems = oversoldInTx;
 
         return payment;
       },
     );
+
+    // A sale without enough stock is an operational incident: the buyer was
+    // charged for units that did not exist.
+    //
+    // Deliberately console.error, NOT `logger.error`: the structured logger runs
+    // scrubPII, whose PHONE_REGEX matches any 6-11 digit run and therefore mangles
+    // UUIDs ("...446655440001" -> "...44665[REDACTED_PHONE]"), destroying the
+    // productId/businessId that make this alert actionable. Do not "upgrade" this
+    // call until the scrubber stops corrupting identifiers.
+    for (const oversold of oversoldItems) {
+      console.error('[charge] oversold: conditional stock decrement matched no row', {
+        businessId,
+        productId: oversold.productId,
+        requested: oversold.requested,
+      });
+    }
 
     // ─── Notificar al negocio ───
     // Fire-and-forget: no fallar si la notificación falla
