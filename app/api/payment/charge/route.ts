@@ -18,6 +18,12 @@ import {
 } from '@/core/payments/idempotency';
 import { resolveOrderNumber } from '@/core/payments/orderNumber';
 import { paymentRateLimiter } from '@/core/payments/rateLimiter';
+import {
+  type FulfillmentAnchor,
+  type FulfillmentResult,
+  emitFulfillmentAlerts,
+  fulfillPaidSale,
+} from '@/core/payments/stockFulfillment';
 import { generateTrackingToken } from '@/core/utils/trackingToken';
 import { validateAmount } from '@/features/billing/validateAmount';
 import { captureEvent } from '@/lib/analytics/capture';
@@ -29,7 +35,7 @@ import { createClient } from '@/lib/supabase/server';
 import { sendOrderStatusSms } from '@/lib/twilio/orderSms';
 import { splitFullName } from '@/shared/payments/fullName';
 import type { CulqiChargeResponse } from '@/types/culqi';
-import { and, eq, gte, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
 const LOW_STOCK_THRESHOLD = 5;
@@ -499,10 +505,11 @@ export async function POST(request: Request) {
     }
 
     // 🔥 ATOMICITY: Transacción de Base de Datos
-    // Declared outside the transaction on purpose: the oversold signal must only
-    // be emitted once the transaction COMMITS. Logging inside the callback would
-    // report a rollback as a real oversold event.
-    let oversoldItems: { productId: string; requested: number }[] = [];
+    // Declared outside the transaction on purpose: the fulfillment result must
+    // only be emitted once the transaction COMMITS. Logging inside the callback
+    // would report a rollback as a real event.
+    let fulfillmentAnchor: FulfillmentAnchor | null = null;
+    let fulfillmentResult: FulfillmentResult | null = null;
 
     const result = await db.transaction(
       // eslint-disable-next-line complexity
@@ -565,6 +572,10 @@ export async function POST(request: Request) {
           .returning();
 
         // 5b. Si es pago contra orden, marcar la orden como pagada
+        // The row uuid the flip actually updated is the ONLY safe key for the
+        // `payment_orders` claim slot (R5): a text `culqiOrderId` would crash
+        // the uuid `source_id`. Null for the token flow.
+        let paymentOrderId: string | null = null;
         if (culqiOrderId) {
           const flipped = await tx
             .update(paymentOrders)
@@ -582,59 +593,61 @@ export async function POST(request: Request) {
           if (flipped?.length !== 1) {
             throw new Error('payment_orders flip affected no row');
           }
+          paymentOrderId = flipped[0].id;
         }
 
-        // 5. Actualizar Stock — decremento condicional (atómico).
-        // GREATEST(stock - qty, 0) silenciaba la sobreventa: dejaba el stock en 0
-        // y registraba la venta como si las unidades hubieran estado disponibles.
-        // El predicado `stock >= qty` hace la operación atómica: la fila se
-        // actualiza solo si todavía hay unidades. Si no las hay, NO se lanza un
-        // error: Culqi ya cobró antes de abrir esta transacción, así que abortar
-        // dejaría el cobro hecho y la venta sin registrar. Se registra la venta y
-        // se reporta la sobreventa de forma observable.
-        const cartItems = (metadata?.cartItems as { id: string; quantity: number }[]) || [];
-        const itemsToUpdate = cartItems.length > 0 ? cartItems : [{ id: productId, quantity: 1 }];
-        const oversoldInTx: { productId: string; requested: number }[] = [];
-
-        for (const item of itemsToUpdate) {
-          const requested = Math.max(1, item.quantity);
-          const applied = await tx
-            .update(products)
-            .set({ stock: sql`${products.stock} - ${requested}` })
-            .where(
-              and(
-                eq(products.id, item.id),
-                eq(products.businessId, businessId),
-                gte(products.stock, requested),
-              ),
-            )
-            .returning({ id: products.id });
-
-          if (!applied || applied.length === 0) {
-            oversoldInTx.push({ productId: item.id, requested });
-          }
-        }
-
-        oversoldItems = oversoldInTx;
+        // 5. Fulfill stock via the shared helper (NEW-8, design D1/D5).
+        //
+        // The helper owns the ONLY implementation of "decrement for a paid
+        // sale": it claims the sale's ordered key set in the `stock_movements`
+        // ledger (a CAS INSERT ... ON CONFLICT DO NOTHING ... RETURNING) in THIS
+        // SAME transaction, then applies the conditional, business-scoped
+        // decrement (`WHERE id AND businessId AND stock >= qty` with
+        // `.returning()`). An already-claimed sale (0 claim rows) skips the
+        // decrement without failing the payment — the loser of a race is not a
+        // failure (R2). GREATEST/rowCount are forbidden: `rowCount` is
+        // `undefined` on postgres-js and would fail open.
+        //
+        // The claim is an INSERT, never a third `tx.update`: tests pin exactly
+        // two `mockTxUpdate` calls in the order flow (flip first, decrement
+        // second).
+        const anchor: FulfillmentAnchor = {
+          kind: paymentOrderId ? 'payment_orders' : 'payments',
+          id: paymentOrderId ?? payment.id,
+          // Both claim keys come from DB row uuids; `culqiOrderId` is a
+          // resolution hint only and never becomes a `source_id` (R2).
+          paymentOrderId,
+          paymentId: payment.id,
+          businessId,
+          culqiOrderId: culqiOrderId ?? culqiChargeId ?? null,
+        };
+        fulfillmentResult = await fulfillPaidSale(
+          anchor,
+          {
+            cartItems: (metadata?.cartItems as { id: string; quantity: number }[]) ?? null,
+            qty: null,
+            productId,
+          },
+          { tx },
+        );
+        fulfillmentAnchor = anchor;
 
         return payment;
       },
     );
 
     // A sale without enough stock is an operational incident: the buyer was
-    // charged for units that did not exist.
+    // charged for units that did not exist. Emitted POST-COMMIT only, through
+    // the helper's exported emitter (design D5).
     //
-    // Deliberately console.error, NOT `logger.error`: the structured logger runs
-    // scrubPII, whose PHONE_REGEX matches any 6-11 digit run and therefore mangles
-    // UUIDs ("...446655440001" -> "...44665[REDACTED_PHONE]"), destroying the
-    // productId/businessId that make this alert actionable. Do not "upgrade" this
-    // call until the scrubber stops corrupting identifiers.
-    for (const oversold of oversoldItems) {
-      console.error('[charge] oversold: conditional stock decrement matched no row', {
-        businessId,
-        productId: oversold.productId,
-        requested: oversold.requested,
-      });
+    // The emitter deliberately uses console.error, NOT `logger.error`: the
+    // structured logger runs scrubPII, whose PHONE_REGEX matches any 6-11 digit
+    // run and therefore mangles UUIDs ("...446655440001" ->
+    // "...44665[REDACTED_PHONE]"), destroying the productId/businessId that make
+    // this alert actionable. Do not "upgrade" this call until the scrubber stops
+    // corrupting identifiers (B-07).
+    if (fulfillmentAnchor && fulfillmentResult) {
+      emitFulfillmentAlerts('charge', fulfillmentAnchor, fulfillmentResult);
     }
 
     // ─── Notificar al negocio ───
