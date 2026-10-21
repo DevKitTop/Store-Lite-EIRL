@@ -133,4 +133,49 @@ describe('buildWebhookPaymentValues', () => {
     ).toBeNull();
     expect(buildWebhookPaymentValues(baseInput({ data: undefined }))).toBeNull();
   });
+
+  // =====================================================
+  // Scalar qty passthrough (R1/A2, slice 2)
+  // =====================================================
+
+  describe('metadata.qty passthrough', () => {
+    function withQty(qty: unknown) {
+      return baseInput({
+        data: {
+          ...baseInput().data,
+          metadata: {
+            businessId: '550e8400-e29b-41d4-a716-446655440000',
+            productId: '660e8400-e29b-41d4-a716-44665544001',
+            platform: 'store-lite',
+            qty,
+          },
+        },
+      });
+    }
+
+    test('copies a positive integer qty into values.metadata', () => {
+      const values = buildWebhookPaymentValues(withQty(3));
+      expect(values?.metadata).toEqual({ qty: 3 });
+    });
+
+    test('coerces a numeric-string qty to an integer', () => {
+      const values = buildWebhookPaymentValues(withQty('3'));
+      expect(values?.metadata).toEqual({ qty: 3 });
+    });
+
+    test('omits values.metadata when qty is absent', () => {
+      const values = buildWebhookPaymentValues(baseInput());
+      expect(values).not.toBeNull();
+      expect(values).not.toHaveProperty('metadata');
+    });
+
+    test.each([0, -1, 2.5, 'abc', null, true])(
+      'omits values.metadata when qty is %p (unusable)',
+      (bad) => {
+        const values = buildWebhookPaymentValues(withQty(bad));
+        expect(values).not.toBeNull();
+        expect(values).not.toHaveProperty('metadata');
+      },
+    );
+  });
 });

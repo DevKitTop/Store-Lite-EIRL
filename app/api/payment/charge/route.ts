@@ -141,6 +141,7 @@ interface ExecuteCulqiChargeParams {
   productTitle?: string;
   businessId: string;
   productId: string;
+  qty?: number;
 }
 
 async function executeCulqiCharge({
@@ -154,6 +155,7 @@ async function executeCulqiCharge({
   productTitle,
   businessId,
   productId,
+  qty,
 }: ExecuteCulqiChargeParams): Promise<{
   culqiData: CulqiChargeResponse;
   error: NextResponse | null;
@@ -179,7 +181,7 @@ async function executeCulqiCharge({
       source_id: token,
       description: `Compra: ${productTitle || 'Producto'} - Store Lite`,
       antifraud_details,
-      metadata: { businessId, productId, platform: 'store-lite' },
+      metadata: { businessId, productId, platform: 'store-lite', qty },
     }),
   });
 
@@ -461,6 +463,12 @@ export async function POST(request: Request) {
         return keyError;
       }
 
+      // Scalar qty for the Culqi metadata: the bound line's quantity when the
+      // cart carries a line for this product, else 1. Never the cart array.
+      const boundQty =
+        metadata?.cartItems?.find((i: { id: string; quantity: number }) => i.id === productId)
+          ?.quantity ?? 1;
+
       const { culqiData: chargeResult, error: chargeError } = await executeCulqiCharge({
         token,
         secretKey,
@@ -472,6 +480,7 @@ export async function POST(request: Request) {
         productTitle: undefined, // product title not needed for charge
         businessId,
         productId,
+        qty: boundQty,
       });
       if (chargeError) {
         await releaseIdempotencyKey(reservedIdempotencyKey);
