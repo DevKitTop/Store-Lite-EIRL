@@ -51,6 +51,8 @@ export interface WebhookPaymentValues {
   buyerEmail: string;
   orderNumber: string;
   trackingToken: string;
+  /** Scalar quantity echoed by the charge route (`metadata.qty`, A2). */
+  metadata?: { qty: number };
 }
 
 const CULQI_PLACEHOLDER_EMAIL = 'cliente@culqi.com';
@@ -64,6 +66,20 @@ function readNonEmptyString(value: unknown): string | null {
 function readMetadataField(metadata: unknown, key: string): string | null {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
   return readNonEmptyString((metadata as Record<string, unknown>)[key]);
+}
+
+/**
+ * Parses the scalar `qty` the charge route echoes in the Culqi charge metadata
+ * (A2). Mirrors `readFulfillmentQty` from stockFulfillment (number|string →
+ * integer ≥ 1) but stays local so this pure builder has no DB-schema imports.
+ * Returns `null` when unusable, letting the caller omit the key entirely.
+ */
+function readQty(metadata: unknown): number | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const raw = (metadata as Record<string, unknown>).qty;
+  const parsed = typeof raw === 'string' ? Number(raw) : raw;
+  if (typeof parsed !== 'number' || !Number.isInteger(parsed) || parsed < 1) return null;
+  return parsed;
 }
 
 export function buildWebhookPaymentValues(
@@ -96,6 +112,10 @@ export function buildWebhookPaymentValues(
   const buyerEmail = readNonEmptyString(data?.email) ?? CULQI_PLACEHOLDER_EMAIL;
   const culqiReferenceCode = readNonEmptyString(data?.reference_code);
 
+  // Scalar qty (A2): only present when the charge route actually sent a
+  // usable one; the key is omitted otherwise so the row stays clean.
+  const qty = readQty(data?.metadata);
+
   return {
     businessId,
     productId,
@@ -108,5 +128,6 @@ export function buildWebhookPaymentValues(
     buyerEmail,
     orderNumber: input.orderNumber,
     trackingToken: input.trackingToken,
+    ...(qty !== null ? { metadata: { qty } } : {}),
   };
 }

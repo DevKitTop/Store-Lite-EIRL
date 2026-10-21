@@ -548,6 +548,165 @@ describe('POST /api/payment/charge', () => {
   });
 
   // ============================================================
+  // Scalar qty in the Culqi charge metadata (R1/A2, slice 2)
+  // ============================================================
+
+  describe('charge metadata qty snapshot (A2)', () => {
+    const PRODUCT_B = '770e8400-e29b-41d4-a716-446655440002';
+
+    function culqiChargeBody() {
+      return JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    }
+
+    test('sends the bound line quantity as scalar metadata.qty and never a cart array', async () => {
+      // A = S/ 250.00 × 3 + B = S/ 400.00 × 2 → 155000 cents
+      mockProductsSelectWhere.mockResolvedValue([
+        { id: '660e8400-e29b-41d4-a716-446655440001', price: '250.00', secondPrice: null },
+        { id: PRODUCT_B, price: '400.00', secondPrice: null },
+      ]);
+
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          createValidPayload({
+            amount: 155000,
+            metadata: {
+              cartItems: [
+                { id: '660e8400-e29b-41d4-a716-446655440001', quantity: 3 },
+                { id: PRODUCT_B, quantity: 2 },
+              ],
+            },
+          }),
+        ),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const culqiBody = culqiChargeBody();
+      expect(culqiBody.metadata).toEqual({
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        productId: '660e8400-e29b-41d4-a716-446655440001',
+        platform: 'store-lite',
+        qty: 3,
+      });
+      // Culqi metadata is a scalar contract: a cart array here would bloat the
+      // payload and diverge from the durable channel (payment_orders.metadata).
+      expect(culqiBody.metadata).not.toHaveProperty('cartItems');
+      expect(JSON.stringify(culqiBody.metadata)).not.toContain('[');
+    });
+
+    test('ignores a client-supplied metadata.qty: the Culqi qty is derived server-side from the cart', async () => {
+      // A = S/ 250.00 × 3 + B = S/ 400.00 × 2 → 155000 cents
+      mockProductsSelectWhere.mockResolvedValue([
+        { id: '660e8400-e29b-41d4-a716-446655440001', price: '250.00', secondPrice: null },
+        { id: PRODUCT_B, price: '400.00', secondPrice: null },
+      ]);
+
+      // The hostile fields are the POINT of this case. `qty` and `quantity` are
+      // not part of `chargeRequestSchema.metadata`, so Zod strips them at the
+      // edge; and the outbound Culqi metadata is a LITERAL that never spreads
+      // the request metadata. Two independent defenses — and until now nothing
+      // asserted either one, so a regression in either would have stayed
+      // invisible (R1: the token-flow qty is "derived server-side from the
+      // validated cart, never a raw client field").
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          createValidPayload({
+            amount: 155000,
+            metadata: {
+              shippingInfo: { phone: '999888777', courier: 'recojo' },
+              cartItems: [
+                { id: '660e8400-e29b-41d4-a716-446655440001', quantity: 3 },
+                { id: PRODUCT_B, quantity: 2 },
+              ],
+              qty: 999,
+              quantity: 888,
+            },
+          }),
+        ),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const culqiBody = culqiChargeBody();
+
+      // (1) The gateway receives the SERVER-derived quantity of the bound line
+      // (3 units of A) — never the client's 999.
+      expect(culqiBody.metadata.qty).toBe(3);
+      expect(culqiBody.metadata.qty).not.toBe(999);
+
+      // (2) The outbound metadata is EXACTLY the literal contract: no `quantity`
+      // alias, no stray client key (`shippingInfo`, `cartItems`), and never the
+      // cart array.
+      expect(culqiBody.metadata).toEqual({
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        productId: '660e8400-e29b-41d4-a716-446655440001',
+        platform: 'store-lite',
+        qty: 3,
+      });
+      expect(culqiBody.metadata).not.toHaveProperty('quantity');
+      expect(culqiBody.metadata).not.toHaveProperty('cartItems');
+      expect(culqiBody.metadata).not.toHaveProperty('shippingInfo');
+      expect(JSON.stringify(culqiBody.metadata)).not.toContain('[');
+
+      // (3) The Zod strip is the OTHER half of the invariant, and the durable
+      // row is the only channel where it is observable: the charge route
+      // spreads the validated metadata into `payments.metadata`, and
+      // `readFulfillmentQty` (stockFulfillment) later reads `metadata.qty` back
+      // FROM THAT ROW to size the oversell-recovery decrement. A client `qty`
+      // surviving here would size that decrement.
+      const paymentInserts = mockTxValues.mock.calls.filter(
+        (call) => (call[0] as { amount?: string }).amount !== undefined,
+      );
+      expect(paymentInserts).toHaveLength(1);
+      const inserted = paymentInserts[0][0] as { metadata?: Record<string, unknown> };
+      expect(inserted.metadata).toBeDefined();
+      expect(inserted.metadata).not.toHaveProperty('qty');
+      expect(inserted.metadata).not.toHaveProperty('quantity');
+    });
+
+    test('defaults metadata.qty to 1 when the request carries no cartItems', async () => {
+      const response = await POST(
+        new Request('http://localhost/api/payment/charge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(createValidPayload()),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(culqiChargeBody().metadata.qty).toBe(1);
+    });
+
+    test('defaults metadata.qty to 1 when no cart line matches the bound productId', async () => {
+      // The cart authorises the amount (B × 5 = S/ 1500.00) but contains no
+      // line for the bound product A → the scalar falls back to 1.
+      mockProductsSelectWhere.mockResolvedValue([
+        { id: PRODUCT_B, price: '300.00', secondPrice: null },
+      ]);
+
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          createValidPayload({
+            metadata: { cartItems: [{ id: PRODUCT_B, quantity: 5 }] },
+          }),
+        ),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+      expect(culqiChargeBody().metadata.qty).toBe(1);
+    });
+  });
+
+  // ============================================================
   // Order flow: verify the Culqi order before trusting the order flow
   // (R8 - R12)
   // ============================================================

@@ -160,6 +160,12 @@ export function useCheckoutPayment({
             businessId,
             productId: cartItems[0]?.id,
             description: `Compra - ${cartItems.length} productos`,
+            // Durable fulfilment snapshot (R1/A1): the whole cart, in the exact
+            // `{ id, quantity }` shape the server reconciles and persists in
+            // `payment_orders.metadata.cartItems`. Without it the order flow can
+            // only ever recover the FIRST line, so a multi-item order fulfils
+            // a single line.
+            cartItems: cartItems.map((item) => ({ id: item.id, quantity: item.quantity })),
           });
           orderId = orderData.culqiOrderId;
         } catch (e) {

@@ -189,5 +189,51 @@ describe('paymentApi', () => {
         }),
       ).rejects.toThrow('Saldo insuficiente');
     });
+
+    // =====================================================
+    // cartItems snapshot forwarding (R1/A1, slice 2)
+    // =====================================================
+
+    test('forwards cartItems to the create-order endpoint', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ success: true, culqiOrderId: 'ord_789' }),
+      });
+
+      const { createOrder } = await import('@/shared/payments/paymentApi');
+
+      const cartItems = [
+        { id: '660e8400-e29b-41d4-a716-446655440001', quantity: 2 },
+        { id: '770e8400-e29b-41d4-a716-446655440002', quantity: 1 },
+      ];
+
+      await createOrder({
+        amount: 13000,
+        email: 'buyer@test.com',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        cartItems,
+      });
+
+      const bodyArg = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(bodyArg.cartItems).toEqual(cartItems);
+    });
+
+    test('omits cartItems from the body when not provided', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ success: true, culqiOrderId: 'ord_790' }),
+      });
+
+      const { createOrder } = await import('@/shared/payments/paymentApi');
+
+      await createOrder({
+        amount: 5000,
+        email: 'buyer@test.com',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+      });
+
+      const bodyArg = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(bodyArg).not.toHaveProperty('cartItems');
+    });
   });
 });

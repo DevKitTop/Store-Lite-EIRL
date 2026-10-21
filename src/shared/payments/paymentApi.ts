@@ -45,6 +45,8 @@ export interface CreateOrderParams {
   businessId: string;
   productId?: string;
   description?: string;
+  /** Validated cart snapshot forwarded to the create-order endpoint (R1/A1). */
+  cartItems?: { id: string; quantity: number }[];
 }
 
 export interface CreateOrderResponse {
@@ -129,6 +131,7 @@ export async function createOrder(params: CreateOrderParams): Promise<CreateOrde
       businessId: params.businessId,
       ...(params.productId ? { productId: params.productId } : {}),
       ...(params.description ? { description: params.description } : {}),
+      ...(params.cartItems !== undefined ? { cartItems: params.cartItems } : {}),
     }),
   });
 

@@ -151,3 +151,83 @@ describe('createOrderRequestSchema', () => {
     }
   });
 });
+
+// =====================================================
+// CART SNAPSHOT — optional cartItems (R1 / A1, slice 2)
+// =====================================================
+
+describe('createOrderRequestSchema — cartItems snapshot', () => {
+  const base = {
+    amount: 13000,
+    email: 'buyer@test.com',
+    businessId: '550e8400-e29b-41d4-a716-446655440000',
+  };
+  const lineA = { id: '660e8400-e29b-41d4-a716-446655440001', quantity: 2 };
+  const lineB = { id: '770e8400-e29b-41d4-a716-446655440002', quantity: 1 };
+
+  test('accepts an optional cartItems snapshot', async () => {
+    const { createOrderRequestSchema } = await import('@/features/billing/schemas');
+
+    const result = createOrderRequestSchema.safeParse({ ...base, cartItems: [lineA, lineB] });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cartItems).toEqual([lineA, lineB]);
+    }
+  });
+
+  test('defaults a missing line quantity to 1', async () => {
+    const { createOrderRequestSchema } = await import('@/features/billing/schemas');
+
+    const result = createOrderRequestSchema.safeParse({
+      ...base,
+      cartItems: [{ id: lineA.id }],
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cartItems).toEqual([{ id: lineA.id, quantity: 1 }]);
+    }
+  });
+
+  test('rejects a line with quantity 0', async () => {
+    const { createOrderRequestSchema } = await import('@/features/billing/schemas');
+
+    const result = createOrderRequestSchema.safeParse({
+      ...base,
+      cartItems: [{ id: lineA.id, quantity: 0 }],
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].path).toEqual(['cartItems', 0, 'quantity']);
+    }
+  });
+
+  test('rejects a non-integer line quantity', async () => {
+    const { createOrderRequestSchema } = await import('@/features/billing/schemas');
+
+    const result = createOrderRequestSchema.safeParse({
+      ...base,
+      cartItems: [{ id: lineA.id, quantity: 1.5 }],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  test('strips client bookkeeping fields down to the {id, quantity} snapshot shape', async () => {
+    const { createOrderRequestSchema } = await import('@/features/billing/schemas');
+
+    const result = createOrderRequestSchema.safeParse({
+      ...base,
+      cartItems: [{ id: lineA.id, quantity: 2, name: 'Camiseta', price: '150', stock: 10 }],
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // The persisted snapshot must match the exact `validateAmount` line shape —
+      // client bookkeeping fields (name/price/stock) never reach the DB.
+      expect(result.data.cartItems).toEqual([{ id: lineA.id, quantity: 2 }]);
+    }
+  });
+});

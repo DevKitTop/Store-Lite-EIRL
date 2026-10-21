@@ -2,7 +2,11 @@
 // Billing schemas — two-word customerName refine (R3)
 // =====================================================
 
-import { chargeRequestSchema, createOrderRequestSchema } from '@/features/billing/schemas';
+import {
+  cartItemsSchema,
+  chargeRequestSchema,
+  createOrderRequestSchema,
+} from '@/features/billing/schemas';
 import { BUYER_NAME_ERROR_MESSAGE } from '@/shared/payments/buyerName';
 import { describe, expect, test } from 'vitest';
 
@@ -97,5 +101,46 @@ describe('createOrderRequestSchema — customerName refine', () => {
   test('accepts an absent customerName', () => {
     const result = createOrderRequestSchema.safeParse(validCreateOrderPayload);
     expect(result.success).toBe(true);
+  });
+});
+
+// =====================================================
+// Shared cart line contract (R1, slice 2)
+// =====================================================
+
+const P1 = '660e8400-e29b-41d4-a716-446655440001';
+
+describe('cartItemsSchema — shared cart line contract', () => {
+  test('accepts a line and defaults a missing quantity to 1', () => {
+    const result = cartItemsSchema.safeParse([{ id: P1 }]);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual([{ id: P1, quantity: 1 }]);
+    }
+  });
+
+  test('rejects quantity 0 and non-integer quantities', () => {
+    expect(cartItemsSchema.safeParse([{ id: P1, quantity: 0 }]).success).toBe(false);
+    expect(cartItemsSchema.safeParse([{ id: P1, quantity: 1.5 }]).success).toBe(false);
+  });
+});
+
+describe('chargeRequestSchema — metadata.cartItems via the shared schema', () => {
+  function withCart(cartItems: unknown) {
+    return { ...validChargePayload, metadata: { cartItems } };
+  }
+
+  test('rejects a quantity-0 line (existing tamper guard preserved)', () => {
+    expect(chargeRequestSchema.safeParse(withCart([{ id: P1, quantity: 0 }])).success).toBe(false);
+  });
+
+  test('defaults a missing line quantity to 1 through the shared schema', () => {
+    const result = chargeRequestSchema.safeParse(withCart([{ id: P1 }]));
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.metadata?.cartItems).toEqual([{ id: P1, quantity: 1 }]);
+    }
   });
 });

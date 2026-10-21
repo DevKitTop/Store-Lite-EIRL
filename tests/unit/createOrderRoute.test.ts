@@ -503,4 +503,159 @@ describe('POST /api/payment/create-order', () => {
     // Culqi API WAS called (order proceeds)
     expect(mockFetch).toHaveBeenCalled();
   });
+
+  // ============================================================
+  // Cart snapshot: reconciliation + persistence (R1/R2/A1, slice 2)
+  // ============================================================
+
+  describe('cart snapshot reconciliation and persistence', () => {
+    const PRODUCT_A = '660e8400-e29b-41d4-a716-446655440001';
+    const PRODUCT_B = '770e8400-e29b-41d4-a716-446655440002';
+    // A = S/ 50.00, B = S/ 30.00 → cart {A×2, B×1} = 13000 cents
+    const cartRows = [
+      { id: PRODUCT_A, price: '50.00', secondPrice: null },
+      { id: PRODUCT_B, price: '30.00', secondPrice: null },
+    ];
+
+    function post(body: Record<string, unknown>) {
+      return POST(
+        new Request('http://localhost/api/payment/create-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+      );
+    }
+
+    test('reconciles the full cart total against every line (200 when the sum matches)', async () => {
+      mockValidateRows = cartRows;
+
+      const response = await post(
+        createValidPayload({
+          productId: PRODUCT_A,
+          amount: 13000,
+          cartItems: [
+            { id: PRODUCT_A, quantity: 2 },
+            { id: PRODUCT_B, quantity: 1 },
+          ],
+        }),
+      );
+
+      // Only a reconciliation that consumes EVERY cart line can accept the sum
+      // (a productId-only check would compute 5000 and reject this request).
+      expect(response.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    test('rejects a line quantity that does not match the amount paid (400, no Culqi, no insert)', async () => {
+      mockValidateRows = cartRows;
+
+      // Amount equals the single-product price (5000) while the cart declares
+      // A×3 + B×1 = 18000: paying for one unit but claiming three.
+      const response = await post(
+        createValidPayload({
+          productId: PRODUCT_A,
+          amount: 5000,
+          cartItems: [
+            { id: PRODUCT_A, quantity: 3 },
+            { id: PRODUCT_B, quantity: 1 },
+          ],
+        }),
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('El monto no coincide con el precio del producto');
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockInsert).not.toHaveBeenCalled();
+    });
+
+    test('reconciles a cart-only order that has no top-level productId', async () => {
+      mockValidateRows = cartRows;
+
+      // No productId: the first cart line is the reconciliation anchor, so a
+      // tampered amount must still be rejected before Culqi.
+      const response = await post(
+        createValidPayload({
+          amount: 1000,
+          cartItems: [
+            { id: PRODUCT_A, quantity: 2 },
+            { id: PRODUCT_B, quantity: 1 },
+          ],
+        }),
+      );
+
+      expect(response.status).toBe(400);
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockInsert).not.toHaveBeenCalled();
+    });
+
+    test('persists the cart snapshot in payment_orders.metadata alongside culqiRaw', async () => {
+      mockValidateRows = cartRows;
+
+      const response = await post(
+        createValidPayload({
+          productId: PRODUCT_A,
+          amount: 13000,
+          cartItems: [
+            { id: PRODUCT_A, quantity: 2 },
+            { id: PRODUCT_B, quantity: 1 },
+          ],
+        }),
+      );
+      expect(response.status).toBe(200);
+
+      const persisted = mockValues.mock.calls[0][0] as Record<string, unknown>;
+      expect(persisted.metadata).toEqual({
+        culqiRaw: {
+          orderId: 'ord_culqi_abc123',
+          orderNumber: 'ORD-test1234',
+          createdAt: expect.any(String),
+        },
+        cartItems: [
+          { id: PRODUCT_A, quantity: 2 },
+          { id: PRODUCT_B, quantity: 1 },
+        ],
+      });
+      // The snapshot lives in its own key; it must never be aliased into the
+      // product binding the charge-route gate reads.
+      expect(persisted.metadata).not.toHaveProperty('productId');
+    });
+
+    test('sends a byte-identical Culqi order body with or without the snapshot', async () => {
+      mockValidateRows = [{ id: PRODUCT_A, price: '50.00', secondPrice: null }];
+
+      const FIXED_UUID = '123e4567-e89b-42d3-a456-426614174000';
+      const uuidSpy = vi
+        .spyOn(crypto, 'randomUUID')
+        .mockReturnValue(FIXED_UUID as `${string}-${string}-${string}-${string}-${string}`);
+      // order_number and expiration_date are time/uuid-derived: pin both so the
+      // two bodies are comparable byte for byte.
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-01-15T10:00:00.000Z'));
+
+      try {
+        const base = createValidPayload({ productId: PRODUCT_A, amount: 5000 });
+
+        const plain = await post(base);
+        expect(plain.status).toBe(200);
+
+        const withSnapshot = await post({
+          ...base,
+          cartItems: [{ id: PRODUCT_A, quantity: 1 }],
+        });
+        expect(withSnapshot.status).toBe(200);
+      } finally {
+        vi.useRealTimers();
+        uuidSpy.mockRestore();
+      }
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const plainBody = mockFetch.mock.calls[0][1].body as string;
+      const snapshotBody = mockFetch.mock.calls[1][1].body as string;
+      expect(JSON.parse(snapshotBody)).toEqual(JSON.parse(plainBody));
+      // The snapshot is a DB-only contract: it never rides along to Culqi.
+      expect(snapshotBody).not.toContain('cartItems');
+    });
+  });
 });
