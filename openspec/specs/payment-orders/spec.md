@@ -1,20 +1,24 @@
 # Payment Orders Specification
 
-> **⚠️ Extended 2026-10-02 by `order-integrity` (C2) — IMPLEMENTED AND VERIFIED, PENDING MERGE.**
-> **R8–R14 below were synced at SDD archive from `openspec/changes/order-integrity/`. They describe
-> code that exists and has been independently verified, but it is NOT yet in production.** The change
-> lives entirely in **three unmerged draft PRs** on a `feature-branch-chain`:
-> **#203** `feat/order-integrity` → `feat/order-integrity-a` (slice A, R8–R14) · **#204** and **#205**
-> are the later C4 slices (see `api-access-control` R13–R18) and do not touch `payment_orders`.
-> Nothing has reached `main` or `develop`. Slice A commits: `e9ab802`, `ccfbb55`, `f4239a6`, `51c8a06`,
-> `c0eb346`, `0bd40a9`, `62761ab` (tip `62761ab` on `feat/order-integrity-a`).
+> **Extended 2026-10-02 by `order-integrity` (C2); state note corrected 2026-10-23 at archive of
+> `stock-fulfillment-on-payment` (NEW-8).**
+> **R8–R14 are IN `develop` and describe verified, shipped code.** They were authored on the
+> `feat/order-integrity` tracker branch and merged into `develop` through **#211 / #215 / #224 /
+> #253**. Draft PR **#203** merged into the tracker branch, **not** into `develop` — that is history,
+> not status. Treat R8–R14 as the published contract.
 >
-> Treat R8–R14 as the **intended** contract until #203 merges. **Rollback is a single revert of
-> `feat/order-integrity-a`**, which re-opens C2 (a fabricated or unpaid `culqiOrderId` can again
-> produce a `paid` row, a stock decrement, a seller notification and an SMS).
+> **Do not verify their presence with branch ancestry.**
+> `git merge-base --is-ancestor feat/order-integrity origin/develop` returns **1** even though the
+> content shipped: the `feat/order-integrity*` branches are stale locals and the remote branch was
+> deleted after merge. Verify by code artifacts instead — `readOrderProductBinding`, `getCulqiOrder`
+> and `isCulqiOrderPaid` in `app/api/payment/charge/route.ts`; `reserveIdempotencyKey` /
+> `releaseIdempotencyKey` in `src/core/payments/idempotency.ts`; the `ORDER_AMOUNT_MISMATCH` /
+> `ORDER_PRODUCT_MISMATCH` / `ORDER_CURRENCY_MISMATCH` codes and the `W-P1` reservation comment;
+> `migrations/0048_payments_order_number_integrity.sql`; `src/core/payments/orderNumber.ts`; and
+> `src/lib/orderAccessCookie.ts` / `orderAccessGate.ts`.
 >
 > **No renumbering.** `payment-orders` had no REMOVED section and no numbering cross-reference table,
-> so R8 was the first free number. **No requirement was modified or removed** — R8–R14 are additive.
+> so R8 was the first free number. R8–R14 are additive to the original R1–R7.
 >
 > **Numbering note:** R13 and R14 were **not** in the original proposal. They were discovered by the
 > slice-A verify report (engram **#1162**, findings W1/W2) as a spec gap, and are published here
@@ -46,11 +50,23 @@ The system MUST store a `payment_orders` table with: `id` (UUID PK), `businessId
 
 ### R2: POST /api/payment/create-order
 
+> **AMENDED at archive of `stock-fulfillment-on-payment` (NEW-8).** `create-order` now accepts a
+> server-validated `cartItems` snapshot and persists it in `payment_orders.metadata`, so a later
+> webhook-driven `pending → paid` flip can fulfill stock. The Culqi order request body is unchanged.
+> See `stock-fulfillment` R1 (snapshot channel and shape) and R6 (server-side quantity
+> reconciliation through `validateAmount`).
+
 The endpoint MUST accept a Zod-validated body, call `POST https://api.culqi.com/v2/orders`, persist the response, and return payment instructions.
 
-Input: `{ amount (number, céntimos), currency (default PEN), email (email), phone (optional), businessId (UUID), productId (optional UUID), customerName (optional), description (optional) }`.
+Input: `{ amount (number, céntimos), currency (default PEN), email (email), phone (optional), businessId (UUID), productId (optional UUID), customerName (optional), description (optional), cartItems (optional, array of { id (UUID), quantity (integer ≥ 1) }) }`.
 
-The Culqi order body MUST include: `amount`, `currency_code`, `description`, `order_number` (generated), `client_details`, `expiration_date` (now + 3 days), `confirm: false`. When `customerName` is present, `client_details` SHALL include `first_name` and `last_name` derived via `splitFullName(customerName)`; when absent, `client_details` SHALL NOT include name keys.
+`cartItems` MUST default to an empty array when absent. When non-empty, the array MUST contain at most 100 entries, every entry MUST have `quantity ≥ 1`, and the array MUST NOT contain duplicate product ids.
+
+**Snapshot persistence.** The `payment_orders` INSERT MUST persist `metadata.cartItems` using exactly the validated `{ id, quantity }[]` array, and MUST keep writing `metadata.culqiRaw`. The snapshot MUST be persisted with the insert — that is, before any `pending → paid` transition can be observed — and MUST NOT be written under `metadata.productId` (see `payment-orders` R13 and `stock-fulfillment` R2).
+
+**Amount reconciliation.** When `cartItems` is non-empty, the input amount MUST be validated with `validateAmount(amount, cartItems, businessId)` — the DB-derived price × quantity reconciliation required by `stock-fulfillment` R6. When no `cartItems` is provided but `productId` is provided, the existing single-product `validateAmount` behavior is used. Any validation failure and any `amount !== derivedTotal` MUST produce HTTP 400 before any Culqi call or persistence.
+
+**Culqi payload unchanged.** Omitting `cartItems` MUST produce the same Culqi order body as before this amendment. The order request MUST NOT include the snapshot, and the paid transition MUST NOT depend on anything the snapshot carries.
 
 #### Scenario: Successful order — PagoEfectivo returns CIP
 
@@ -58,6 +74,49 @@ The Culqi order body MUST include: `amount`, `currency_code`, `description`, `or
 - WHEN `POST /api/payment/create-order` is called
 - THEN it MUST return `{ success: true, culqiOrderId, paymentCode, qrUrl, expirationDate }`
 - AND `payment_orders` MUST have a row with `status: pending`, `paymentMethod` matching the Culqi response
+
+#### Scenario: The request carries a persisted cart snapshot
+
+- GIVEN a request with `cartItems: [{ id: <productA>, quantity: 2 }, { id: <productB>, quantity: 1 }]` and an `amount` equal to the DB-derived total
+- WHEN `POST /api/payment/create-order` succeeds
+- THEN the persisted `payment_orders.metadata.cartItems` MUST be exactly that array
+- AND the persisted `metadata.culqiRaw` MUST be unchanged
+- AND the Culqi order request body MUST NOT include the cart array
+
+#### Scenario: The order-flow snapshot is what the paid transition fulfills
+
+- GIVEN a persisted `payment_orders` row created from a cart snapshot
+- WHEN the webhook flips it `pending → paid`
+- THEN fulfillment MUST use the persisted snapshot from `metadata.cartItems`
+- AND the sale MUST be claimed and decremented exactly once (see `stock-fulfillment` R2)
+
+#### Scenario: Wrong amount is rejected before the Culqi call
+
+- GIVEN `cartItems` whose DB-derived total differs from the requested `amount`
+- WHEN `POST /api/payment/create-order` is called
+- THEN it MUST return HTTP 400
+- AND no Culqi order call occurs and no `payment_orders` row is persisted
+
+#### Scenario: Tampered snapshot is rejected
+
+- GIVEN `cartItems` with a product id that does not exist in the same business
+- WHEN `POST /api/payment/create-order` is called
+- THEN `validateAmount` MUST reject the request with HTTP 400
+- AND no order is created
+
+#### Scenario: Empty cart retains single-product behavior
+
+- GIVEN a request with `productId` and no `cartItems`
+- WHEN the endpoint runs
+- THEN the empty `cartItems` array MUST NOT cause a rejection
+- AND the existing single-product amount check remains in effect
+
+#### Scenario: Invalid cart shape is rejected
+
+- GIVEN `cartItems` with quantity 0 or duplicate product ids
+- WHEN `POST /api/payment/create-order` is called
+- THEN it MUST return HTTP 400 from Zod validation
+- AND no Culqi order call occurs
 
 #### Scenario: Successful order includes buyer name
 
@@ -120,13 +179,55 @@ The `window.culqi` callback MUST distinguish `Culqi.order` (async result) from `
 
 ### R5: Webhook — order.status.changed
 
+> **AMENDED at archive of `stock-fulfillment-on-payment` (NEW-8).** A `pending → paid` flip now also
+> fulfills stock, atomically with the status write and exactly once per sale. See
+> `stock-fulfillment` R1–R3, R5 and R7.
+
 The Culqi webhook MUST handle `order.status.changed` events and update `payment_orders.status`.
+
+A `pending → paid` transition MUST participate in exactly-once stock fulfillment:
+
+- The status flip MUST be atomic with its fulfillment attempt: the `pending → paid` update and its
+  stock claim/decrement MUST commit or roll back together. A crash MUST NOT leave a paid order with
+  no claimable fulfillment path.
+- The flip MUST transition only from `pending` — an update of an already-paid row MUST NOT fulfill
+  again.
+- Fulfillment MUST use the persisted snapshot (see `payment-orders` R2): `metadata.cartItems` on
+  that order row, resolved by `culqiOrderId`, business-scoped.
+- A `paid` order that legitimately carries no product reference (no snapshot and no usable
+  `metadata.productId`, per R13) MUST update status without any stock effect and MUST be recorded as
+  terminal (see `stock-fulfillment` R3).
+- If the `payment_orders` row cannot be identified (unknown `culqiOrderId`), the event MUST return
+  `{ received: true }` without error and without creating a `payments` row (see
+  `stock-fulfillment` R2).
 
 #### Scenario: Order paid via webhook
 
 - GIVEN a `payment_orders` row with status `pending`
 - WHEN a webhook event `order.status.changed` arrives with status `paid`
 - THEN the row MUST update to status `paid` and `updatedAt` refreshed
+
+#### Scenario: A paid flip fulfills stock from the order snapshot
+
+- GIVEN a pending order with `metadata.cartItems: [{ id: <product>, quantity: 2 }]` and sufficient stock
+- WHEN the webhook flips it to `paid`
+- THEN the flip and the fulfillment MUST commit in one transaction
+- AND `products.stock` MUST decrease by 2
+- AND a `stock_movements` claim MUST identify the order as its source
+
+#### Scenario: A duplicate paid flip does not decrement twice
+
+- GIVEN an order already at status `paid` and already fulfilled
+- WHEN another `order.status.changed` event with status `paid` arrives
+- THEN the status row MUST NOT transition again
+- AND no second stock decrement occurs
+
+#### Scenario: A paid order without a product has no stock effect
+
+- GIVEN a pending order with neither a snapshot nor a usable `metadata.productId`
+- WHEN the webhook flips it to `paid`
+- THEN the status MUST become `paid`
+- AND no product stock changes and the outcome is recorded as terminal
 
 #### Scenario: Order expired via webhook
 
@@ -185,8 +286,9 @@ The checkout MUST display a payment instructions view after order creation for a
 
 > Synced at SDD archive from `openspec/changes/order-integrity/specs/payment-orders/spec.md`
 > (change artifacts: proposal, design D1–D13, tasks WU-A1/A2, apply-progress, verify-report).
-> **All eight requirements below are implemented and independently verified — pending merge of
-> draft PR #203.** Read the state note at the top of this file before relying on them in production.
+> **All eight requirements below are implemented, independently verified, and present in
+> `develop`.** See the state note at the top of this file for how to verify that by code artifacts,
+> not by branch ancestry.
 
 `POST /api/payment/charge` is specified by R2 for order creation and by R4/R5 for the Culqi callback
 and webhook, but **its order-flow branch — the branch taken when a client supplies a `culqiOrderId`
