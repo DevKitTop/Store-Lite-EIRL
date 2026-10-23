@@ -50,11 +50,23 @@ describe('buildWebhookPaymentValues', () => {
       currency: 'PEN',
       paymentMethod: 'card',
       culqiChargeId: 'chr_abc123',
+      // A token-backed sale carries no order id. The column is still written
+      // explicitly as NULL so the two id kinds can never be confused (D13).
+      culqiOrderId: null,
       culqiReferenceCode: 'ref_xyz',
       buyerEmail: 'buyer@test.com',
       orderNumber: 'ORD-FIXED1234',
       trackingToken: 'tt_fixed_token',
     });
+  });
+
+  test('carries the ORDER id only for an order-backed sale (D13)', () => {
+    expect(
+      buildWebhookPaymentValues(baseInput({ culqiOrderId: 'ord_culqi_abc123' }))?.culqiOrderId,
+    ).toBe('ord_culqi_abc123');
+    // A token-backed sale has no order id: the column stays explicitly NULL so
+    // it can never be mistaken for a charge id.
+    expect(buildWebhookPaymentValues(baseInput())?.culqiOrderId).toBeNull();
   });
 
   test('defaults currency to PEN and email to the Culqi placeholder', () => {

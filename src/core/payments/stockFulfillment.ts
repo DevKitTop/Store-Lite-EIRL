@@ -23,6 +23,15 @@ import type { PostgresJsQueryResultHKT } from 'drizzle-orm/postgres-js';
 
 import type * as schema from '@/core/database/schema';
 import { products, stockMovements } from '@/core/database/schema';
+import type { SaleClaimKey, SaleIdentity } from '@/core/payments/saleIdentity';
+import { resolveClaimKeys, saleAlertScope } from '@/core/payments/saleIdentity';
+
+// The claim-key contract lives with the sale identity (design D4/D14): every
+// trigger derives its key set from the SAME canonical identity, so two
+// triggers of one sale always collide on the same first key. Re-exported here
+// because `stockFulfillment` is the module the fulfillment contract lives in.
+export { resolveClaimKeys };
+export type { SaleClaimKey, SaleIdentity };
 
 // =====================================================
 // R7 watermark
@@ -32,12 +41,21 @@ import { products, stockMovements } from '@/core/database/schema';
  * The cutover instant for this change (design D7). A paid row updated BEFORE
  * this constant is history and MUST NOT be fulfilled (no retro-decrement).
  *
- * PR1 defines the constant so the shape is stable and testable; PR3 sets it to
- * the planned cutover instant (<= merge time) when the triggers that consume it
- * are wired. The value below is the PR1 authoring date, deliberately early so
- * it can only ever widen the true-victim window — never reach pre-2025 history.
+ * VALUE AND RATIONALE (PR3, 2026-10-22)
+ * The change merged on 2026-10-22, so the cutover is `2026-10-22T00:00:00.000Z`:
+ * the start of the merge day, never a prior day. Keeping it at or before the
+ * merge instant is the R7 contract — a candidate set that starts later than the
+ * deploy would silently skip legitimate sales. It must NOT be moved into the
+ * past afterwards: any date earlier than the merge day retro-classifies rows
+ * that were already paid, which is exactly the retro-fulfilment R7 forbids.
+ * `tests/unit/stockFulfillment.test.ts` pins a fixed floor so a stale constant
+ * fails the suite instead of leaking into production.
+ *
+ * Any pending row that transitions to paid AFTER this instant is always
+ * fulfilled (the predicate inspects the row's status at pre-read time, not the
+ * transition time) — invariant required by R7/D7.
  */
-export const FULFILLMENT_WATERMARK = new Date('2026-10-01T00:00:00.000Z');
+export const FULFILLMENT_WATERMARK = new Date('2026-10-22T00:00:00.000Z');
 
 /** A paid row whose last update predates the watermark is history, not a task. */
 export function isHistoricalPaidRow(row: { status: string; updatedAt: Date | string }): boolean {
@@ -60,29 +78,8 @@ export interface FulfillmentSnapshot {
   productId?: string | null;
 }
 
-export interface FulfillmentAnchor {
-  kind: 'payments' | 'payment_orders';
-  /** Alert scope only — the row id of `kind`. NEVER a claim key source. */
-  id: string;
-  /**
-   * The resolved `payment_orders` row uuid, or null when no order row exists
-   * for this sale (the status-only flip in PR3). The claim key for the
-   * `payment_orders` slot.
-   */
-  paymentOrderId: string | null;
-  /**
-   * The resolved `payments` row uuid, or null when the insert returned none.
-   * The claim key for the `payments` slot.
-   */
-  paymentId: string | null;
-  /** Always DB-derived (R5) — never a client-supplied id. */
-  businessId: string;
-  /** Resolution hint that marks a sale as order-backed. NEVER a claim key. */
-  culqiOrderId?: string | null;
-}
-
 export interface FulfillmentResult {
-  outcome: 'fulfilled' | 'partial' | 'already_claimed' | 'no_product';
+  outcome: 'fulfilled' | 'partial' | 'already_claimed' | 'no_product' | 'unresolved';
   claimed: { sourceType: 'payments' | 'payment_orders'; id: string }[];
   items: { productId: string; quantity: number; applied: boolean }[];
   oversold: { productId: string; requested: number }[];
@@ -105,40 +102,6 @@ export type TxLike = PgTransaction<
 // =====================================================
 
 /**
- * Derive the ordered claim key set from the anchor's DB row ids (R2/D4).
- *
- * The contract — stable for every fulfillment trigger (charge, webhook, flip,
- * reconcile), so any two triggers of one sale collide and exactly one wins:
- *
- *   1. an order-backed sale claims `('payment_orders', paymentOrderId)` FIRST;
- *   2. then `('payments', paymentId)` when the payments row resolved;
- *   3. a token-only sale claims `('payments', paymentId)` alone.
- *
- * Both slots are uuid row ids. A Culqi text id ('ord_…', 'chr_…') is a
- * resolution hint (`culqiOrderId`) and is NEVER a key: `stock_movements`
- * `source_id` is a `uuid` column, so a text id would crash, and the unique
- * `(source_type, source_id)` would never protect the sale. An anchor with no
- * resolved row id fails closed — there is no safe fallback key.
- */
-export function resolveClaimKeys(
-  anchor: FulfillmentAnchor,
-): { sourceType: 'payments' | 'payment_orders'; id: string }[] {
-  const keys: { sourceType: 'payments' | 'payment_orders'; id: string }[] = [];
-  if (anchor.paymentOrderId) {
-    keys.push({ sourceType: 'payment_orders', id: anchor.paymentOrderId });
-  }
-  if (anchor.paymentId) {
-    keys.push({ sourceType: 'payments', id: anchor.paymentId });
-  }
-  if (keys.length === 0) {
-    throw new Error(
-      '[stockFulfillment] anchor resolved no claim keys: neither paymentOrderId nor paymentId',
-    );
-  }
-  return keys;
-}
-
-/**
  * Recover the scalar quantity carried on the Culqi charge metadata. Returns an
  * integer >= 1, or null when nothing usable is present (the caller then applies
  * B1: qty = 1 + alert).
@@ -156,6 +119,42 @@ export function readFulfillmentQty(metadata: unknown): number | null {
   }
   if (!Number.isInteger(parsed) || parsed < 1) return null;
   return parsed;
+}
+
+/**
+ * Recover the persisted cart array from a row's `metadata.cartItems`.
+ *
+ * This is the ONLY sanctioned way to read the multi-item snapshot:
+ * - the order flow persists the FULL cart in `payment_orders.metadata.cartItems`
+ *   (W-B) — the transient request cart is never trusted;
+ * - the token flow's charge-route rows persist the same array in
+ *   `payments.metadata.cartItems` (W-A) — the scalar `qty` the charge route
+ *   echoes on the Culqi charge metadata is a DIFFERENT shape and must not be
+ *   mistaken for a cart (that is the W-A defect this reader exists to close).
+ *
+ * Returns `null` when the row carries no usable array; the caller then applies
+ * its own channel rules: the charge route's ORDER branch fails closed (the
+ * backstop heals the sale), while the token branch falls back to the scalar
+ * `qty` (design D6).
+ */
+export function readFulfillmentCartItems(
+  metadata: unknown,
+): { id: string; quantity: number }[] | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const raw = (metadata as { cartItems?: unknown }).cartItems;
+  if (!Array.isArray(raw)) return null;
+
+  const items: { id: string; quantity: number }[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const id = (entry as { id?: unknown }).id;
+    if (typeof id !== 'string' || id === '') continue;
+    const quantity = (entry as { quantity?: unknown }).quantity;
+    const parsed = typeof quantity === 'number' ? quantity : Number(quantity);
+    items.push({ id, quantity: Math.max(1, Number.isFinite(parsed) ? parsed : 1) });
+  }
+
+  return items.length > 0 ? items : null;
 }
 
 /**
@@ -215,14 +214,11 @@ export function resolveFulfillmentItems(s: FulfillmentSnapshot): {
 // The shared fulfillment routine
 // =====================================================
 
-interface ClaimKey {
-  sourceType: 'payments' | 'payment_orders';
-  id: string;
-}
+type ClaimKey = SaleClaimKey;
 
 interface ClaimArgs {
   tx: TxLike;
-  anchor: FulfillmentAnchor;
+  businessId: string;
   keys: ClaimKey[];
   items: FulfillmentResult['items'];
   productBound: boolean;
@@ -232,7 +228,7 @@ interface ClaimArgs {
 /** Claim the ordered key set; return the won keys, or null when already claimed. */
 async function claimKeys({
   tx,
-  anchor,
+  businessId,
   keys,
   items,
   productBound,
@@ -245,7 +241,7 @@ async function claimKeys({
     const inserted = (await tx
       .insert(stockMovements)
       .values({
-        businessId: anchor.businessId,
+        businessId,
         sourceType: key.sourceType,
         sourceId: key.id,
         items,
@@ -272,7 +268,7 @@ async function claimKeys({
 /** Apply the conditional, business-scoped decrement; report applied items and oversells. */
 async function decrementItems(
   tx: TxLike,
-  anchor: FulfillmentAnchor,
+  businessId: string,
   items: FulfillmentResult['items'],
 ): Promise<{
   appliedItems: FulfillmentResult['items'];
@@ -289,7 +285,7 @@ async function decrementItems(
       .where(
         and(
           eq(products.id, item.productId),
-          eq(products.businessId, anchor.businessId),
+          eq(products.businessId, businessId),
           gte(products.stock, requested),
         ),
       )
@@ -305,7 +301,7 @@ async function decrementItems(
 
 interface CorrectArgs {
   tx: TxLike;
-  anchor: FulfillmentAnchor;
+  businessId: string;
   claimed: ClaimKey[];
   items: FulfillmentResult['items'];
   oversold: FulfillmentResult['oversold'];
@@ -326,13 +322,13 @@ interface CorrectArgs {
  */
 async function correctClaimOutcome({
   tx,
-  anchor,
+  businessId,
   claimed,
   items,
   oversold,
   b1,
 }: CorrectArgs): Promise<void> {
-  const correctedItems: FulfillmentResult['items'] = items.map((item) => ({
+  const correctedItems = items.map((item) => ({
     ...item,
     applied: !oversold.some((o) => o.productId === item.productId),
   }));
@@ -341,7 +337,8 @@ async function correctClaimOutcome({
     const corrected = (await tx
       .insert(stockMovements)
       .values({
-        businessId: anchor.businessId,
+        businessId,
+
         sourceType: key.sourceType,
         sourceId: key.id,
         items: correctedItems,
@@ -351,7 +348,7 @@ async function correctClaimOutcome({
       .onConflictDoUpdate({
         target: [stockMovements.sourceType, stockMovements.sourceId],
         set: { outcome: 'partial', items: correctedItems },
-        where: eq(stockMovements.businessId, anchor.businessId),
+        where: eq(stockMovements.businessId, businessId),
       })
       .returning({ id: stockMovements.id })) as { id: string }[];
     if (!corrected || corrected.length !== 1) {
@@ -369,20 +366,41 @@ async function correctClaimOutcome({
  * `payments`, so every order-backed path collides on the same first key and no
  * two triggers can each win their own key.
  *
- * @param anchor Must carry the DB-derived row ids and `businessId` (R5).
+ * The key set comes from the CANONICAL sale identity (design D14), never from a
+ * per-trigger anchor: every trigger resolves the same identity, so every pair
+ * of triggers of one sale collides.
+ *
+ * An identity that resolved NO row id yields an EMPTY key set and the sale
+ * fails closed with the `unresolved` outcome — no claim, no decrement, no
+ * throw. A throw here would turn "we could not resolve this sale" into a 500
+ * on a webhook that must be acknowledged.
+ *
+ * @param identity The canonical sale identity (DB-derived row ids, R5).
  * @param snapshot The recovered snapshot (see `resolveFulfillmentItems`).
  * @param opts.tx The caller's transaction; when omitted, this opens its own.
  */
 export async function fulfillPaidSale(
-  anchor: FulfillmentAnchor,
+  identity: SaleIdentity,
   snapshot: FulfillmentSnapshot,
   opts?: { tx?: TxLike },
 ): Promise<FulfillmentResult> {
   const run = async (tx: TxLike): Promise<FulfillmentResult> => {
     const { items, b1, productBound } = resolveFulfillmentItems(snapshot);
-    const keys = resolveClaimKeys(anchor);
+    const keys = resolveClaimKeys(identity);
 
-    const claimed = await claimKeys({ tx, anchor, keys, items, productBound, b1 });
+    // Fail closed: an unresolved sale never touches stock (design D14).
+    if (keys.length === 0) {
+      return { outcome: 'unresolved', claimed: [], items, oversold: [], b1 };
+    }
+
+    const claimed = await claimKeys({
+      tx,
+      businessId: identity.businessId,
+      keys,
+      items,
+      productBound,
+      b1,
+    });
     if (claimed === null) {
       return { outcome: 'already_claimed', claimed: [], items, oversold: [], b1 };
     }
@@ -392,9 +410,16 @@ export async function fulfillPaidSale(
       return { outcome: 'no_product', claimed, items, oversold: [], b1: false };
     }
 
-    const { appliedItems, oversold } = await decrementItems(tx, anchor, items);
+    const { appliedItems, oversold } = await decrementItems(tx, identity.businessId, items);
     if (oversold.length > 0) {
-      await correctClaimOutcome({ tx, anchor, claimed, items, oversold, b1 });
+      await correctClaimOutcome({
+        tx,
+        businessId: identity.businessId,
+        claimed,
+        items,
+        oversold,
+        b1,
+      });
     }
 
     const outcome: FulfillmentResult['outcome'] = oversold.length > 0 ? 'partial' : 'fulfilled';
@@ -422,14 +447,15 @@ export async function fulfillPaidSale(
  */
 export function emitFulfillmentAlerts(
   channel: 'charge' | 'culqi-webhook' | 'reconcile',
-  anchor: FulfillmentAnchor,
+  identity: SaleIdentity,
   result: FulfillmentResult,
 ): void {
+  const alertScope = saleAlertScope(identity);
   const scope = {
     channel,
-    businessId: anchor.businessId,
-    sourceType: anchor.kind,
-    sourceId: anchor.id,
+    businessId: identity.businessId,
+    sourceType: alertScope.sourceType,
+    sourceId: alertScope.sourceId,
   };
 
   for (const oversold of result.oversold) {

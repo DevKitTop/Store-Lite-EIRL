@@ -1228,6 +1228,7 @@ export interface Database {
           courier_name: string | null;
           created_at: string;
           culqi_charge_id: string | null;
+          culqi_order_id: string | null;
           culqi_reference_code: string | null;
           culqi_tracking_id: string | null;
           currency: string;
@@ -1279,6 +1280,7 @@ export interface Database {
           courier_name?: string | null;
           created_at?: string;
           culqi_charge_id?: string | null;
+          culqi_order_id?: string | null;
           culqi_reference_code?: string | null;
           culqi_tracking_id?: string | null;
           currency?: string;
@@ -1330,6 +1332,7 @@ export interface Database {
           courier_name?: string | null;
           created_at?: string;
           culqi_charge_id?: string | null;
+          culqi_order_id?: string | null;
           culqi_reference_code?: string | null;
           culqi_tracking_id?: string | null;
           currency?: string;

@@ -19,10 +19,16 @@ import {
 import { resolveOrderNumber } from '@/core/payments/orderNumber';
 import { paymentRateLimiter } from '@/core/payments/rateLimiter';
 import {
-  type FulfillmentAnchor,
-  type FulfillmentResult,
+  asMetadataObject,
+  findSalePaymentRow,
+  type SaleIdentity,
+} from '@/core/payments/saleIdentity';
+import {
   emitFulfillmentAlerts,
   fulfillPaidSale,
+  readFulfillmentCartItems,
+  type FulfillmentResult,
+  type FulfillmentSnapshot,
 } from '@/core/payments/stockFulfillment';
 import { generateTrackingToken } from '@/core/utils/trackingToken';
 import { validateAmount } from '@/features/billing/validateAmount';
@@ -204,6 +210,29 @@ async function executeCulqiCharge({
   return { culqiData, error: null };
 }
 
+/**
+ * Chooses the snapshot a sale is fulfilled from, following the SALE's channel
+ * (design D6/W-A/W-B). Returns `null` when an order-backed sale has no
+ * persisted cart: the caller MUST fail closed instead of trusting the request.
+ */
+function selectFulfillmentSnapshot(args: {
+  isOrderFlow: boolean;
+  persistedOrderMetadata: unknown;
+  paymentMetadata: unknown;
+  productId: string;
+}): FulfillmentSnapshot | null {
+  if (args.isOrderFlow) {
+    const cartItems = readFulfillmentCartItems(args.persistedOrderMetadata);
+    return cartItems ? { cartItems } : null;
+  }
+
+  return {
+    cartItems: readFulfillmentCartItems(args.paymentMetadata),
+    qty: null,
+    productId: args.productId,
+  };
+}
+
 // eslint-disable-next-line complexity, sonarjs/cognitive-complexity
 export async function POST(request: Request) {
   // Declared OUTSIDE the try so the catch block can see them: a key that is
@@ -334,6 +363,13 @@ export async function POST(request: Request) {
     const isOrderFlow = !!culqiOrderId;
     const isTokenFlow = !!token;
 
+    // The PERSISTED `payment_orders.metadata` read by the order-flow gate. It
+    // is the ONLY sanctioned fulfilment snapshot for an order-backed sale
+    // (W-B): the request cart is buyer-controlled and must never size the
+    // decrement. Declared here so the transaction below can use the value the
+    // gate already read from the database (no second read, no extra tx query).
+    let persistedOrderMetadata: unknown = null;
+
     // ─── ORDER FLOW — LOCAL PRE-CHECKS ──────────────────────────────
     // Everything here reads only our own DB and touches no external system, so
     // it must run BEFORE the reservation: a rejected request (unknown order,
@@ -362,6 +398,10 @@ export async function POST(request: Request) {
           { status: 404 },
         );
       }
+
+      // The persisted snapshot the fulfilment step must use (W-B). Captured
+      // from the row read above — never from the request.
+      persistedOrderMetadata = orderRow.metadata;
 
       // ─── BINDING: the verified payment must be what gets recorded ───
       // A paid Culqi order only authorises ITS OWN amount and product. Without
@@ -489,35 +529,35 @@ export async function POST(request: Request) {
       culqiData = chargeResult;
     }
 
-    const culqiChargeIdForLookup = culqiOrderId || culqiData?.id || null;
-    if (culqiChargeIdForLookup) {
-      const existingPayment = await db.query.payments.findFirst({
-        where: and(
-          eq(payments.culqiChargeId, culqiChargeIdForLookup),
-          eq(payments.businessId, businessId),
-        ),
-      });
+    // The replay lookup is KIND-CORRECT (design D13): an order-flow sale is
+    // keyed by `culqi_order_id`, a token-flow sale by `culqi_charge_id`. The
+    // old lookup matched EITHER id against `culqi_charge_id`, so the same sale
+    // could be found under two different names depending on who looked.
+    const existingPayment = await findSalePaymentRow<typeof payments.$inferSelect>(db, {
+      businessId,
+      culqiOrderId: isOrderFlow ? (culqiOrderId as string) : null,
+      culqiChargeId: isOrderFlow ? null : (culqiData?.id ?? null),
+    });
 
-      if (existingPayment) {
-        const responseBody = {
-          success: true,
-          payment: projectReplayPayment(existingPayment),
-          charge: {
-            id: culqiChargeIdForLookup,
-            status: 'paid',
-          },
-          replayed: true,
-        };
-        await completeIdempotencyKey(reservedIdempotencyKey, responseBody, 200);
-        return NextResponse.json(responseBody);
-      }
+    if (existingPayment) {
+      const responseBody = {
+        success: true,
+        payment: projectReplayPayment(existingPayment),
+        charge: {
+          id: culqiOrderId || culqiData?.id || null,
+          status: 'paid',
+        },
+        replayed: true,
+      };
+      await completeIdempotencyKey(reservedIdempotencyKey, responseBody, 200);
+      return NextResponse.json(responseBody);
     }
 
     // 🔥 ATOMICITY: Transacción de Base de Datos
     // Declared outside the transaction on purpose: the fulfillment result must
     // only be emitted once the transaction COMMITS. Logging inside the callback
     // would report a rollback as a real event.
-    let fulfillmentAnchor: FulfillmentAnchor | null = null;
+    let fulfillmentAnchor: SaleIdentity | null = null;
     let fulfillmentResult: FulfillmentResult | null = null;
 
     const result = await db.transaction(
@@ -543,42 +583,89 @@ export async function POST(request: Request) {
         } else {
           pm = 'card';
         }
-        const culqiChargeId = culqiOrderId || culqiData?.id || null;
+        // The id columns are KIND-CORRECT (design D13): the order flow writes
+        // the Culqi ORDER id (`ord_...`) into `culqi_order_id` and leaves
+        // `culqi_charge_id` NULL; the token flow writes the Culqi CHARGE id
+        // (`chr_...`) into `culqi_charge_id` and leaves `culqi_order_id` NULL.
+        //
+        // The old code wrote the ORDER id into `culqi_charge_id`, so the SAME
+        // sale answered to a different name depending on which writer touched
+        // it last — and the webhook (which upserts on the CHARGE id) never
+        // matched the order-flow row, creating a second `payments` row for one
+        // sale and decrementing its stock twice.
+        const culqiChargeId = isOrderFlow ? null : (culqiData?.id ?? null);
+        const culqiOrderIdForRow = isOrderFlow ? (culqiOrderId as string) : null;
         const culqiRefCode = culqiData?.reference_code || null;
 
-        const [payment] = await tx
-          .insert(payments)
-          .values({
-            businessId,
-            productId,
-            sellerUserId: business.ownerId,
-            amount: String(amount / 100),
-            currency,
-            paymentMethod: pm,
-            culqiChargeId,
-            culqiReferenceCode: culqiRefCode,
-            buyerEmail: email || 'cliente@culqi.com',
-            buyerPhone: rawShipping.phone ?? null,
-            buyerDni: rawShipping.dni ?? null,
-            status: 'paid',
-            orderNumber: resolveOrderNumber(metadata?.orderNumber),
-            shippingType,
-            shippingDepartment: rawShipping.department ?? null,
-            shippingProvince: rawShipping.province ?? null,
-            shippingDistrict: rawShipping.district ?? null,
-            shippingAddress: rawShipping.address ?? null,
-            shippingAgency: rawShipping.agency ?? null,
-            shippingPhone: rawShipping.phone ?? null,
-            shippingReference: rawShipping.reference ?? null,
-            shippingUbigeo: rawShipping.ubigeo ?? null,
-            metadata: {
-              ...metadata,
-              culqiId: culqiChargeId,
-              ...(customerAuth ? { customerAuth } : {}),
-            },
-            trackingToken: generateTrackingToken(),
-          })
-          .returning();
+        // RESOLVE-THEN-ADOPT (design D13): the webhook may have created this
+        // sale's row before this transaction ran. Adopting that row keeps ONE
+        // row per sale; a blind insert would create a second one and the sale
+        // would be decremented twice.
+        const adoptedRow = await findSalePaymentRow(tx, {
+          businessId,
+          culqiOrderId: culqiOrderIdForRow,
+          culqiChargeId,
+        });
+
+        // The route-owned fields. On adopt they OVERWRITE the adopted row; the
+        // id columns and the tracking token are NOT route-owned and are never
+        // touched (the token is a unique buyer-facing link).
+        const routeOwnedValues = {
+          businessId,
+          productId,
+          sellerUserId: business.ownerId,
+          amount: String(amount / 100),
+          currency,
+          paymentMethod: pm,
+          culqiReferenceCode: culqiRefCode,
+          buyerEmail: email || 'cliente@culqi.com',
+          buyerPhone: rawShipping.phone ?? null,
+          buyerDni: rawShipping.dni ?? null,
+          status: 'paid' as const,
+          orderNumber: resolveOrderNumber(metadata?.orderNumber),
+          shippingType,
+          shippingDepartment: rawShipping.department ?? null,
+          shippingProvince: rawShipping.province ?? null,
+          shippingDistrict: rawShipping.district ?? null,
+          shippingAddress: rawShipping.address ?? null,
+          shippingAgency: rawShipping.agency ?? null,
+          shippingPhone: rawShipping.phone ?? null,
+          shippingReference: rawShipping.reference ?? null,
+          shippingUbigeo: rawShipping.ubigeo ?? null,
+        };
+
+        // The metadata MERGE: the adopted row may already carry the scalar
+        // `qty` the webhook recovered from the Culqi charge metadata. Merging
+        // (existing first, client's second) keeps that value while letting the
+        // route's own cart snapshot win.
+        const mergedMetadata = {
+          ...asMetadataObject(adoptedRow?.metadata),
+          ...metadata,
+          culqiId: culqiChargeId ?? culqiOrderIdForRow,
+          ...(customerAuth ? { customerAuth } : {}),
+        };
+
+        let payment: typeof payments.$inferSelect;
+        if (adoptedRow) {
+          const [updated] = await tx
+            .update(payments)
+            .set({ ...routeOwnedValues, metadata: mergedMetadata, updatedAt: new Date() })
+            .where(eq(payments.id, adoptedRow.id))
+            .returning();
+          payment = updated;
+        } else {
+          const [inserted] = await tx
+            .insert(payments)
+            .values({
+              ...routeOwnedValues,
+              culqiChargeId,
+              culqiOrderId: culqiOrderIdForRow,
+              metadata: mergedMetadata,
+              trackingToken: generateTrackingToken(),
+            })
+            .returning();
+          payment = inserted;
+        }
 
         // 5b. Si es pago contra orden, marcar la orden como pagada
         // The row uuid the flip actually updated is the ONLY safe key for the
@@ -620,26 +707,40 @@ export async function POST(request: Request) {
         // The claim is an INSERT, never a third `tx.update`: tests pin exactly
         // two `mockTxUpdate` calls in the order flow (flip first, decrement
         // second).
-        const anchor: FulfillmentAnchor = {
-          kind: paymentOrderId ? 'payment_orders' : 'payments',
-          id: paymentOrderId ?? payment.id,
-          // Both claim keys come from DB row uuids; `culqiOrderId` is a
-          // resolution hint only and never becomes a `source_id` (R2).
+        //
+        // The claim keys come from the CANONICAL sale identity (design D14):
+        // the resolved `payment_orders` row FIRST, then the resolved `payments`
+        // row. Both are DB row uuids; a Culqi text id never becomes a
+        // `source_id` (R2).
+        const identity: SaleIdentity = {
           paymentOrderId,
           paymentId: payment.id,
           businessId,
-          culqiOrderId: culqiOrderId ?? culqiChargeId ?? null,
+          culqiOrderId: culqiOrderIdForRow,
+          culqiChargeId,
         };
-        fulfillmentResult = await fulfillPaidSale(
-          anchor,
-          {
-            cartItems: (metadata?.cartItems as { id: string; quantity: number }[]) ?? null,
-            qty: null,
-            productId,
-          },
-          { tx },
-        );
-        fulfillmentAnchor = anchor;
+
+        // W-B: the snapshot source follows the SALE's channel, never the
+        // request. An order-backed sale fulfils from the PERSISTED
+        // `payment_orders.metadata.cartItems` written by create-order. The
+        // request cart is buyer-controlled, so it MUST NOT size the decrement.
+        //
+        // If the persisted snapshot is absent or unusable the sale FAILS
+        // CLOSED: no claim, no decrement. It must never fall back to the
+        // request cart — that fallback is the W-B defect this branch closes.
+        // The sale stays unclaimed, so the D10 backstop can heal it later from
+        // the persisted rows.
+        const fulfillmentSnapshot = selectFulfillmentSnapshot({
+          isOrderFlow,
+          persistedOrderMetadata,
+          paymentMetadata: payment.metadata,
+          productId,
+        });
+
+        if (fulfillmentSnapshot) {
+          fulfillmentResult = await fulfillPaidSale(identity, fulfillmentSnapshot, { tx });
+          fulfillmentAnchor = identity;
+        }
 
         return payment;
       },

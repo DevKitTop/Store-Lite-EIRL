@@ -77,6 +77,13 @@ const {
       insert: mockTxInsert,
       update: mockTxUpdate,
       select: mockProductsSelect,
+      // The charge route resolves the sale's `payments` row INSIDE the
+      // transaction (`findSalePaymentRow(tx, ...)`), so the tx reader must
+      // expose the same spies the top-level `db` does.
+      query: {
+        payments: { findFirst: mockPaymentsFindFirst },
+        paymentOrders: { findFirst: mockPaymentOrdersFindFirst },
+      },
     }),
   );
 
@@ -234,7 +241,12 @@ function createPaymentOrderRow(overrides: Record<string, unknown> = {}) {
     culqiOrderId: 'ord_culqi_abc123',
     amount: '1500',
     currency: 'PEN',
-    metadata: { productId: '660e8400-e29b-41d4-a716-446655440001' },
+    // create-order persists the durable cart snapshot beside the binding (W-B).
+    // The default is one unit of the bound product; individual tests override it.
+    metadata: {
+      productId: '660e8400-e29b-41d4-a716-446655440001',
+      cartItems: [{ id: '660e8400-e29b-41d4-a716-446655440001', quantity: 1 }],
+    },
     ...overrides,
   };
 }
@@ -878,7 +890,7 @@ describe('POST /api/payment/charge', () => {
       );
     });
 
-    test('does not replay another tenant payment for the same culqiChargeId', async () => {
+    test('does not replay another tenant payment for the same order id', async () => {
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
       // A single-column lookup WOULD return the other tenant's row. Scoping the
@@ -905,7 +917,11 @@ describe('POST /api/payment/charge', () => {
       expect(body.replayed).toBeUndefined();
       const lookupArg = mockPaymentsFindFirst.mock.calls[0][0] as { where: unknown };
       const lookup = compileWhere(lookupArg.where);
-      expect(lookup.sql).toMatch(/culqi_charge_id.* and .*business_id/);
+      // KIND-CORRECT (D13): an order-flow sale is looked up by the ORDER id in
+      // `culqi_order_id`. The old cross-kind lookup compared the order id
+      // against `culqi_charge_id` and could never match the sale's own row.
+      expect(lookup.sql).toMatch(/culqi_order_id.* and .*business_id/);
+      expect(lookup.sql).not.toMatch(/culqi_charge_id/);
       expect(lookup.params).toEqual(
         expect.arrayContaining(['ord_culqi_abc123', '550e8400-e29b-41d4-a716-446655440000']),
       );
@@ -1239,7 +1255,15 @@ describe('POST /api/payment/charge', () => {
     test('uses the real quantity in the availability predicate, not a hard-coded 1', async () => {
       // The order-flow gate compares the Culqi order amount against the client
       // amount before validateAmount runs, so the row must carry the same total.
-      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ amount: '3000' }));
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({
+          amount: '3000',
+          metadata: {
+            productId: '660e8400-e29b-41d4-a716-446655440001',
+            cartItems: [{ id: '660e8400-e29b-41d4-a716-446655440001', quantity: 2 }],
+          },
+        }),
+      );
       // 2 units x S/ 1500.00 = S/ 3000.00
       mockProductsSelectWhere.mockResolvedValue([
         {
@@ -1273,7 +1297,18 @@ describe('POST /api/payment/charge', () => {
     });
 
     test('reports only the line that ran out in a multi-item cart', async () => {
-      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow({ amount: '1600' }));
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({
+          amount: '1600',
+          metadata: {
+            productId: '660e8400-e29b-41d4-a716-446655440001',
+            cartItems: [
+              { id: '660e8400-e29b-41d4-a716-446655440001', quantity: 1 },
+              { id: '770e8400-e29b-41d4-a716-446655440002', quantity: 1 },
+            ],
+          },
+        }),
+      );
       mockProductsSelectWhere.mockResolvedValue([
         { id: '660e8400-e29b-41d4-a716-446655440001', price: '1500.00', secondPrice: null },
         { id: '770e8400-e29b-41d4-a716-446655440002', price: '100.00', secondPrice: null },
@@ -1310,6 +1345,80 @@ describe('POST /api/payment/charge', () => {
       );
     });
 
+    test('fulfils an order-backed sale from the PERSISTED order cart, never the request cart (W-B)', async () => {
+      const PERSISTED_PRODUCT = '660e8400-e29b-41d4-a716-446655440001';
+      const REQUEST_PRODUCT = '770e8400-e29b-41d4-a716-446655440002';
+
+      // The persisted order snapshot says 3 units of A. The buyer-controlled
+      // request says 5 units of B. Only the persisted snapshot may decrement.
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({
+          amount: '500',
+          metadata: {
+            productId: PERSISTED_PRODUCT,
+            cartItems: [{ id: PERSISTED_PRODUCT, quantity: 3 }],
+          },
+        }),
+      );
+      mockProductsSelectWhere.mockResolvedValue([
+        { id: REQUEST_PRODUCT, price: '100.00', secondPrice: null },
+      ]);
+
+      const response = await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({
+            amount: 50000, // B (S/ 100.00) x 5, so the request cart validates
+            metadata: {
+              shippingInfo: { phone: '999888777', courier: 'recojo' },
+              cartItems: [{ id: REQUEST_PRODUCT, quantity: 5 }],
+            },
+          }),
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      // UPDATE #0 is the flip; the only stock UPDATE is the persisted line.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(2);
+      const stockWhere = compileWhere(mockTxWhere.mock.calls[1][0]);
+      expect(stockWhere.params).toEqual([
+        PERSISTED_PRODUCT,
+        '550e8400-e29b-41d4-a716-446655440000',
+        3,
+      ]);
+      // The request line is never the fulfilment source.
+      expect(stockWhere.params).not.toContain(REQUEST_PRODUCT);
+      expect(stockWhere.params).not.toContain(5);
+    });
+
+    test('an order-backed sale without a persisted cart fails closed (no claim, no decrement)', async () => {
+      // Legacy order rows carry no durable snapshot. The charge path must not
+      // substitute the buyer's request cart: it skips fulfilment entirely and
+      // leaves the sale unclaimed for the D10 backstop.
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({
+          amount: '10500',
+          metadata: { productId: '660e8400-e29b-41d4-a716-446655440001' },
+        }),
+      );
+
+      const response = await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({
+            amount: 1050000, // request cart: 7 x S/ 1500.00
+            metadata: {
+              shippingInfo: { phone: '999888777', courier: 'recojo' },
+              cartItems: [{ id: '660e8400-e29b-41d4-a716-446655440001', quantity: 7 }],
+            },
+          }),
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      // Only the payment_orders flip ran: no stock UPDATE, no ledger claim.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(1);
+      expect(mockTxClaimReturning).not.toHaveBeenCalled();
+    });
+
     test('does not report oversold when the transaction fails to commit', async () => {
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       // The stock decrement matches no row, but the commit then fails: reporting
@@ -1318,7 +1427,17 @@ describe('POST /api/payment/charge', () => {
       mockTxUpdateReturning.mockResolvedValueOnce([{ id: 'po-1' }]).mockResolvedValueOnce([]);
       mockTransaction.mockImplementationOnce(
         async (callback: (tx: unknown) => Promise<unknown>) => {
-          await callback({ insert: mockTxInsert, update: mockTxUpdate });
+          // The route resolves the sale's row inside the transaction
+          // (`findSalePaymentRow(tx, ...)`), so this hand-built tx needs the
+          // same reader the production transaction exposes.
+          await callback({
+            insert: mockTxInsert,
+            update: mockTxUpdate,
+            query: {
+              payments: { findFirst: mockPaymentsFindFirst },
+              paymentOrders: { findFirst: mockPaymentOrdersFindFirst },
+            },
+          });
           throw new Error('commit failed');
         },
       );
