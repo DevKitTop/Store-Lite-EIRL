@@ -17,5 +17,6 @@ public
 .cache
 coverage
 *.d.ts
+openspec/changes/archive
 src/styles/material-design/*.css
 .gitignore

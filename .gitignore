@@ -104,9 +104,13 @@ opencode.json
 # Without this, a fresh clone silently misses every requirement that was
 # archived while this blanket rule was in effect (gitignore only applies to
 # untracked files, so specs committed before the rule were unaffected).
-# Scope: openspec/specs/ only. openspec/changes/ stays ignored so in-flight
-# change folders (proposal/design/tasks, local-only drafts) never leak into commits.
+# Scope: openspec/specs/ plus archived changes. In-flight change folders
+# (proposal/design/tasks, local-only drafts) stay ignored so they never leak
+# into commits. Once a change is archived it is historical evidence — the
+# proposal/design/tasks/verify trail for a shipped change — and must be
+# versioned with the code it describes.
 !openspec/specs/**/*.md
+!openspec/changes/archive/**/*.md
 
 # Project documentation is the source of truth and MUST be versioned.
 # Same failure mode as the rule above: the blanket `*.md` rule silently
