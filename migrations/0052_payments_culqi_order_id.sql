@@ -1,0 +1,42 @@
+-- =====================================================
+-- MIGRATION: 0052_payments_culqi_order_id
+-- =====================================================
+-- Description: Add `payments.culqi_order_id` — the Culqi ORDER id (`ord_...`).
+--
+-- Context (design D13/D16, spec R2):
+--   `payments.culqi_charge_id` is meant to hold the Culqi CHARGE id (`chr_...`)
+--   ONLY. The ORDER flow wrote its `ord_...` id into that column instead, so a
+--   single sale carried two different names depending on which writer touched
+--   it last:
+--     - the charge route inserted `culqi_charge_id = 'ord_...'`;
+--     - the webhook upserted on `culqi_charge_id = 'chr_...'`.
+--   The webhook therefore never matched the order-flow row and created a SECOND
+--   `payments` row for the same sale. Two rows meant two claim keys, so the
+--   stock decrement ran twice for one paid sale.
+--
+--   This migration separates the two kinds:
+--     - `payments.culqi_charge_id`  -> the CHARGE id (`chr_...`) only;
+--     - `payments.culqi_order_id`   -> the ORDER id  (`ord_...`) only.
+--   The link between a sale's `payments` row and its `payment_orders` row
+--   becomes the SAME-KIND equality
+--   `payments.culqi_order_id = payment_orders.culqi_order_id`.
+--
+--   The arbiter of a sale follows its NATURE (design D13): an order-backed sale
+--   is arbitrated by `culqi_order_id`; a token-backed sale by `culqi_charge_id`.
+--
+--   DDL ONLY: no data migration, no backfill, no cleanup of existing rows.
+--   Measured on 2026-10-21 (design D16): no row anywhere stores an `ord_...`
+--   value in `culqi_charge_id`, so there is nothing to rewrite. The column
+--   stays empty until the writers adopt it.
+--
+--   Idempotent: safe to re-run.
+--
+-- Apply via operator: psql -f migrations/0052_payments_culqi_order_id.sql
+--             (or paste into the Supabase SQL editor)
+-- =====================================================
+
+ALTER TABLE "public"."payments" ADD COLUMN IF NOT EXISTS "culqi_order_id" text;
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "payments_culqi_order_id_unique"
+  ON "public"."payments" USING btree ("culqi_order_id");
+--> statement-breakpoint

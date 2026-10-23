@@ -6,12 +6,13 @@
 // ownership (D5), snapshot resolution (D6) and the alert emitter (B-07).
 // =====================================================
 
-import type { FulfillmentAnchor } from '@/core/payments/stockFulfillment';
+import type { SaleIdentity } from '@/core/payments/stockFulfillment';
 import {
   FULFILLMENT_WATERMARK,
   emitFulfillmentAlerts,
   fulfillPaidSale,
   isHistoricalPaidRow,
+  readFulfillmentCartItems,
   readFulfillmentQty,
   resolveFulfillmentItems,
 } from '@/core/payments/stockFulfillment';
@@ -100,25 +101,30 @@ const PROD = '660e8400-e29b-41d4-a716-446655440001';
 const PAY_ID = '770e8400-e29b-41d4-a716-446655440002';
 const PO_ID = '880e8400-e29b-41d4-a716-446655440003';
 
-// ── Anchor factories (R2 contract) ──
+// ── Identity factories (R2 contract) ──
 // Claim keys derive ONLY from the DB row uuids (`paymentOrderId`/`paymentId`);
 // a Culqi text id ('ord_…') is a resolution hint and must never become a
 // sourceId (uuid column, unique (sourceType, sourceId)).
 
 /** Token-only sale: no `payment_orders` row resolves, so the payments slot alone keys the claim. */
-function tokenAnchor(): FulfillmentAnchor {
-  return { kind: 'payments', id: PAY_ID, paymentOrderId: null, paymentId: PAY_ID, businessId: BIZ };
+function tokenAnchor(): SaleIdentity {
+  return {
+    paymentOrderId: null,
+    paymentId: PAY_ID,
+    businessId: BIZ,
+    culqiOrderId: null,
+    culqiChargeId: 'chr_1',
+  };
 }
 
 /** Order-backed sale: BOTH row ids resolve — the ordered key set (D4/R2). */
-function orderAnchor(): FulfillmentAnchor {
+function orderAnchor(): SaleIdentity {
   return {
-    kind: 'payment_orders',
-    id: PO_ID,
     paymentOrderId: PO_ID,
     paymentId: PAY_ID,
     businessId: BIZ,
     culqiOrderId: 'ord_1',
+    culqiChargeId: 'chr_1',
   };
 }
 
@@ -200,6 +206,16 @@ describe('isHistoricalPaidRow', () => {
     expect(isHistoricalPaidRow({ status: 'paid', updatedAt: after })).toBe(false);
   });
 
+  test('boundary: the exact watermark instant is NOT history (R7 cutover)', () => {
+    const justBefore = new Date(FULFILLMENT_WATERMARK.getTime() - 1);
+    const atWatermark = new Date(FULFILLMENT_WATERMARK.getTime());
+
+    // A paid row updated before cutover is history -> never fulfilled.
+    expect(isHistoricalPaidRow({ status: 'paid', updatedAt: justBefore })).toBe(true);
+    // A paid row updated AT cutover is a task -> fulfilled.
+    expect(isHistoricalPaidRow({ status: 'paid', updatedAt: atWatermark })).toBe(false);
+  });
+
   test('false for any non-paid status regardless of timestamp', () => {
     const before = new Date(FULFILLMENT_WATERMARK.getTime() - 60_000);
     expect(isHistoricalPaidRow({ status: 'pending', updatedAt: before })).toBe(false);
@@ -227,6 +243,58 @@ describe('readFulfillmentQty', () => {
     expect(readFulfillmentQty({ qty: 'abc' })).toBeNull();
     expect(readFulfillmentQty({ qty: 0 })).toBeNull();
     expect(readFulfillmentQty({ qty: 1.5 })).toBeNull();
+  });
+});
+
+// ============================================================
+// readFulfillmentCartItems — persisted cart snapshot recovery
+// ============================================================
+// The order flow persists the FULL cart array in
+// `payment_orders.metadata.cartItems` (W-B); the token flow's charge-route
+// rows carry the same array in `payments.metadata.cartItems` (W-A). This
+// reader is the ONLY sanctioned way to recover it — the scalar `qty` channel
+// is a DIFFERENT shape and must never be mistaken for a cart.
+
+describe('readFulfillmentCartItems', () => {
+  test('recovers the persisted cart array from metadata.cartItems', () => {
+    expect(
+      readFulfillmentCartItems({
+        cartItems: [
+          { id: PROD, quantity: 2 },
+          { id: '660e8400-e29b-41d4-a716-446655440009', quantity: 1 },
+        ],
+      }),
+    ).toEqual([
+      { id: PROD, quantity: 2 },
+      { id: '660e8400-e29b-41d4-a716-446655440009', quantity: 1 },
+    ]);
+  });
+
+  test('returns null when the row carries no cart array (the scalar qty channel is NOT a cart)', () => {
+    expect(readFulfillmentCartItems({ qty: 3 })).toBeNull();
+    expect(readFulfillmentCartItems({})).toBeNull();
+    expect(readFulfillmentCartItems(null)).toBeNull();
+    expect(readFulfillmentCartItems(undefined)).toBeNull();
+    expect(readFulfillmentCartItems({ cartItems: 'nope' })).toBeNull();
+    expect(readFulfillmentCartItems({ cartItems: [] })).toBeNull();
+    expect(readFulfillmentCartItems([{ id: PROD, quantity: 1 }])).toBeNull();
+  });
+
+  test('drops entries without a usable product id and clamps the quantity to >= 1', () => {
+    expect(
+      readFulfillmentCartItems({
+        cartItems: [
+          { id: PROD, quantity: 2 },
+          { id: '', quantity: 1 },
+          { quantity: 1 },
+          'garbage',
+          { id: '660e8400-e29b-41d4-a716-446655440009', quantity: 0 },
+        ],
+      }),
+    ).toEqual([
+      { id: PROD, quantity: 2 },
+      { id: '660e8400-e29b-41d4-a716-446655440009', quantity: 1 },
+    ]);
   });
 });
 
@@ -367,11 +435,11 @@ describe('fulfillPaidSale', () => {
       // Status-only-flip shape: the payments slot never resolved, so the single
       // claim keys the payment_orders row id.
       {
-        kind: 'payment_orders',
-        id: PO_ID,
         paymentOrderId: PO_ID,
         paymentId: null,
         businessId: BIZ,
+        culqiOrderId: 'ord_1',
+        culqiChargeId: null,
       },
       {},
       { tx: makeTx() },
@@ -381,17 +449,27 @@ describe('fulfillPaidSale', () => {
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
-  test('an anchor that resolves no DB row id fails closed instead of claiming with a hint', async () => {
+  test('an identity that resolves no DB row id fails closed instead of claiming with a hint', async () => {
     // Neither slot resolved: the ONLY safe answer is to refuse — falling back
-    // to a Culqi text id would crash the uuid column.
-    await expect(
-      fulfillPaidSale(
-        { kind: 'payments', id: PAY_ID, paymentOrderId: null, paymentId: null, businessId: BIZ },
-        { qty: 1, productId: PROD },
-        { tx: makeTx() },
-      ),
-    ).rejects.toThrow(/no claim keys/);
+    // to a Culqi text id would crash the uuid column. The refusal is an
+    // `unresolved` OUTCOME, not a throw: the webhook must still be acknowledged
+    // and the reconcile backstop still has to be able to heal the sale (D14).
+    const result = await fulfillPaidSale(
+      {
+        paymentOrderId: null,
+        paymentId: null,
+        businessId: BIZ,
+        culqiOrderId: null,
+        culqiChargeId: 'chr_1',
+      },
+      { qty: 1, productId: PROD },
+      { tx: makeTx() },
+    );
+
+    expect(result.outcome).toBe('unresolved');
+    expect(result.claimed).toEqual([]);
     expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 
   test('an order-backed claim collides with a later payments-only re-claim (in-memory ledger)', async () => {
@@ -536,8 +614,17 @@ describe('emitFulfillmentAlerts', () => {
 });
 
 describe('FULFILLMENT_WATERMARK', () => {
+  // The merge day of this change. The watermark may start earlier in that day
+  // (it must be <= merge time) but it may NEVER predate it: a past date
+  // retro-classifies already-paid rows as work and re-opens R7.
+  const CUTOVER_FLOOR = Date.parse('2026-10-22T00:00:00.000Z');
+
   test('is a Date constant', () => {
     expect(FULFILLMENT_WATERMARK).toBeInstanceOf(Date);
     expect(Number.isNaN(FULFILLMENT_WATERMARK.getTime())).toBe(false);
+  });
+
+  test('is not set to a past date (cannot silently regress to a stale cutover)', () => {
+    expect(FULFILLMENT_WATERMARK.getTime()).toBeGreaterThanOrEqual(CUTOVER_FLOOR);
   });
 });

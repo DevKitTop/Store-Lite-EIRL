@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-20T15:55:43.094Z",
+  "generatedAt": "2026-10-22T01:31:54.849Z",
   "counts": {
-    "sql": 79,
+    "sql": 80,
     "journal": 24,
-    "unjournaled": 55
+    "unjournaled": 56
   },
   "files": [
     {
@@ -400,6 +400,11 @@
     {
       "file": "0051_stock_movements_ledger.sql",
       "prefix": "0051",
+      "method": "manual"
+    },
+    {
+      "file": "0052_payments_culqi_order_id.sql",
+      "prefix": "0052",
       "method": "manual"
     }
   ],

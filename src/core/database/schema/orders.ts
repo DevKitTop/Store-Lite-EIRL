@@ -56,7 +56,18 @@ export const payments = pgTable(
     paymentMethod: text('payment_method', {
       enum: ['card', 'yape', 'plin', 'pago_efectivo', 'billetera_movil', 'cuotealo'],
     }).notNull(),
+    // The Culqi CHARGE id (`chr_...`) — the token flow's arbiter (design D13).
+    // This column holds the CHARGE id ONLY.
     culqiChargeId: text('culqi_charge_id').unique(),
+    // The Culqi ORDER id (`ord_...`) — the order flow's arbiter (design D13).
+    // Before this column existed, the order flow stored its `ord_...` id in
+    // `culqi_charge_id`, so one sale carried two different names depending on
+    // which writer touched it last, and the webhook's upsert on the charge id
+    // never matched the order-flow row ⇒ a second `payments` row per sale ⇒
+    // two claim keys ⇒ two stock decrements.
+    // The sale link is now the SAME-KIND equality
+    // `payments.culqi_order_id = payment_orders.culqi_order_id`.
+    culqiOrderId: text('culqi_order_id').unique(),
     culqiReferenceCode: text('culqi_reference_code'),
     culqiTrackingId: text('culqi_tracking_id'),
     buyerEmail: text('buyer_email').notNull(),
@@ -120,6 +131,7 @@ export const payments = pgTable(
     sellerUserIdIdx: index('idx_payments_seller_user_id').on(table.sellerUserId),
     statusIdx: index('idx_payments_status').on(table.status),
     culqiChargeIdIdx: index('idx_payments_culqi_charge_id').on(table.culqiChargeId),
+    culqiOrderIdIdx: index('idx_payments_culqi_order_id').on(table.culqiOrderId),
     createdAtIdx: index('idx_payments_created_at').on(table.createdAt.desc()),
     orderNumberUnique: uniqueIndex('payments_order_number_unique').on(table.orderNumber),
     paymentsAmountPositive: check('payments_amount_positive', sql`${table.amount} > 0`),
