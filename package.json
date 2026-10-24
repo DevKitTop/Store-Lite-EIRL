@@ -44,7 +44,7 @@
     "next": "^16.2.9",
     "postgres": "^3.4.9",
     "posthog-js": "^1.386.8",
-    "posthog-node": "^5.46.0",
+    "posthog-node": "^5.55.1",
     "qrcode": "^1.5.4",
     "react": "19.2.3",
     "react-barcode": "^1.6.1",
