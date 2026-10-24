@@ -19,6 +19,7 @@ import {
   checkRateLimit,
   getClientIdentifier,
   getClientIdentifierFromHeaders,
+  getClientIp,
   RATE_LIMITS,
   resetRateLimit,
 } from '@/lib/rateLimit';
@@ -84,14 +85,14 @@ describe('resetRateLimit', () => {
 // ── Suite: getClientIdentifierFromHeaders (D4) ──────
 
 describe('getClientIdentifierFromHeaders', () => {
-  test('accepts a plain `{ get }` object and prefers the first x-forwarded-for token', () => {
+  test('accepts a plain `{ get }` object and uses the trusted rightmost x-forwarded-for token', () => {
     const bag = headerBag({
-      'x-forwarded-for': '203.0.113.9, 70.41.3.18, 150.172.238.178',
+      'x-forwarded-for': '203.0.113.9, 198.51.100.20, 192.0.2.10',
       'x-real-ip': '198.51.100.4',
       'cf-connecting-ip': '198.51.100.5',
     });
 
-    expect(getClientIdentifierFromHeaders(bag)).toBe('203.0.113.9');
+    expect(getClientIdentifierFromHeaders(bag)).toBe('192.0.2.10');
   });
 
   test('falls back to x-real-ip, then cf-connecting-ip', () => {
@@ -115,11 +116,88 @@ describe('getClientIdentifierFromHeaders', () => {
     // priority chain is pinned once and shared by the proxy, the lookup route
     // and the buyer gate. Drift between the two would be a silent security hole.
     const headers = {
-      'x-forwarded-for': '203.0.113.9, 70.41.3.18',
+      'x-forwarded-for': '203.0.113.9, 198.51.100.20',
       'x-real-ip': '198.51.100.4',
     };
     const request = new NextRequest('http://localhost/api/order/lookup', { headers });
 
     expect(getClientIdentifierFromHeaders(headerBag(headers))).toBe(getClientIdentifier(request));
+  });
+});
+
+// ── Suite: getClientIp (W-I1, trusted proxy hop) ────
+
+describe('getClientIp', () => {
+  test('ignores a spoofed leftmost x-forwarded-for entry and uses the trusted rightmost one', () => {
+    // A client that prepends its own entry only extends the list to the LEFT.
+    // The rightmost token is the one the trusted edge appended.
+    const bag = headerBag({
+      'x-forwarded-for': '203.0.113.9, 198.51.100.20, 192.0.2.10',
+      'x-real-ip': '198.51.100.4',
+    });
+
+    expect(getClientIp(bag)).toBe('192.0.2.10');
+  });
+
+  test('TRUSTED_PROXY_COUNT=2 selects the second-from-right hop', () => {
+    const previous = process.env.TRUSTED_PROXY_COUNT;
+    process.env.TRUSTED_PROXY_COUNT = '2';
+    try {
+      expect(
+        getClientIp(headerBag({ 'x-forwarded-for': '203.0.113.9, 198.51.100.20, 192.0.2.10' })),
+      ).toBe('198.51.100.20');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TRUSTED_PROXY_COUNT;
+      } else {
+        process.env.TRUSTED_PROXY_COUNT = previous;
+      }
+    }
+  });
+
+  test('falls back to x-real-ip when x-forwarded-for has no usable entries', () => {
+    const bag = headerBag({ 'x-forwarded-for': ' , , ', 'x-real-ip': '198.51.100.4' });
+
+    expect(getClientIp(bag)).toBe('198.51.100.4');
+  });
+
+  test('returns the "unknown" sentinel when no client header is present', () => {
+    expect(getClientIp(headerBag({}))).toBe('unknown');
+  });
+
+  test('clamps to the rightmost entry when TRUSTED_PROXY_COUNT exceeds the hop count', () => {
+    const previous = process.env.TRUSTED_PROXY_COUNT;
+    process.env.TRUSTED_PROXY_COUNT = '5';
+    try {
+      expect(
+        getClientIp(headerBag({ 'x-forwarded-for': '203.0.113.9, 198.51.100.20, 192.0.2.10' })),
+      ).toBe('192.0.2.10');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TRUSTED_PROXY_COUNT;
+      } else {
+        process.env.TRUSTED_PROXY_COUNT = previous;
+      }
+    }
+  });
+
+  test('treats a non-numeric TRUSTED_PROXY_COUNT as the default (rightmost hop)', () => {
+    const previous = process.env.TRUSTED_PROXY_COUNT;
+    process.env.TRUSTED_PROXY_COUNT = 'not-a-number';
+    try {
+      expect(
+        getClientIp(headerBag({ 'x-forwarded-for': '203.0.113.9, 198.51.100.20, 192.0.2.10' })),
+      ).toBe('192.0.2.10');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TRUSTED_PROXY_COUNT;
+      } else {
+        process.env.TRUSTED_PROXY_COUNT = previous;
+      }
+    }
+  });
+
+  test('falls back to cf-connecting-ip when neither x-forwarded-for nor x-real-ip is present', () => {
+    expect(getClientIp(headerBag({ 'cf-connecting-ip': '198.51.100.5' }))).toBe('198.51.100.5');
   });
 });

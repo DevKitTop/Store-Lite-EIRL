@@ -25,6 +25,8 @@ const {
   mockProductsSelectFrom,
   mockProductsSelect,
   mockTxReturning,
+  mockTxClaimReturning,
+  mockTxOutcomeReturning,
   mockTxValues,
   mockTxInsert,
   mockTxUpdateReturning,
@@ -54,7 +56,15 @@ const {
   const mockProductsSelect = vi.fn(() => ({ from: mockProductsSelectFrom }));
 
   const mockTxReturning = vi.fn();
-  const mockTxValues = vi.fn(() => ({ returning: mockTxReturning }));
+  // The CAS claim terminal: `insert(stockMovements).values().onConflictDoNothing().returning()`.
+  const mockTxClaimReturning = vi.fn();
+  // The truthful-outcome correction terminal: `.onConflictDoUpdate(...).returning()`.
+  const mockTxOutcomeReturning = vi.fn();
+  const mockTxValues = vi.fn(() => ({
+    returning: mockTxReturning,
+    onConflictDoNothing: () => ({ returning: mockTxClaimReturning }),
+    onConflictDoUpdate: () => ({ returning: mockTxOutcomeReturning }),
+  }));
   const mockTxInsert = vi.fn(() => ({ values: mockTxValues }));
   const mockTxUpdateReturning = vi.fn();
   const mockTxSet = vi.fn(() => ({ where: mockTxWhere }));
@@ -66,6 +76,14 @@ const {
     callback({
       insert: mockTxInsert,
       update: mockTxUpdate,
+      select: mockProductsSelect,
+      // The charge route resolves the sale's `payments` row INSIDE the
+      // transaction (`findSalePaymentRow(tx, ...)`), so the tx reader must
+      // expose the same spies the top-level `db` does.
+      query: {
+        payments: { findFirst: mockPaymentsFindFirst },
+        paymentOrders: { findFirst: mockPaymentOrdersFindFirst },
+      },
     }),
   );
 
@@ -81,6 +99,8 @@ const {
     mockProductsSelectFrom,
     mockProductsSelect,
     mockTxReturning,
+    mockTxClaimReturning,
+    mockTxOutcomeReturning,
     mockTxValues,
     mockTxInsert,
     mockTxUpdateReturning,
@@ -136,22 +156,27 @@ vi.mock('@/core/payments/idempotency', () => ({
   // original-impl form so restoreMocks keeps these resolved values across tests
   reserveIdempotencyKey: mockReserveIdempotencyKey,
   completeIdempotencyKey: mockCompleteIdempotencyKey,
+  releaseIdempotencyKey: mockReleaseIdempotencyKey,
 }));
 
 vi.mock('@/core/payments/rateLimiter', () => ({
-  paymentRateLimiter: { check: vi.fn(() => true) },
+  paymentRateLimiter: { check: mockRateLimiterCheck },
 }));
 
 const {
   mockDecrypt,
   mockReserveIdempotencyKey,
   mockCompleteIdempotencyKey,
+  mockReleaseIdempotencyKey,
+  mockRateLimiterCheck,
   mockNotifyNewOrder,
   mockSendOrderStatusSms,
 } = vi.hoisted(() => ({
   mockDecrypt: vi.fn(),
   mockReserveIdempotencyKey: vi.fn(async () => ({ type: 'reserved', key: 'idem-1' })),
   mockCompleteIdempotencyKey: vi.fn(async () => undefined),
+  mockReleaseIdempotencyKey: vi.fn(async () => undefined),
+  mockRateLimiterCheck: vi.fn(() => true),
   mockNotifyNewOrder: vi.fn(async () => undefined),
   mockSendOrderStatusSms: vi.fn(async () => undefined),
 }));
@@ -216,7 +241,12 @@ function createPaymentOrderRow(overrides: Record<string, unknown> = {}) {
     culqiOrderId: 'ord_culqi_abc123',
     amount: '1500',
     currency: 'PEN',
-    metadata: { productId: '660e8400-e29b-41d4-a716-446655440001' },
+    // create-order persists the durable cart snapshot beside the binding (W-B).
+    // The default is one unit of the bound product; individual tests override it.
+    metadata: {
+      productId: '660e8400-e29b-41d4-a716-446655440001',
+      cartItems: [{ id: '660e8400-e29b-41d4-a716-446655440001', quantity: 1 }],
+    },
     ...overrides,
   };
 }
@@ -245,6 +275,15 @@ function createOrderFlowRequest(payload: Record<string, unknown>) {
   });
 }
 
+/**
+ * DB row uuids the fulfillment claim keys MUST use (R2). They are deliberately
+ * distinct from each other and from the Culqi text ids ('ord_culqi_abc123',
+ * 'chr_…'): `stock_movements.source_id` is a uuid column, and two triggers
+ * sharing one slot is exactly the exactly-once break this contract closes.
+ */
+const PO_ROW_UUID = '11111111-2222-4333-8444-555555555555';
+const PAY_ROW_UUID = '99999999-8888-4777-a666-555555555555';
+
 function createCulqiChargeResponse(overrides: Record<string, unknown> = {}) {
   return {
     id: 'ch_abc123',
@@ -256,9 +295,87 @@ function createCulqiChargeResponse(overrides: Record<string, unknown> = {}) {
 
 // ── Suite ────────────────────────────────────────────
 
+/**
+ * A minimal in-memory `payment_idempotency_keys` stand-in wired into the route
+ * mocks, so a test can assert the KEY's end state (not only the HTTP response).
+ * Mirrors `reserveIdempotencyKey` / `completeIdempotencyKey` /
+ * `releaseIdempotencyKey`.
+ *
+ * A FRESH store per test is mandatory: `restoreMocks` restores the
+ * `vi.fn(originalImpl)` defaults but does NOT undo a later `mockImplementation`,
+ * so a shared store would leak across cases.
+ *
+ * Declared at module scope because the order-flow gate tests (W-P1) and the
+ * failed-transaction tests both need to inspect the key store.
+ */
+interface FakeKeyRow {
+  status: string;
+  responseBody?: unknown;
+  responseStatus?: number;
+}
+
+function useFakeKeyStore() {
+  const store = new Map<string, FakeKeyRow>();
+
+  mockReserveIdempotencyKey.mockImplementation(async (key: string | null) => {
+    if (!key) return null;
+    const existing = store.get(key);
+    if (existing?.responseBody && existing.responseStatus) {
+      return {
+        type: 'replay',
+        response: NextResponse.json(existing.responseBody as Record<string, unknown>, {
+          status: existing.responseStatus,
+        }),
+      };
+    }
+    if (existing) {
+      return {
+        type: 'processing',
+        response: NextResponse.json({ error: 'processing' }, { status: 409 }),
+      };
+    }
+    store.set(key, { status: 'processing' });
+    return { type: 'reserved', key };
+  });
+
+  mockCompleteIdempotencyKey.mockImplementation(
+    async (key: string | null, body: Record<string, unknown>, status = 200) => {
+      if (!key) return;
+      store.set(key, {
+        status: status >= 200 && status < 300 ? 'succeeded' : 'failed',
+        responseBody: body,
+        responseStatus: status,
+      });
+    },
+  );
+
+  // Deletion guarded by `processing`, mirroring `releaseIdempotencyKey`.
+  mockReleaseIdempotencyKey.mockImplementation(async (key: string | null) => {
+    if (!key) return;
+    if (store.get(key)?.status === 'processing') {
+      store.delete(key);
+    }
+  });
+
+  return store;
+}
+
 describe('POST /api/payment/charge', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+
+    // `clearAllMocks` clears calls but NOT implementations, and the fake key
+    // store used by several suites installs its own `mockImplementation`. Re-seed
+    // the idempotency trio here so no implementation leaks between tests.
+    mockReserveIdempotencyKey.mockReset();
+    mockReserveIdempotencyKey.mockImplementation(async () => ({ type: 'reserved', key: 'idem-1' }));
+    mockCompleteIdempotencyKey.mockReset();
+    mockCompleteIdempotencyKey.mockImplementation(async () => undefined);
+    mockReleaseIdempotencyKey.mockReset();
+    mockReleaseIdempotencyKey.mockImplementation(async () => undefined);
+
+    mockRateLimiterCheck.mockReset();
+    mockRateLimiterCheck.mockImplementation(() => true);
 
     // Default mock: business is active and not blocked
     mockBusinessFindFirst.mockResolvedValue({
@@ -313,6 +430,10 @@ describe('POST /api/payment/charge', () => {
       { id: 'pay-1', trackingToken: 'tt_test_token', buyerPhone: '999888777' },
     ]);
     mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+    // Default mock: the CAS claim wins (one stock_movements row returned).
+    mockTxClaimReturning.mockResolvedValue([{ id: 'mv-1' }]);
+    // Default mock: an oversell correction upsert finds exactly its row.
+    mockTxOutcomeReturning.mockResolvedValue([{ id: 'mv-2' }]);
 
     vi.stubEnv('NODE_ENV', 'development');
   });
@@ -439,6 +560,165 @@ describe('POST /api/payment/charge', () => {
   });
 
   // ============================================================
+  // Scalar qty in the Culqi charge metadata (R1/A2, slice 2)
+  // ============================================================
+
+  describe('charge metadata qty snapshot (A2)', () => {
+    const PRODUCT_B = '770e8400-e29b-41d4-a716-446655440002';
+
+    function culqiChargeBody() {
+      return JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    }
+
+    test('sends the bound line quantity as scalar metadata.qty and never a cart array', async () => {
+      // A = S/ 250.00 × 3 + B = S/ 400.00 × 2 → 155000 cents
+      mockProductsSelectWhere.mockResolvedValue([
+        { id: '660e8400-e29b-41d4-a716-446655440001', price: '250.00', secondPrice: null },
+        { id: PRODUCT_B, price: '400.00', secondPrice: null },
+      ]);
+
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          createValidPayload({
+            amount: 155000,
+            metadata: {
+              cartItems: [
+                { id: '660e8400-e29b-41d4-a716-446655440001', quantity: 3 },
+                { id: PRODUCT_B, quantity: 2 },
+              ],
+            },
+          }),
+        ),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const culqiBody = culqiChargeBody();
+      expect(culqiBody.metadata).toEqual({
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        productId: '660e8400-e29b-41d4-a716-446655440001',
+        platform: 'store-lite',
+        qty: 3,
+      });
+      // Culqi metadata is a scalar contract: a cart array here would bloat the
+      // payload and diverge from the durable channel (payment_orders.metadata).
+      expect(culqiBody.metadata).not.toHaveProperty('cartItems');
+      expect(JSON.stringify(culqiBody.metadata)).not.toContain('[');
+    });
+
+    test('ignores a client-supplied metadata.qty: the Culqi qty is derived server-side from the cart', async () => {
+      // A = S/ 250.00 × 3 + B = S/ 400.00 × 2 → 155000 cents
+      mockProductsSelectWhere.mockResolvedValue([
+        { id: '660e8400-e29b-41d4-a716-446655440001', price: '250.00', secondPrice: null },
+        { id: PRODUCT_B, price: '400.00', secondPrice: null },
+      ]);
+
+      // The hostile fields are the POINT of this case. `qty` and `quantity` are
+      // not part of `chargeRequestSchema.metadata`, so Zod strips them at the
+      // edge; and the outbound Culqi metadata is a LITERAL that never spreads
+      // the request metadata. Two independent defenses — and until now nothing
+      // asserted either one, so a regression in either would have stayed
+      // invisible (R1: the token-flow qty is "derived server-side from the
+      // validated cart, never a raw client field").
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          createValidPayload({
+            amount: 155000,
+            metadata: {
+              shippingInfo: { phone: '999888777', courier: 'recojo' },
+              cartItems: [
+                { id: '660e8400-e29b-41d4-a716-446655440001', quantity: 3 },
+                { id: PRODUCT_B, quantity: 2 },
+              ],
+              qty: 999,
+              quantity: 888,
+            },
+          }),
+        ),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const culqiBody = culqiChargeBody();
+
+      // (1) The gateway receives the SERVER-derived quantity of the bound line
+      // (3 units of A) — never the client's 999.
+      expect(culqiBody.metadata.qty).toBe(3);
+      expect(culqiBody.metadata.qty).not.toBe(999);
+
+      // (2) The outbound metadata is EXACTLY the literal contract: no `quantity`
+      // alias, no stray client key (`shippingInfo`, `cartItems`), and never the
+      // cart array.
+      expect(culqiBody.metadata).toEqual({
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+        productId: '660e8400-e29b-41d4-a716-446655440001',
+        platform: 'store-lite',
+        qty: 3,
+      });
+      expect(culqiBody.metadata).not.toHaveProperty('quantity');
+      expect(culqiBody.metadata).not.toHaveProperty('cartItems');
+      expect(culqiBody.metadata).not.toHaveProperty('shippingInfo');
+      expect(JSON.stringify(culqiBody.metadata)).not.toContain('[');
+
+      // (3) The Zod strip is the OTHER half of the invariant, and the durable
+      // row is the only channel where it is observable: the charge route
+      // spreads the validated metadata into `payments.metadata`, and
+      // `readFulfillmentQty` (stockFulfillment) later reads `metadata.qty` back
+      // FROM THAT ROW to size the oversell-recovery decrement. A client `qty`
+      // surviving here would size that decrement.
+      const paymentInserts = mockTxValues.mock.calls.filter(
+        (call) => (call[0] as { amount?: string }).amount !== undefined,
+      );
+      expect(paymentInserts).toHaveLength(1);
+      const inserted = paymentInserts[0][0] as { metadata?: Record<string, unknown> };
+      expect(inserted.metadata).toBeDefined();
+      expect(inserted.metadata).not.toHaveProperty('qty');
+      expect(inserted.metadata).not.toHaveProperty('quantity');
+    });
+
+    test('defaults metadata.qty to 1 when the request carries no cartItems', async () => {
+      const response = await POST(
+        new Request('http://localhost/api/payment/charge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(createValidPayload()),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(culqiChargeBody().metadata.qty).toBe(1);
+    });
+
+    test('defaults metadata.qty to 1 when no cart line matches the bound productId', async () => {
+      // The cart authorises the amount (B × 5 = S/ 1500.00) but contains no
+      // line for the bound product A → the scalar falls back to 1.
+      mockProductsSelectWhere.mockResolvedValue([
+        { id: PRODUCT_B, price: '300.00', secondPrice: null },
+      ]);
+
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          createValidPayload({
+            metadata: { cartItems: [{ id: PRODUCT_B, quantity: 5 }] },
+          }),
+        ),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+      expect(culqiChargeBody().metadata.qty).toBe(1);
+    });
+  });
+
+  // ============================================================
   // Order flow: verify the Culqi order before trusting the order flow
   // (R8 - R12)
   // ============================================================
@@ -516,6 +796,7 @@ describe('POST /api/payment/charge', () => {
       // is the exact gap that let a fictional `status` reach the route.
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockGetCulqiOrder.mockResolvedValue(fixture);
+      const store = useFakeKeyStore();
 
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
 
@@ -523,7 +804,12 @@ describe('POST /api/payment/charge', () => {
       const body = await response.json();
       expect(body.code).toBe('ORDER_NOT_PAID');
       expect(mockTransaction).not.toHaveBeenCalled();
-      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+      // W-P1: the key is reserved before the Culqi read, then RELEASED because
+      // the order is not paid yet. A later retry (same deterministic key) must
+      // be able to attempt again instead of replaying this 402 forever.
+      expect(mockReserveIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(mockReleaseIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(store.has('charge-ord_culqi_abc123')).toBe(false);
     });
 
     test('allows a stale pending state when paid_at is real money evidence', async () => {
@@ -538,26 +824,33 @@ describe('POST /api/payment/charge', () => {
       expect(response.status).toBe(200);
     });
 
-    test('maps an aborted Culqi read to 504 and reserves nothing', async () => {
+    test('maps an aborted Culqi read to 504 and releases the reservation', async () => {
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockGetCulqiOrder.mockRejectedValue(new CulqiReadErrorMock('timeout'));
+      const store = useFakeKeyStore();
 
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
 
       expect(response.status).toBe(504);
       expect(mockTransaction).not.toHaveBeenCalled();
-      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+      // Resubscribing after a transient upstream timeout must be possible.
+      expect(mockReserveIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(mockReleaseIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(store.has('charge-ord_culqi_abc123')).toBe(false);
     });
 
-    test('maps a Culqi transport failure to 502 and reserves nothing', async () => {
+    test('maps a Culqi transport failure to 502 and releases the reservation', async () => {
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockGetCulqiOrder.mockRejectedValue(new CulqiReadErrorMock('transport'));
+      const store = useFakeKeyStore();
 
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
 
       expect(response.status).toBe(502);
       expect(mockTransaction).not.toHaveBeenCalled();
-      expect(mockReserveIdempotencyKey).not.toHaveBeenCalled();
+      expect(mockReserveIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(mockReleaseIdempotencyKey).toHaveBeenCalledWith('charge-ord_culqi_abc123');
+      expect(store.has('charge-ord_culqi_abc123')).toBe(false);
     });
 
     test('returns 500 without committing the flip when the payment_orders update affects no row', async () => {
@@ -597,7 +890,7 @@ describe('POST /api/payment/charge', () => {
       );
     });
 
-    test('does not replay another tenant payment for the same culqiChargeId', async () => {
+    test('does not replay another tenant payment for the same order id', async () => {
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
       mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
       // A single-column lookup WOULD return the other tenant's row. Scoping the
@@ -624,7 +917,11 @@ describe('POST /api/payment/charge', () => {
       expect(body.replayed).toBeUndefined();
       const lookupArg = mockPaymentsFindFirst.mock.calls[0][0] as { where: unknown };
       const lookup = compileWhere(lookupArg.where);
-      expect(lookup.sql).toMatch(/culqi_charge_id.* and .*business_id/);
+      // KIND-CORRECT (D13): an order-flow sale is looked up by the ORDER id in
+      // `culqi_order_id`. The old cross-kind lookup compared the order id
+      // against `culqi_charge_id` and could never match the sale's own row.
+      expect(lookup.sql).toMatch(/culqi_order_id.* and .*business_id/);
+      expect(lookup.sql).not.toMatch(/culqi_charge_id/);
       expect(lookup.params).toEqual(
         expect.arrayContaining(['ord_culqi_abc123', '550e8400-e29b-41d4-a716-446655440000']),
       );
@@ -713,9 +1010,15 @@ describe('POST /api/payment/charge', () => {
       const response = await POST(createOrderFlowRequest(createOrderFlowPayload({ amount: 1099 })));
 
       expect(response.status).toBe(200);
-      expect(mockTxInsert).toHaveBeenCalledTimes(1);
+      // One `payments` insert. The fulfillment marker also INSERTs into
+      // `stock_movements` (the CAS claim), so count the payments insert
+      // specifically by its `amount` payload rather than all inserts.
+      const paymentInserts = mockTxValues.mock.calls.filter(
+        (call) => (call[0] as { amount?: string }).amount !== undefined,
+      );
+      expect(paymentInserts).toHaveLength(1);
       // The recorded amount is the request amount, not the order's.
-      const inserted = mockTxValues.mock.calls[0][0] as { amount: string };
+      const inserted = paymentInserts[0][0] as { amount: string };
       expect(inserted.amount).toBe('10.99');
     });
 
@@ -871,60 +1174,424 @@ describe('POST /api/payment/charge', () => {
   // key at `processing` (R14 — the W2 permanent-lockout trap)
   // ============================================================
 
-  describe('idempotency key completion on a failed transaction', () => {
-    interface KeyRow {
-      status: string;
-      responseBody?: unknown;
-      responseStatus?: number;
-    }
+  // ============================================================
+  // Stock decrement — silent oversell must stay impossible
+  // ============================================================
 
-    /**
-     * A minimal in-memory `payment_idempotency_keys` stand-in wired into the two
-     * route mocks, so a test can assert the KEY's end state and not only the HTTP
-     * response. Mirrors `reserveIdempotencyKey` / `completeIdempotencyKey`.
-     *
-     * A FRESH store per test is mandatory: `restoreMocks` restores the
-     * `vi.fn(originalImpl)` defaults but does NOT undo a later
-     * `mockImplementation`, so a shared store would leak across cases.
-     */
-    function useFakeKeyStore() {
-      const store = new Map<string, KeyRow>();
+  describe('stock decrement (oversell)', () => {
+    test('decrements stock with an atomic availability predicate scoped to the business', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
 
-      mockReserveIdempotencyKey.mockImplementation(async (key: string | null) => {
-        if (!key) return null;
-        const existing = store.get(key);
-        if (existing?.responseBody && existing.responseStatus) {
-          return {
-            type: 'replay',
-            response: NextResponse.json(existing.responseBody as Record<string, unknown>, {
-              status: existing.responseStatus,
-            }),
-          };
-        }
-        if (existing) {
-          return {
-            type: 'processing',
-            response: NextResponse.json({ error: 'processing' }, { status: 409 }),
-          };
-        }
-        store.set(key, { status: 'processing' });
-        return { type: 'reserved', key };
-      });
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
 
-      mockCompleteIdempotencyKey.mockImplementation(
-        async (key: string | null, body: Record<string, unknown>, status = 200) => {
-          if (!key) return;
-          store.set(key, {
-            status: status >= 200 && status < 300 ? 'succeeded' : 'failed',
-            responseBody: body,
-            responseStatus: status,
-          });
+      expect(response.status).toBe(200);
+      // UPDATE #1 is the payment_orders flip; UPDATE #2 is the stock decrement.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(2);
+
+      const stockWhere = compileWhere(mockTxWhere.mock.calls[1][0]);
+      // The decrement must be conditional and tenant-scoped: a plain `id = ?`
+      // update decrements whatever row the id happens to point at, and carries
+      // no evidence that the units were actually available.
+      expect(stockWhere.sql).toMatch(
+        /"products"\."id" = .* and "products"\."business_id" = .* and "products"\."stock" >= /,
+      );
+      expect(stockWhere.params).toEqual([
+        '660e8400-e29b-41d4-a716-446655440001',
+        '550e8400-e29b-41d4-a716-446655440000',
+        1,
+      ]);
+    });
+
+    test('never clamps the new stock value with GREATEST', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      const stockSet = mockTxSet.mock.calls[1][0] as Record<string, unknown>;
+      const compiled = compileWhere(stockSet.stock);
+      // GREATEST(x - qty, 0) turns an oversell into "stock is 0, sale recorded",
+      // which is exactly the silent part of the bug. The predicate in WHERE is
+      // what makes the subtraction safe.
+      expect(compiled.sql).not.toMatch(/greatest/i);
+      expect(compiled.sql).toMatch(/stock" - /);
+    });
+
+    test('records the sale and reports oversold when the availability predicate matches no row', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      // The flip succeeds; the conditional stock decrement matches nothing.
+      mockTxUpdateReturning.mockResolvedValueOnce([{ id: 'po-1' }]).mockResolvedValueOnce([]);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // The money was already captured by Culqi before this transaction opened:
+      // throwing here would keep the charge and drop the order record.
+      expect(response.status).toBe(200);
+      expect(mockTransaction).toHaveBeenCalledTimes(1);
+      expect(mockNotifyNewOrder).toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('oversold'),
+        expect.objectContaining({ productId: '660e8400-e29b-41d4-a716-446655440001' }),
+      );
+    });
+
+    test('does not report oversold when the predicate matches (happy path)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning
+        .mockResolvedValueOnce([{ id: 'po-1' }])
+        .mockResolvedValueOnce([{ id: '660e8400-e29b-41d4-a716-446655440001' }]);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('oversold'),
+        expect.anything(),
+      );
+    });
+
+    test('uses the real quantity in the availability predicate, not a hard-coded 1', async () => {
+      // The order-flow gate compares the Culqi order amount against the client
+      // amount before validateAmount runs, so the row must carry the same total.
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({
+          amount: '3000',
+          metadata: {
+            productId: '660e8400-e29b-41d4-a716-446655440001',
+            cartItems: [{ id: '660e8400-e29b-41d4-a716-446655440001', quantity: 2 }],
+          },
+        }),
+      );
+      // 2 units x S/ 1500.00 = S/ 3000.00
+      mockProductsSelectWhere.mockResolvedValue([
+        {
+          id: '660e8400-e29b-41d4-a716-446655440001',
+          price: '1500.00',
+          secondPrice: null,
         },
+      ]);
+
+      const response = await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({
+            amount: 300000,
+            metadata: {
+              shippingInfo: { phone: '999888777', courier: 'recojo' },
+              cartItems: [{ id: '660e8400-e29b-41d4-a716-446655440001', quantity: 2 }],
+            },
+          }),
+        ),
       );
 
-      return store;
-    }
+      expect(response.status).toBe(200);
+      const stockWhere = compileWhere(mockTxWhere.mock.calls[1][0]);
+      // The predicate must compare against the requested quantity: a fixed 1
+      // would let a 2-unit sale through with 1 unit in stock.
+      expect(stockWhere.params).toEqual([
+        '660e8400-e29b-41d4-a716-446655440001',
+        '550e8400-e29b-41d4-a716-446655440000',
+        2,
+      ]);
+    });
 
+    test('reports only the line that ran out in a multi-item cart', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({
+          amount: '1600',
+          metadata: {
+            productId: '660e8400-e29b-41d4-a716-446655440001',
+            cartItems: [
+              { id: '660e8400-e29b-41d4-a716-446655440001', quantity: 1 },
+              { id: '770e8400-e29b-41d4-a716-446655440002', quantity: 1 },
+            ],
+          },
+        }),
+      );
+      mockProductsSelectWhere.mockResolvedValue([
+        { id: '660e8400-e29b-41d4-a716-446655440001', price: '1500.00', secondPrice: null },
+        { id: '770e8400-e29b-41d4-a716-446655440002', price: '100.00', secondPrice: null },
+      ]);
+      // flip, line A, line B: only B finds no available row.
+      mockTxUpdateReturning
+        .mockResolvedValueOnce([{ id: 'po-1' }])
+        .mockResolvedValueOnce([{ id: '660e8400-e29b-41d4-a716-446655440001' }])
+        .mockResolvedValueOnce([]);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const response = await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({
+            amount: 160000, // 1500 + 100
+            metadata: {
+              shippingInfo: { phone: '999888777', courier: 'recojo' },
+              cartItems: [
+                { id: '660e8400-e29b-41d4-a716-446655440001', quantity: 1 },
+                { id: '770e8400-e29b-41d4-a716-446655440002', quantity: 1 },
+              ],
+            },
+          }),
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      // One decrement per line, plus the payment_orders flip.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(3);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('oversold'),
+        expect.objectContaining({ productId: '770e8400-e29b-41d4-a716-446655440002' }),
+      );
+    });
+
+    test('fulfils an order-backed sale from the PERSISTED order cart, never the request cart (W-B)', async () => {
+      const PERSISTED_PRODUCT = '660e8400-e29b-41d4-a716-446655440001';
+      const REQUEST_PRODUCT = '770e8400-e29b-41d4-a716-446655440002';
+
+      // The persisted order snapshot says 3 units of A. The buyer-controlled
+      // request says 5 units of B. Only the persisted snapshot may decrement.
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({
+          amount: '500',
+          metadata: {
+            productId: PERSISTED_PRODUCT,
+            cartItems: [{ id: PERSISTED_PRODUCT, quantity: 3 }],
+          },
+        }),
+      );
+      mockProductsSelectWhere.mockResolvedValue([
+        { id: REQUEST_PRODUCT, price: '100.00', secondPrice: null },
+      ]);
+
+      const response = await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({
+            amount: 50000, // B (S/ 100.00) x 5, so the request cart validates
+            metadata: {
+              shippingInfo: { phone: '999888777', courier: 'recojo' },
+              cartItems: [{ id: REQUEST_PRODUCT, quantity: 5 }],
+            },
+          }),
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      // UPDATE #0 is the flip; the only stock UPDATE is the persisted line.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(2);
+      const stockWhere = compileWhere(mockTxWhere.mock.calls[1][0]);
+      expect(stockWhere.params).toEqual([
+        PERSISTED_PRODUCT,
+        '550e8400-e29b-41d4-a716-446655440000',
+        3,
+      ]);
+      // The request line is never the fulfilment source.
+      expect(stockWhere.params).not.toContain(REQUEST_PRODUCT);
+      expect(stockWhere.params).not.toContain(5);
+    });
+
+    test('an order-backed sale without a persisted cart fails closed (no claim, no decrement)', async () => {
+      // Legacy order rows carry no durable snapshot. The charge path must not
+      // substitute the buyer's request cart: it skips fulfilment entirely and
+      // leaves the sale unclaimed for the D10 backstop.
+      mockPaymentOrdersFindFirst.mockResolvedValue(
+        createPaymentOrderRow({
+          amount: '10500',
+          metadata: { productId: '660e8400-e29b-41d4-a716-446655440001' },
+        }),
+      );
+
+      const response = await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({
+            amount: 1050000, // request cart: 7 x S/ 1500.00
+            metadata: {
+              shippingInfo: { phone: '999888777', courier: 'recojo' },
+              cartItems: [{ id: '660e8400-e29b-41d4-a716-446655440001', quantity: 7 }],
+            },
+          }),
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      // Only the payment_orders flip ran: no stock UPDATE, no ledger claim.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(1);
+      expect(mockTxClaimReturning).not.toHaveBeenCalled();
+    });
+
+    test('does not report oversold when the transaction fails to commit', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      // The stock decrement matches no row, but the commit then fails: reporting
+      // oversold here would raise a phantom incident for a sale that never
+      // happened. The signal is emitted only after the transaction resolves.
+      mockTxUpdateReturning.mockResolvedValueOnce([{ id: 'po-1' }]).mockResolvedValueOnce([]);
+      mockTransaction.mockImplementationOnce(
+        async (callback: (tx: unknown) => Promise<unknown>) => {
+          // The route resolves the sale's row inside the transaction
+          // (`findSalePaymentRow(tx, ...)`), so this hand-built tx needs the
+          // same reader the production transaction exposes.
+          await callback({
+            insert: mockTxInsert,
+            update: mockTxUpdate,
+            query: {
+              payments: { findFirst: mockPaymentsFindFirst },
+              paymentOrders: { findFirst: mockPaymentOrdersFindFirst },
+            },
+          });
+          throw new Error('commit failed');
+        },
+      );
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(500);
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('oversold'),
+        expect.anything(),
+      );
+    });
+  });
+
+  // ============================================================
+  // Fulfillment marker: the CAS claim joins the charge transaction
+  // (NEW-8, design D1/D4/D5)
+  // ============================================================
+
+  describe('fulfillment marker (stock_movements ledger)', () => {
+    test('claims a payments-keyed stock_movements row inside the charged transaction', async () => {
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'charge-tok_test_abc123',
+        },
+        body: JSON.stringify(createValidPayload()),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      // The claim is an INSERT ... ON CONFLICT DO NOTHING, never a third UPDATE.
+      expect(mockTxClaimReturning).toHaveBeenCalledTimes(1);
+      const claim = mockTxValues.mock.calls.find(
+        (call) => (call[0] as { sourceType?: string }).sourceType === 'payments',
+      )?.[0] as Record<string, unknown>;
+      expect(claim).toMatchObject({
+        sourceType: 'payments',
+        businessId: '550e8400-e29b-41d4-a716-446655440000',
+      });
+    });
+
+    test('claims the ordered key set: payment_orders FIRST, then payments (order flow)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(response.status).toBe(200);
+
+      const sourceTypes = mockTxValues.mock.calls
+        .map((call) => (call[0] as { sourceType?: string }).sourceType)
+        .filter(Boolean);
+      // payments row insert has no sourceType (it is the `payments` insert);
+      // the two claims are ordered payment_orders then payments.
+      expect(sourceTypes).toEqual(['payment_orders', 'payments']);
+    });
+
+    test('claims the marker BEFORE the stock decrement', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(response.status).toBe(200);
+
+      const claimOrder = mockTxClaimReturning.mock.invocationCallOrder[0];
+      const decrementOrder = mockTxUpdate.mock.invocationCallOrder[1];
+      expect(claimOrder).toBeLessThan(decrementOrder);
+    });
+
+    test('a losing CAS claim (already fulfilled) skips the decrement but keeps the sale', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: 'po-1' }]);
+      // Both keys conflict: the sale is already claimed. The flip still happens
+      // (UPDATE #1), but NO stock decrement runs (there is no UPDATE #2).
+      mockTxClaimReturning.mockResolvedValue([]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      // Only the payment_orders flip; the decrement is skipped entirely.
+      expect(mockTxUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    test('keys both order-flow claims to DB row ids, never Culqi text ids (R2)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      // The flip returns the payment_orders ROW uuid; the payments insert returns its own.
+      mockTxUpdateReturning.mockResolvedValue([{ id: PO_ROW_UUID }]);
+      mockTxReturning.mockResolvedValue([
+        { id: PAY_ROW_UUID, trackingToken: 'tt_test_token', buyerPhone: '999888777' },
+      ]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(response.status).toBe(200);
+
+      const claims = mockTxValues.mock.calls
+        .map((call) => call[0] as Record<string, unknown>)
+        .filter((values) => values.sourceType !== undefined);
+      expect(claims.map((claim) => claim.sourceType)).toEqual(['payment_orders', 'payments']);
+      // The payment_orders slot is the id the flip's .returning() yielded (R5).
+      expect(claims[0].sourceId).toBe(PO_ROW_UUID);
+      // The payments slot is the payments INSERT row id — never a copy of the
+      // order key (two triggers would then win one slot each).
+      expect(claims[1].sourceId).toBe(PAY_ROW_UUID);
+      expect(claims[1].sourceId).not.toBe(claims[0].sourceId);
+    });
+
+    test('no claim key ever carries a Culqi text id (uuid-column regression guard)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockTxUpdateReturning.mockResolvedValue([{ id: PO_ROW_UUID }]);
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(response.status).toBe(200);
+
+      const sourceIds = mockTxValues.mock.calls
+        .map((call) => call[0] as { sourceType?: string; sourceId?: unknown })
+        .filter((values) => values.sourceType !== undefined)
+        .map((values) => String(values.sourceId));
+      expect(sourceIds).toHaveLength(2);
+      for (const sourceId of sourceIds) {
+        expect(sourceId.startsWith('ord_')).toBe(false);
+        expect(sourceId.startsWith('chr_')).toBe(false);
+      }
+      // The claim is keyed to the order ROW the flip actually updated.
+      expect(sourceIds).toContain(PO_ROW_UUID);
+    });
+
+    test('a token-only sale keys its single claim to the payments row id', async () => {
+      mockTxReturning.mockResolvedValue([
+        { id: PAY_ROW_UUID, trackingToken: 'tt_test_token', buyerPhone: '999888777' },
+      ]);
+
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'charge-tok_test_abc123',
+        },
+        body: JSON.stringify(createValidPayload()),
+      });
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const claims = mockTxValues.mock.calls
+        .map((call) => call[0] as Record<string, unknown>)
+        .filter((values) => values.sourceType !== undefined);
+      expect(claims).toHaveLength(1);
+      expect(claims[0]).toMatchObject({ sourceType: 'payments', sourceId: PAY_ROW_UUID });
+    });
+  });
+
+  describe('idempotency key completion on a failed transaction', () => {
     test('completes the reserved key with the failure when the transaction throws', async () => {
       const store = useFakeKeyStore();
       mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
@@ -1029,6 +1696,177 @@ describe('POST /api/payment/charge', () => {
       // record for a payment that actually succeeded.
       expect(response.status).toBe(500);
       expect(mockCompleteIdempotencyKey).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ============================================================
+  // W-P1: the idempotency key is reserved BEFORE any external call
+  // ============================================================
+
+  describe('idempotency reservation precedes the external Culqi call (W-P1)', () => {
+    test('reserves before reading the Culqi order (order flow)', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+      expect(response.status).toBe(200);
+
+      const reserveOrder = mockReserveIdempotencyKey.mock.invocationCallOrder[0];
+      const readOrder = mockGetCulqiOrder.mock.invocationCallOrder[0];
+      expect(reserveOrder).toBeLessThan(readOrder);
+    });
+
+    test('reserves before executing the Culqi charge (token flow)', async () => {
+      const request = new Request('http://localhost/api/payment/charge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'charge-tok_test_abc123',
+        },
+        body: JSON.stringify(createValidPayload()),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      const reserveOrder = mockReserveIdempotencyKey.mock.invocationCallOrder[0];
+      const chargeOrder = mockFetch.mock.invocationCallOrder[0];
+      expect(reserveOrder).toBeLessThan(chargeOrder);
+    });
+
+    test('a key already reserved (processing) is rejected with 409 and no Culqi call', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockReserveIdempotencyKey.mockResolvedValue({
+        type: 'processing',
+        response: NextResponse.json(
+          { error: 'Este pago ya se está procesando. Esperá la confirmación antes de reintentar.' },
+          { status: 409 },
+        ),
+      });
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(409);
+      // Single-flight: the second in-flight request never reaches the gateway.
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    test('a replayed key returns the stored response without a Culqi call', async () => {
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockReserveIdempotencyKey.mockResolvedValue({
+        type: 'replay',
+        response: NextResponse.json({ success: true, replayed: true }, { status: 200 }),
+      });
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.replayed).toBe(true);
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
+    test('a replay skips the gateway and the transaction entirely', async () => {
+      // The order pre-checks (a local DB read) run before the reservation so a
+      // rejected binding never burns a key; a replay therefore still performs
+      // that read. What must never happen on a replay is an external call or a
+      // second write.
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+      mockReserveIdempotencyKey.mockResolvedValue({
+        type: 'replay',
+        response: NextResponse.json({ success: true, replayed: true }, { status: 200 }),
+      });
+
+      await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockTxInsert).not.toHaveBeenCalled();
+      expect(mockCompleteIdempotencyKey).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // W-P2: the charge limiter also enforces a buyer-scoped bucket
+  // ============================================================
+
+  describe('buyer-scoped rate limiting (W-P2)', () => {
+    test('rejects with 429 when only the buyer bucket is exhausted', async () => {
+      // Business bucket available, buyer bucket exhausted.
+      mockRateLimiterCheck.mockImplementation((key: string) => !String(key).includes(':buyer:'));
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      const response = await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      expect(response.status).toBe(429);
+      // The buyer dimension is what tripped it: no external call was made.
+      expect(mockGetCulqiOrder).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    test('checks a buyer key that hashes the identity and never embeds the raw email', async () => {
+      const seenKeys: string[] = [];
+      mockRateLimiterCheck.mockImplementation((key: string) => {
+        seenKeys.push(String(key));
+        return true;
+      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      await POST(createOrderFlowRequest(createOrderFlowPayload()));
+
+      // The pre-existing business:product bucket is still checked...
+      expect(seenKeys).toContain(
+        '550e8400-e29b-41d4-a716-446655440000:660e8400-e29b-41d4-a716-446655440001',
+      );
+      // ...and the buyer bucket is checked with a digest, not the raw email.
+      const buyerKey = seenKeys.find((k) => k.includes(':buyer:'));
+      expect(buyerKey).toBeTruthy();
+      expect(buyerKey).not.toContain('buyer@test.com');
+      expect(buyerKey?.startsWith('550e8400-e29b-41d4-a716-446655440000:660e8400')).toBe(true);
+    });
+
+    test('falls back to the shipping DNI, hashed, when there is no email', async () => {
+      const seenKeys: string[] = [];
+      mockRateLimiterCheck.mockImplementation((key: string) => {
+        seenKeys.push(String(key));
+        return true;
+      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({
+            email: '',
+            metadata: { shippingInfo: { dni: '87654321' } },
+          }),
+        ),
+      );
+
+      const buyerKey = seenKeys.find((k) => k.includes(':buyer:'));
+      expect(buyerKey).toBeTruthy();
+      expect(buyerKey).not.toContain('87654321');
+    });
+
+    test('skips the buyer bucket entirely when no identity is available', async () => {
+      const seenKeys: string[] = [];
+      mockRateLimiterCheck.mockImplementation((key: string) => {
+        seenKeys.push(String(key));
+        return true;
+      });
+      mockPaymentOrdersFindFirst.mockResolvedValue(createPaymentOrderRow());
+
+      await POST(
+        createOrderFlowRequest(
+          createOrderFlowPayload({ email: '', metadata: { shippingInfo: {} } }),
+        ),
+      );
+
+      expect(seenKeys.some((k) => k.includes(':buyer:'))).toBe(false);
+      expect(seenKeys).toContain(
+        '550e8400-e29b-41d4-a716-446655440000:660e8400-e29b-41d4-a716-446655440001',
+      );
     });
   });
 });

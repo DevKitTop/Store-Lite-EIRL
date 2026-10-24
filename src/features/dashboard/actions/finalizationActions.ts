@@ -20,7 +20,7 @@ import {
 } from '@/lib/orderAccessGate';
 import { checkPermission } from '@/lib/permissions';
 import { createClient as createServerClient } from '@/lib/supabase/server';
-import { and, eq, lt } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 
 // Every unauthorized outcome — unresolved actor, missing grant, or a payment row
@@ -558,108 +558,6 @@ export async function rejectFinalization(
       success: false,
       error: 'Error al reportar el problema del pedido.',
       reason: 'generic' satisfies OrderAccessRefusalReason,
-    };
-  }
-}
-
-// =====================================================
-// 4. CRON JOB: Auto-Finalize Expired Requests
-// =====================================================
-// This function should be called periodically (e.g., every 24h)
-// It finds all payments in 'not_delivered' with expired deadlines
-// and automatically sets them to 'completed'
-
-export async function autoFinalizeExpiredPayments(): Promise<{
-  success: boolean;
-  processedCount: number;
-  error?: string;
-}> {
-  // V2: timeouts are handled by dedicated processor (T11/T16)
-  if (env.orderFlowV2) {
-    return { success: true, processedCount: 0 };
-  }
-
-  try {
-    const now = new Date();
-
-    // 1. Find payments in 'not_delivered' with expired deadlines
-    const expiredPayments = await db
-      .select({
-        id: payments.id,
-        businessId: payments.businessId,
-        orderNumber: payments.orderNumber,
-        finalizationDeadline: payments.finalizationDeadline,
-        buyerDni: payments.buyerDni,
-      })
-      .from(payments)
-      .where(
-        and(
-          eq(payments.status, ORDER_STATUS.NOT_DELIVERED),
-          lt(payments.finalizationDeadline, now), // Deadline has passed
-        ),
-      );
-
-    if (expiredPayments.length === 0) {
-      return { success: true, processedCount: 0 };
-    }
-
-    // 2. Update each payment to 'completed'
-    let processedCount = 0;
-    for (const payment of expiredPayments) {
-      try {
-        await db
-          .update(payments)
-          .set({
-            status: ORDER_STATUS.COMPLETED,
-            completedAt: now,
-            updatedAt: now,
-          })
-          .where(eq(payments.id, payment.id));
-
-        // 3. Notify business (seller)
-        await createBusinessNotification({
-          businessId: payment.businessId,
-          type: 'order_auto_finalized',
-          category: 'pedidos',
-          title: 'Pedido finalizado automáticamente',
-          message: `El pedido ${payment.orderNumber || payment.id.slice(0, 8)} se ha finalizado automáticamente tras 3 días sin respuesta del cliente.`,
-          data: {
-            paymentId: payment.id,
-            orderNumber: payment.orderNumber,
-            finalizedAt: now.toISOString(),
-            reason: 'auto_finalized_timeout',
-          },
-        });
-
-        // 4. Send chat message
-        // Buscar por paymentId (sesión aislada de esta orden), no por DNI
-        const chatSession = await db.query.chatSessions.findFirst({
-          where: and(eq(chatSessions.paymentId, payment.id), eq(chatSessions.status, 'active')),
-        });
-
-        if (chatSession) {
-          await db.insert(messages).values({
-            sessionId: chatSession.id,
-            isFromStore: true,
-            content: `⌛ PEDIDO FINALIZADO AUTOMÁTICAMENTE. Debido a la falta de respuesta en los últimos 3 días, el sistema ha dado por concluido este pedido.`,
-          });
-        }
-
-        processedCount++;
-      } catch (err) {
-        console.error(`[autoFinalize] Error processing payment ${payment.id}:`, err);
-      }
-    }
-
-    revalidatePath(`/[slug]/dashboard`, 'page');
-
-    return { success: true, processedCount };
-  } catch (error) {
-    console.error('[autoFinalize] Error:', error);
-    return {
-      success: false,
-      processedCount: 0,
-      error: 'Error en la auto-finalización de pagos.',
     };
   }
 }

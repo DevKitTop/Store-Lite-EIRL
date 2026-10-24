@@ -1,8 +1,26 @@
 // =====================================================
-// SUPABASE PROXY CLIENT
+// SUPABASE PROXY CLIENT — ⚠️ NOT WIRED INTO THE MIDDLEWARE
+// =====================================================
+// Status: UNUSED by the running app. Nothing imports updateProxy except its
+// own unit test. Kept because it encodes route-protection rules that were
+// deliberately NOT adopted yet (see below).
+//
+// Why it is not wired: `updateProxy` blocks every unauthenticated request that
+// is not on its internal allow-list. That allow-list does not cover guest
+// storefront flows that exist in app/[slug] — /{slug}/order/verify/[orderNumber],
+// /{slug}/ayuda, /{slug}/soporte and /{slug}/chat. Enabling it as-is would
+// redirect anonymous customers trying to verify an order to /auth.
+//
+// The active session layer lives in src/middleware.ts and relies on per-route
+// layouts for authorization (defense in depth, stricter than this list).
+// Adopting updateProxy requires an explicit decision about which storefront
+// routes are public. Until then this file must stay importable-but-unused.
+//
+// ⚠️ The unit tests for this file prove the RULES are correct; they do NOT
+// prove it runs. Do not read a green suite as coverage of live behavior.
 // =====================================================
 // Description: Supabase client for Next.js proxy
-// Usage: Import from '@/lib/supabase/proxy'
+// Usage: (currently none) — was imported from '@/lib/supabase/proxy'
 // =====================================================
 
 import { env } from '@/config/env';

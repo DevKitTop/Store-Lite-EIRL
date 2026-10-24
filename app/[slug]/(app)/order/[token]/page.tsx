@@ -1313,11 +1313,9 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
           <div className="sticky-chat">
             <OrderChatSection
               businessName={order.business.name}
-              businessId={order.business.id}
               paymentId={order.id}
               buyerEmail={order.buyerEmail ?? null}
               buyerName={null}
-              buyerDni={order.buyerDni ?? null}
               trackingToken={token}
             />
           </div>

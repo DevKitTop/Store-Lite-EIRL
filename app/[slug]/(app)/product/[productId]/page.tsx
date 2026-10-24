@@ -4,6 +4,7 @@ import { products as productsTable } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { buildProductBreadcrumbs } from '@/shared/seo/buildStorefrontBreadcrumbs';
 import { buildProductDescription, buildProductTitle } from '@/shared/seo/buildStorefrontMeta';
+import { toSafeJsonLd } from '@/shared/utils/safeJsonLd';
 import { getCanonicalBusinessUrl } from '@/shared/utils/url';
 import { and, eq, or } from 'drizzle-orm';
 import type { Metadata } from 'next';
@@ -138,13 +139,13 @@ export default async function ProductDetailPage({ params }: Props) {
       {jsonLd && (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          dangerouslySetInnerHTML={{ __html: toSafeJsonLd(jsonLd) }}
         />
       )}
       {breadcrumbJsonLd && (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+          dangerouslySetInnerHTML={{ __html: toSafeJsonLd(breadcrumbJsonLd) }}
         />
       )}
       <ProductDetailContent

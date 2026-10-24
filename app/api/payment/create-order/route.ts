@@ -66,18 +66,31 @@ export async function POST(request: Request) {
       );
     }
 
-    const { amount, currency, email, phone, customerName, businessId, productId, description } =
-      validationResult.data;
+    const {
+      amount,
+      currency,
+      email,
+      phone,
+      customerName,
+      businessId,
+      productId,
+      description,
+      cartItems,
+    } = validationResult.data;
 
     // ─── PRICE REVALIDATION (fix-price-tampering) ────────────────
-    // When the order is tied to a product, reject a client-supplied amount
-    // that doesn't match the authoritative price from the DB. Skipped for
-    // generic (non product-tied) orders where productId is absent.
-    if (productId) {
+    // When the order is tied to a product or a cart, reject a client-supplied
+    // amount that doesn't match the authoritative price(s) from the DB. A cart
+    // is authoritative for the reconciliation (R6); a product-less, cart-less
+    // order stays generic (no check). The first cart line anchors the check
+    // when no top-level productId was sent.
+    const revalidationProductId = productId ?? cartItems?.[0]?.id;
+    if (revalidationProductId) {
       const priceCheck = await validateAmount({
-        productId,
+        productId: revalidationProductId,
         businessId,
         clientAmount: amount,
+        cartItems,
       });
       if (!priceCheck.ok) {
         return NextResponse.json({ error: priceCheck.error }, { status: 400 });
@@ -243,6 +256,11 @@ export async function POST(request: Request) {
             orderNumber: culqiData.order_number,
             createdAt: new Date().toISOString(),
           },
+          // Durable fulfilment snapshot (R1/A1): the exact validated cart
+          // lines, persisted before any paid transition so the webhook flip
+          // can fulfil stock even if the charge call never happens. Never
+          // aliased into `metadata.productId` (the charge-route binding).
+          ...(cartItems !== undefined ? { cartItems } : {}),
         },
       })
       .returning();

@@ -17,6 +17,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -55,7 +56,18 @@ export const payments = pgTable(
     paymentMethod: text('payment_method', {
       enum: ['card', 'yape', 'plin', 'pago_efectivo', 'billetera_movil', 'cuotealo'],
     }).notNull(),
+    // The Culqi CHARGE id (`chr_...`) — the token flow's arbiter (design D13).
+    // This column holds the CHARGE id ONLY.
     culqiChargeId: text('culqi_charge_id').unique(),
+    // The Culqi ORDER id (`ord_...`) — the order flow's arbiter (design D13).
+    // Before this column existed, the order flow stored its `ord_...` id in
+    // `culqi_charge_id`, so one sale carried two different names depending on
+    // which writer touched it last, and the webhook's upsert on the charge id
+    // never matched the order-flow row ⇒ a second `payments` row per sale ⇒
+    // two claim keys ⇒ two stock decrements.
+    // The sale link is now the SAME-KIND equality
+    // `payments.culqi_order_id = payment_orders.culqi_order_id`.
+    culqiOrderId: text('culqi_order_id').unique(),
     culqiReferenceCode: text('culqi_reference_code'),
     culqiTrackingId: text('culqi_tracking_id'),
     buyerEmail: text('buyer_email').notNull(),
@@ -82,7 +94,7 @@ export const payments = pgTable(
     deliveryCodeHash: text('delivery_code_hash'),
     deliveryCodeExpiresAt: timestamp('delivery_code_expires_at', { withTimezone: true }),
     // Logistics & Shipping
-    orderNumber: text('order_number'),
+    orderNumber: text('order_number').notNull(),
     shippingType: shippingTypeEnum('shipping_type'),
     shippingDepartment: text('shipping_department'),
     shippingProvince: text('shipping_province'),
@@ -119,7 +131,9 @@ export const payments = pgTable(
     sellerUserIdIdx: index('idx_payments_seller_user_id').on(table.sellerUserId),
     statusIdx: index('idx_payments_status').on(table.status),
     culqiChargeIdIdx: index('idx_payments_culqi_charge_id').on(table.culqiChargeId),
+    culqiOrderIdIdx: index('idx_payments_culqi_order_id').on(table.culqiOrderId),
     createdAtIdx: index('idx_payments_created_at').on(table.createdAt.desc()),
+    orderNumberUnique: uniqueIndex('payments_order_number_unique').on(table.orderNumber),
     paymentsAmountPositive: check('payments_amount_positive', sql`${table.amount} > 0`),
   }),
 );
@@ -366,6 +380,44 @@ export const paymentIdempotencyKeys = pgTable(
 
 export type PaymentIdempotencyKey = typeof paymentIdempotencyKeys.$inferSelect;
 export type NewPaymentIdempotencyKey = typeof paymentIdempotencyKeys.$inferInsert;
+
+// =====================================================
+// TABLE: stock_movements — exactly-once fulfillment ledger (NEW-8)
+// =====================================================
+// One row per CLAIM. The unique (source_type, source_id) pair is the CAS unit:
+// `INSERT ... ON CONFLICT DO NOTHING ... RETURNING` lets the first trigger win
+// and every later trigger observe 0 rows (design D1-D3). `source_id` is
+// deliberately polymorphic (no FK): it points at either a `payments` row or a
+// `payment_orders` row depending on `source_type`. RLS is enabled with zero
+// policies in migration 0051 (0050 pattern) — Drizzle connects as `postgres`
+// and bypasses it, while PostgREST anon is denied.
+
+export const stockMovements = pgTable(
+  'stock_movements',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'restrict' }),
+    sourceType: text('source_type', { enum: ['payments', 'payment_orders'] }).notNull(),
+    sourceId: uuid('source_id').notNull(),
+    items: jsonb('items')
+      .$type<{ productId: string; quantity: number; applied: boolean }[]>()
+      .notNull()
+      .default([]),
+    outcome: text('outcome', { enum: ['fulfilled', 'partial', 'no_product'] }).notNull(),
+    fallbackQty1: boolean('fallback_qty1').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    sourceUnique: unique('stock_movements_source_unique').on(table.sourceType, table.sourceId),
+    businessIdIdx: index('idx_stock_movements_business_id').on(table.businessId),
+    createdAtIdx: index('idx_stock_movements_created_at').on(table.createdAt.desc()),
+  }),
+);
+
+export type StockMovement = typeof stockMovements.$inferSelect;
+export type NewStockMovement = typeof stockMovements.$inferInsert;
 
 // =====================================================
 // TYPE EXPORTS

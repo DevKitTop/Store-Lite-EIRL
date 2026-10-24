@@ -491,6 +491,89 @@ describe('Checkout — Culqi.order callback handling', () => {
   });
 });
 
+// =====================================================
+// CART SNAPSHOT — client forwards the durable snapshot (R1/A1, slice 2)
+// =====================================================
+
+describe('Checkout — cart snapshot forwarded to create-order', () => {
+  const PRODUCT_A = '660e8400-e29b-41d4-a716-446655440001';
+  const PRODUCT_B = '770e8400-e29b-41d4-a716-446655440002';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+
+    window.Culqi = {
+      publicKey: 'pk_test_xxx',
+      settings: vi.fn(),
+      options: vi.fn(),
+      open: vi.fn(),
+      close: vi.fn(),
+      culqi: vi.fn(),
+    } as unknown as Window['Culqi'] & {
+      settings: ReturnType<typeof vi.fn>;
+      options: ReturnType<typeof vi.fn>;
+      open: ReturnType<typeof vi.fn>;
+      close: ReturnType<typeof vi.fn>;
+    };
+  });
+
+  /** Reads the create-order request body the checkout actually sent. */
+  function createOrderBody(fetchMock: ReturnType<typeof vi.fn>): Record<string, unknown> {
+    const call = fetchMock.mock.calls.find(
+      ([url]: [string]) => url === '/api/payment/create-order',
+    );
+    expect(call).toBeDefined();
+    return JSON.parse((call?.[1] as RequestInit).body as string);
+  }
+
+  async function payWith(fetchMock: ReturnType<typeof vi.fn>, props: Record<string, unknown>) {
+    globalThis.fetch = fetchMock;
+    render(<Checkout {...props} />);
+    await fillCheckoutAndGoToPay();
+    fireEvent.click(screen.getByText(/Ir a Pagar/i));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/payment/create-order', expect.any(Object));
+    });
+  }
+
+  test('sends every cart line so a multi-item order can fulfil all of them', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, culqiOrderId: 'ord_test_123' }),
+    });
+
+    await payWith(fetchMock, {
+      ...createCheckoutProps({ totalAmount: 1500 }),
+      cartItems: [
+        createMockCartItem({ id: PRODUCT_A, quantity: 2 }),
+        createMockCartItem({ id: PRODUCT_B, quantity: 3, name: 'Pantalón' }),
+      ] as [CartItem, ...CartItem[]],
+    });
+
+    // The snapshot is the durable fulfilment channel (payment_orders.metadata):
+    // a multi-item order must NOT collapse into the first product only.
+    expect(createOrderBody(fetchMock).cartItems).toEqual([
+      { id: PRODUCT_A, quantity: 2 },
+      { id: PRODUCT_B, quantity: 3 },
+    ]);
+  });
+
+  test('sends the single line with its own quantity (one-unit cart stays one unit)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, culqiOrderId: 'ord_test_123' }),
+    });
+
+    await payWith(fetchMock, {
+      ...createCheckoutProps({ totalAmount: 1500 }),
+      cartItems: [createMockCartItem({ id: PRODUCT_A, quantity: 4 })] as [CartItem, ...CartItem[]],
+    });
+
+    expect(createOrderBody(fetchMock).cartItems).toEqual([{ id: PRODUCT_A, quantity: 4 }]);
+  });
+});
+
 describe('Checkout — Payment instructions overlay', () => {
   beforeEach(async () => {
     vi.clearAllMocks();

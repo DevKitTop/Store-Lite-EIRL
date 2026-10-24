@@ -9,6 +9,21 @@ const customerAuthSchema = z.object({
   avatarUrl: z.string().nullable().optional(),
 });
 
+/**
+ * Shared cart line contract (R1, slice 2). Used by the charge request
+ * (`metadata.cartItems`) and the create-order request (`cartItems`) so both
+ * flows validate and snapshot the exact `{ id, quantity }` shape that
+ * `validateAmount` reconciles and `payment_orders.metadata.cartItems` stores.
+ * Zod strips unknown keys, so client bookkeeping fields (name/price/stock)
+ * never reach the DB.
+ */
+export const cartItemsSchema = z.array(
+  z.object({
+    id: z.string().uuid(),
+    quantity: z.number().int().min(1).default(1),
+  }),
+);
+
 export const chargeRequestSchema = z
   .object({
     token: z.string().min(1, 'El token de Culqi es obligatorio').optional(),
@@ -41,14 +56,7 @@ export const chargeRequestSchema = z
             dni: z.string().optional(),
           })
           .optional(),
-        cartItems: z
-          .array(
-            z.object({
-              id: z.string().uuid(),
-              quantity: z.number().int().min(1),
-            }),
-          )
-          .optional(),
+        cartItems: cartItemsSchema.optional(),
       })
       .optional(),
   })
@@ -76,6 +84,7 @@ export const createOrderRequestSchema = z
     businessId: z.string().uuid('ID de negocio inválido'),
     productId: z.string().uuid('ID de producto inválido').optional(),
     description: z.string().optional(),
+    cartItems: cartItemsSchema.optional(),
   })
   .refine((data) => !data.customerName || isTwoWordName(data.customerName), {
     message: BUYER_NAME_ERROR_MESSAGE,

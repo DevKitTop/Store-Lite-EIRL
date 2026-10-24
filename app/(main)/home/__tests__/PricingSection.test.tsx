@@ -88,7 +88,6 @@ describe('PricingSection — pricing plans with toggle', () => {
       'Dashboard con métricas de ventas',
       'SEO avanzado: meta tags, JSON-LD y sitemap',
       'Asistente de IA para generar contenido y responder',
-      'WhatsApp integrado para atención al cliente',
       'Equipo de trabajo con 2 usuarios adicionales',
     ];
     const litePlusExtras = [
@@ -98,7 +97,7 @@ describe('PricingSection — pricing plans with toggle', () => {
       'Dashboard avanzado con métricas en tiempo real',
       'Soporte y feedback con prioridad alta',
     ];
-    expect(litePagoFeatures).toHaveLength(11);
+    expect(litePagoFeatures).toHaveLength(10);
     expect(litePlusExtras).toHaveLength(5);
 
     litePagoFeatures.forEach((f) => expect(screen.getByText(f)).toBeInTheDocument());
@@ -111,8 +110,8 @@ describe('PricingSection — pricing plans with toggle', () => {
     expect(screen.getAllByText('Hasta 300 productos publicados')).toHaveLength(1);
     expect(screen.getAllByText('SEO avanzado: meta tags, JSON-LD y sitemap')).toHaveLength(1);
 
-    // 11 check icons (Lite Pago) + 5 check icons (Lite Plus extras) + 1 all_inclusive (base line)
-    expect(screen.getAllByText('check')).toHaveLength(16);
+    // 10 check icons (Lite Pago) + 5 check icons (Lite Plus extras) + 1 all_inclusive (base line)
+    expect(screen.getAllByText('check')).toHaveLength(15);
     expect(screen.getAllByText('all_inclusive')).toHaveLength(1);
   });
 

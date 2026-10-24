@@ -9,7 +9,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'migrations');
-const SUPABASE_PROJECT_ID = 'likloeyrdzfsrwelpdoz'; // Store_Lite
+// Resolved from the environment so the concrete project ref never lands in git.
+const SUPABASE_PROJECT_ID = process.env.SUPABASE_PROJECT_ID || 'your-project-ref';
 
 async function applyMigration(migrationFile) {
   console.log(`📦 Applying migration: ${migrationFile}`);

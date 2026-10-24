@@ -1,199 +1,229 @@
-﻿// =====================================================
-// NEXT.JS PROXY (Next.js 16)
 // =====================================================
-// Description: Proxy (formerly Middleware) for route protection and session refresh
-// Usage: Automatically runs on all routes except static files
+// NEXT.JS PROXY — the single middleware entry point
+// =====================================================
+// ⚠️ THIS FILE MUST LIVE AT THE PROJECT ROOT.
+//
+// Next.js decides where to look for the proxy by where the App Router lives:
+// because this project uses `app/` at the root (not `src/app`), the proxy is
+// only picked up when it sits next to `app/`. A copy under `src/` is compiled
+// but never registered, so it silently never runs — which is exactly what had
+// been happening: the middleware lived at src/middleware.ts and had no effect
+// in any environment. That is why there was no edge rate limiting, no CSP and
+// no subdomain rewrite.
+//
+// Rules worth keeping:
+//   1. Exactly one `proxy.ts` / `middleware.ts` in the repo, at the root.
+//      tests/unit/middlewareWiring.test.ts fails if that stops being true.
+//   2. Do NOT export `runtime` here — Next.js rejects route segment config in
+//      a proxy file ("Proxy always runs on Node.js runtime").
+//   3. Unit tests that import this function prove nothing about whether
+//      Next.js calls it. Verify wiring empirically against a running server.
+//
+// Responsibilities, in order:
+//   1. Skip static assets
+//   2. Rate limiting + tenancy (delegated to lib/middleware/proxyPipeline)
+//   3. CSP + nonce
+//   4. Supabase session refresh + platform redirects
+//   5. Storefront rewrite for tenant subdomains
 // =====================================
 
-import { type NextRequest, NextResponse } from 'next/server';
-import { env } from './src/config/env';
-import {
-  checkRateLimit,
-  getClientIdentifier,
-  RATE_LIMITS,
-  type RateLimitConfig,
-} from './src/lib/rateLimit';
-import { updateProxy } from './src/lib/supabase/proxy';
-import { extractTenantSlugFromHost, isTenantHost } from './src/shared/utils/url';
+import { env } from '@/config/env';
+import { isPlatformOnlyPath, runProxyPipeline } from '@/lib/middleware/proxyPipeline';
+import { buildLoginRedirectPath, isPublicStorefrontPath } from '@/lib/middleware/routeProtection';
+import { applySecurityHeaders, buildCsp, createCspNonce } from '@/lib/middleware/securityHeaders';
+import { createServerClient } from '@supabase/ssr';
+import { NextResponse, type NextRequest } from 'next/server';
 
-/**
- * Proxy function (Next.js 16 convention)
- * Handles:
- * - Session refresh
- * - Route protection
- * - Redirects for authenticated/unauthenticated users
- * - Subdomain storefront rewrite (Phase 2)
- */
-export async function proxy(request: NextRequest) {
-  let rewriteUrl: URL | null = null;
-
-  // ── Rate limiting (step 0 — before everything else) ────
-  // Different limits based on route type.
-  // Auth and API routes are rate-limited; storefront is not (for now).
+export default async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
-  let rateLimitConfig: RateLimitConfig | null = null;
 
-  if (pathname.startsWith('/auth/')) {
-    rateLimitConfig = RATE_LIMITS.auth;
-  } else if (pathname.startsWith('/api/')) {
-    rateLimitConfig = RATE_LIMITS.api;
+  // ── 1. Static assets are left alone ────────────────────
+  // NOTE: /api is intentionally NOT skipped here — it must pass through the
+  // rate limiter below. It is short-circuited right after, before the CSP and
+  // session layers, so API responses stay untouched.
+  if (pathname.startsWith('/_next') || pathname.startsWith('/static') || pathname.includes('.')) {
+    return NextResponse.next();
   }
 
-  if (rateLimitConfig) {
-    const clientIp = getClientIdentifier(request);
-    const result = checkRateLimit(clientIp, rateLimitConfig);
+  const isApiRequest = pathname.startsWith('/api');
 
-    if (!result.allowed) {
-      return new NextResponse(
-        JSON.stringify({ error: 'Too many requests. Please try again later.' }),
-        {
-          status: 429,
-          headers: {
-            'Retry-After': String(Math.ceil(result.resetInMs / 1000)),
-            'Content-Type': 'application/json',
-            'X-RateLimit-Remaining': '0',
-            'X-RateLimit-Reset': String(Math.ceil(result.resetInMs / 1000)),
-          },
+  // ── 2. Rate limiting + tenancy ─────────────────────────
+  // May mutate request.nextUrl.pathname when a tenant rewrite applies, so the
+  // session layer below evaluates the internal /{slug}/... route.
+  const outcome = runProxyPipeline(request);
+
+  if (outcome.kind === 'rateLimited') {
+    return new NextResponse(
+      JSON.stringify({ error: 'Too many requests. Please try again later.' }),
+      {
+        status: 429,
+        headers: {
+          'Retry-After': String(outcome.retryAfterSeconds),
+          'Content-Type': 'application/json',
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': String(outcome.resetAfterSeconds),
         },
+      },
+    );
+  }
+
+  if (outcome.kind === 'platformRedirect') {
+    return NextResponse.redirect(outcome.location, 302);
+  }
+
+  const { rewriteUrl } = outcome;
+
+  // API routes handle their own authorization server-side and must resolve at
+  // /api/..., never /{slug}/api/... They skip CSP (JSON responses) and the
+  // session refresh.
+  if (isApiRequest) {
+    return NextResponse.next();
+  }
+
+  // ── 3. CSP + nonce ─────────────────────────────────────
+  const nonce = createCspNonce();
+  const isDev = process.env.NODE_ENV !== 'production';
+
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-nonce', nonce);
+  requestHeaders.set('Content-Security-Policy', buildCsp(nonce, isDev));
+
+  // Reading the nonce in the App Router requires forwarding the overridden
+  // request headers; mutating `request` alone is not enough.
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  applySecurityHeaders(response, nonce, isDev);
+
+  // ── 4. Session refresh + platform redirects ────────────
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            request.cookies.set(name, value);
+            // Shared cookie domain keeps the session alive across tenant
+            // subdomains when the rewrite feature is enabled. Unset in most
+            // environments, in which case cookies stay host-only.
+            response.cookies.set(
+              name,
+              value,
+              env.sharedCookieDomain ? { ...options, domain: env.sharedCookieDomain } : options,
+            );
+          });
+        },
+      },
+    },
+  );
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // Logged-out visitors reach the public storefront; every other storefront
+  // route bounces to login with a sanitized return URL (PR B's callback will
+  // honour it). The pipeline above already rewrote the pathname for tenant
+  // subdomains, so this gate evaluates the internal /{slug}/... route.
+  // `/`, platform paths (/auth*, /pricing, /onboarding, ...) and /api/* keep
+  // their existing behaviour.
+  //
+  // DENY-BY-DEFAULT (deliberate): this is an auth boundary, so the default is
+  // closed — fail-closed beats fail-open here. An unknown multi-segment path
+  // such as /beta/foo therefore lands on login (302) rather than 404: a future
+  // seller surface stays protected even before anyone lists it in the
+  // allow-list. Do NOT "fix" this into a 404.
+  if (!user) {
+    const loggedOutPathname = request.nextUrl.pathname;
+    const mustRedirectToLogin =
+      loggedOutPathname !== '/' &&
+      !isPlatformOnlyPath(loggedOutPathname) &&
+      !isPublicStorefrontPath(loggedOutPathname);
+
+    if (mustRedirectToLogin) {
+      const loginRedirect = NextResponse.redirect(
+        new URL(buildLoginRedirectPath(request.nextUrl), request.url),
+        302,
       );
+      // The decision depends on the session cookie: never let a shared cache
+      // store an auth redirect.
+      loginRedirect.headers.set('Cache-Control', 'no-store');
+      loginRedirect.headers.set('Vary', 'Cookie');
+      copySessionCookies(response, loginRedirect);
+      return loginRedirect;
     }
+
+    return finishResponse({ sessionResponse: response, rewriteUrl, requestHeaders, nonce, isDev });
   }
 
-  // Rutas exclusivas de la plataforma (/auth, /pricing, ...) solicitadas por
-  // un subdominio tenant: se redirigen al dominio principal ANTES de cualquier
-  // rewrite. Ver getTenantPlatformRedirect() para el detalle.
-  const platformRedirect = getTenantPlatformRedirect(request);
-  if (platformRedirect) {
-    return platformRedirect;
+  // Authenticated: honour the remembered business. On a tenant subdomain the
+  // rewrite already turned "/" into "/{slug}", so these never fire there.
+  const selectedSlug = request.cookies.get('selected_business_slug')?.value;
+
+  if (request.nextUrl.pathname === '/' && selectedSlug) {
+    return NextResponse.redirect(new URL(`/${selectedSlug}`, request.url));
   }
 
-  // Phase 2: Subdomain storefront rewrite
-  // Cuando FEATURE_SUBDOMAIN_REWRITE esta habilitado, detectamos subdominios
-  // de negocio (ej: mi-tienda.store-lite.com) y reescribimos el pathname
-  // internamente para que Next.js sirva el contenido desde /[slug]/...
-  rewriteUrl = getStorefrontRewriteUrl(request);
-
-  const response = await updateProxy(request);
-
-  // Si hay subdominio tenant, Next necesita un rewrite real para rutear a
-  // app/[slug]. Mutar request.nextUrl + NextResponse.next() NO cambia la ruta
-  // que resuelve el App Router; por eso antes caia en la landing de '/'.
-  // Propagamos las cookies que updateProxy haya modificado.
-  if (rewriteUrl && response.status === 200) {
-    const rewrittenResponse = NextResponse.rewrite(rewriteUrl, { request });
-    response.cookies.getAll().forEach((cookie) => {
-      rewrittenResponse.cookies.set(cookie.name, cookie.value);
-    });
-    return rewrittenResponse;
+  if (request.nextUrl.pathname === '/') {
+    return NextResponse.redirect(new URL('/onboarding', request.url));
   }
 
-  return response;
+  if (request.nextUrl.pathname === '/list-business' && selectedSlug) {
+    return NextResponse.redirect(new URL(`/${selectedSlug}`, request.url));
+  }
+
+  // ── 5. Storefront rewrite / normal pass-through ────────
+  return finishResponse({ sessionResponse: response, rewriteUrl, requestHeaders, nonce, isDev });
 }
 
 /**
- * Obtiene el hostname real de la request.
+ * Returns the response that actually goes out.
  *
- * En desarrollo, request.nextUrl.hostname puede normalizarse a "localhost"
- * aunque el navegador haya enviado "store-girl.localhost:3000" en el header
- * Host. Para tenancy por subdominio necesitamos el Host real; si usamos
- * nextUrl.hostname, el proxy no ve el subdominio y termina renderizando "/"
- * (landing del SaaS).
+ * When a tenant rewrite applies we need a real rewrite — `NextResponse.next()`
+ * does not change the route the App Router resolves, which is why storefront
+ * subdomains used to land on the SaaS landing page. Refreshed session cookies
+ * are carried over, and the shared cookie domain is re-applied because
+ * `cookies.getAll()` drops the options.
  */
-function getRequestHostname(request: NextRequest): string {
-  return (
-    request.headers.get('x-forwarded-host') ??
-    request.headers.get('host') ??
-    request.nextUrl.hostname
-  );
+function finishResponse(context: {
+  sessionResponse: NextResponse;
+  rewriteUrl: URL | null;
+  requestHeaders: Headers;
+  nonce: string;
+  isDev: boolean;
+}): NextResponse {
+  const { sessionResponse, rewriteUrl, requestHeaders, nonce, isDev } = context;
+
+  if (!rewriteUrl || sessionResponse.status !== 200) {
+    return sessionResponse;
+  }
+
+  const rewritten = NextResponse.rewrite(rewriteUrl, { request: { headers: requestHeaders } });
+
+  copySessionCookies(sessionResponse, rewritten);
+
+  applySecurityHeaders(rewritten, nonce, isDev);
+
+  return rewritten;
 }
 
 /**
- * Prefijos de rutas que solo existen en el dominio de la plataforma.
- * El match es exacto o por sub-path (/auth/customer sí, /authenticate no).
+ * Carries refreshed session cookies from the session layer's response onto
+ * another response (rewrite or redirect). Re-applies the shared cookie domain
+ * because `cookies.getAll()` drops the options.
  */
-const PLATFORM_ONLY_PREFIXES = [
-  '/auth',
-  '/pricing',
-  '/created',
-  '/list-business',
-  '/onboarding',
-] as const;
-
-/**
- * Determina si un pathname es una ruta exclusiva de la plataforma.
- */
-function isPlatformOnlyPath(pathname: string): boolean {
-  return PLATFORM_ONLY_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
+function copySessionCookies(from: NextResponse, to: NextResponse): void {
+  from.cookies.getAll().forEach((cookie) => {
+    to.cookies.set(
+      cookie.name,
+      cookie.value,
+      env.sharedCookieDomain ? { domain: env.sharedCookieDomain } : undefined,
+    );
+  });
 }
 
-/**
- * Redirect (302) de rutas exclusivas de la plataforma cuando llegan por un
- * subdominio tenant.
- *
- * Estas rutas NO existen bajo app/[slug]/... Si se reescriben a /{slug}/...,
- * updateProxy() deja de reconocer /auth como ruta pública (muta el pathname
- * antes de evaluarlo) y responde con un redirect a /auth → loop infinito;
- * /pricing reescribe a una ruta inexistente → 404. Por eso se redirigen al
- * dominio de la plataforma, preservando pathname y query string. Devuelve
- * null cuando no aplica (host no tenant, flag apagada o ruta de storefront).
- */
-function getTenantPlatformRedirect(request: NextRequest): NextResponse | null {
-  if (!env.featureSubdomainRewrite) return null;
-  if (!isPlatformOnlyPath(request.nextUrl.pathname)) return null;
-
-  const hostname = getRequestHostname(request);
-  const slug = extractTenantSlugFromHost(hostname);
-  if (!slug || !isTenantHost(hostname)) return null;
-
-  const platformUrl = new URL(
-    `${request.nextUrl.pathname}${request.nextUrl.search}`,
-    env.nextPublicAppUrl,
-  );
-  return NextResponse.redirect(platformUrl, 302);
-}
-
-/**
- * Calcula la URL de rewrite del storefront para subdominios tenant.
- * Devuelve null cuando la request no debe reescribirse (flag apagada, host
- * no tenant, ruta /api/* o slug ya presente en el path).
- *
- * ⚠️ Efecto secundario intencional: muta request.nextUrl.pathname al path
- * interno /{slug}/... para que updateProxy() evalúe la ruta correcta.
- */
-function getStorefrontRewriteUrl(request: NextRequest): URL | null {
-  if (!env.featureSubdomainRewrite) return null;
-
-  const hostname = getRequestHostname(request);
-  const slug = extractTenantSlugFromHost(hostname);
-  if (!slug || !isTenantHost(hostname)) return null;
-
-  // 🚨 IMPORTANTE: Las rutas /api/* NO se reescriben
-  // Las API routes existen en app/api/... y deben resolver en su path
-  // canónico, no en /{slug}/api/... Si las reescribimos, dan 404.
-  // API routes: no tocar el pathname, dejar que resuelvan en /api/...
-  // El proxy igual va a correr updateProxy() para session management.
-  if (request.nextUrl.pathname.startsWith('/api/')) return null;
-
-  // Guard: No reescribir si el slug ya esta en el path (evita doble rewrite)
-  if (request.nextUrl.pathname.startsWith(`/${slug}`)) return null;
-
-  const rewriteUrl = request.nextUrl.clone();
-  rewriteUrl.pathname = `/${slug}${request.nextUrl.pathname}`;
-
-  // updateProxy() usa request.nextUrl.pathname para decidir si una ruta
-  // es publica/protegida. Mutamos el request para que esa logica vea la
-  // ruta interna /{slug}/..., pero el routing real de Next se hace abajo
-  // con NextResponse.rewrite(rewriteUrl). NextResponse.next() NO alcanza.
-  request.nextUrl.pathname = rewriteUrl.pathname;
-
-  return rewriteUrl;
-}
-
-/**
- * Matcher configuration
- */
 export const config = {
   matcher: [
     /*
@@ -202,7 +232,8 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      * - public folder
+     * - static image extensions
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|public/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };

@@ -401,17 +401,6 @@ export function ChatClient({
   useEffect(() => {
     chatDebug('subscriptions:start', { businessId });
 
-    // Get active WhatsApp channel for this business
-    let whatsappChannelId: string | null = null;
-    const fetchWhatsAppChannel = async () => {
-      const result = await fetchWhatsAppConversations(businessId);
-      if (result.channelConnected) {
-        whatsappChannelId = resolveChannelId(result);
-        setWhatsAppChannelId(whatsappChannelId);
-      }
-    };
-    fetchWhatsAppChannel();
-
     // Subscribe to new chat sessions for this business
     const sessionChannel = supabase
       .channel('public:chat_sessions_owner')
@@ -525,84 +514,10 @@ export function ChatClient({
         });
       });
 
-    // Subscribe to WhatsApp messages (if channel exists)
-    let whatsappMessageChannel: ReturnType<typeof supabase.channel> | null = null;
-    if (whatsappChannelId) {
-      whatsappMessageChannel = supabase
-        .channel('public:whatsapp_messages_owner')
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'whatsapp_messages',
-            filter: `channel_id=eq.${whatsappChannelId}`,
-          },
-          async (payload: RealtimePostgresInsertPayload<Record<string, unknown>>) => {
-            const newMessage = payload.new;
-            chatDebug('whatsappMessageChannel:insert', {
-              conversationId: String(newMessage.conversation_id),
-              messageId: String(newMessage.id),
-            });
-
-            const msgDate = new Date(String(newMessage.created_at));
-            const mappedMsg: Message = {
-              id: String(newMessage.id),
-              text: String(newMessage.body ?? ''),
-              sender: newMessage.direction === 'outbound' ? 'me' : 'them',
-              time: `${padTwo(msgDate.getHours())}:${padTwo(msgDate.getMinutes())}`,
-              chatId: String(newMessage.conversation_id),
-              createdAt: newMessage.created_at
-                ? new Date(String(newMessage.created_at)).toISOString()
-                : '',
-            };
-
-            // Update local cache
-            const conversationId = String(newMessage.conversation_id);
-            setMessagesByChatId((prev) => {
-              const chatMessages = prev[conversationId] ?? [];
-              if (chatMessages.some((m) => m.id === mappedMsg.id)) return prev;
-              return { ...prev, [conversationId]: [...chatMessages, mappedMsg] };
-            });
-
-            // Update preview in sidebar + INCREMENT UNREAD for non-selected chats
-            const previewText =
-              mappedMsg.sender === 'me' ? `Tú: ${mappedMsg.text}` : mappedMsg.text;
-            const previewTime = formatMessageTime(new Date(String(newMessage.created_at)));
-            setSessions((prev) =>
-              prev.map((chat) =>
-                chat.id === String(newMessage.conversation_id)
-                  ? {
-                      ...chat,
-                      preview: previewText,
-                      time: previewTime,
-                      lastMessageAt: String(newMessage.created_at),
-                      unread:
-                        chat.id === selectedSessionRef.current?.id
-                          ? chat.unread
-                          : (chat.unread ?? 0) + 1,
-                    }
-                  : chat,
-              ),
-            );
-          },
-        )
-        .subscribe((status: string, err?: Error) => {
-          chatDebug('whatsappMessageChannel:status', {
-            businessId,
-            status,
-            error: err?.message,
-          });
-        });
-    }
-
     return () => {
       chatDebug('subscriptions:cleanup', { businessId });
       supabase.removeChannel(sessionChannel);
       supabase.removeChannel(messageChannel);
-      if (whatsappMessageChannel) {
-        supabase.removeChannel(whatsappMessageChannel);
-      }
     };
   }, [businessId, supabase]);
 

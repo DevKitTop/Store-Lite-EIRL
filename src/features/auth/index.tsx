@@ -1,6 +1,7 @@
 'use client';
 
 import { createClient } from '@/lib/supabase/client';
+import { buildAuthCallbackUrl, extractRedirectFromSearch } from '@/shared/utils/redirectTarget';
 import type { AuthContextType, AuthSession, AuthUser } from '@/types/auth';
 import posthog from 'posthog-js';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -215,8 +216,20 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     process.env.NEXT_PUBLIC_AUTH_ORIGIN ||
     (typeof window !== 'undefined' ? window.location.origin : '');
 
+  /**
+   * Builds the OAuth callback URL for the current page, carrying the
+   * `?redirect=` target the storefront gate added when it blocked a deep link.
+   * A hostile or absent target degrades to the plain callback (see
+   * buildAuthCallbackUrl), so a crafted URL can never break sign-in.
+   */
+  const resolveAuthCallbackUrl = () =>
+    buildAuthCallbackUrl(
+      AUTH_ORIGIN,
+      extractRedirectFromSearch(typeof window !== 'undefined' ? window.location.search : ''),
+    );
+
   const signInWithGoogle = async () => {
-    const redirectUrl = `${AUTH_ORIGIN}/auth/callback`;
+    const redirectUrl = resolveAuthCallbackUrl();
     console.warn('🔗 Redirecting to:', redirectUrl);
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -254,7 +267,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     console.warn('🔍 [FB Debug] window.location.origin:', windowOrigin);
     console.warn('🔍 [FB Debug] AUTH_ORIGIN resolved:', AUTH_ORIGIN);
 
-    const redirectUrl = `${AUTH_ORIGIN}/auth/callback`;
+    const redirectUrl = resolveAuthCallbackUrl();
     console.warn('🔗 [FB Debug] Final redirectUrl sent to Supabase:', redirectUrl);
 
     const { error } = await supabase.auth.signInWithOAuth({

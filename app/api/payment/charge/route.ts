@@ -6,17 +6,30 @@
  */
 
 import { db } from '@/core/database/client';
-import {
-  businesses,
-  businessSettings,
-  paymentOrders,
-  payments,
-  products,
-} from '@/core/database/schema';
+import { businesses, paymentOrders, payments, products } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
+import { buildBuyerRateLimitKey } from '@/core/payments/buyerRateLimitKey';
 import { CulqiReadError, getCulqiOrder, isCulqiOrderPaid } from '@/core/payments/culqiOrders';
-import { completeIdempotencyKey, reserveIdempotencyKey } from '@/core/payments/idempotency';
+import { resolveCulqiSecretKey } from '@/core/payments/culqiSecretKey';
+import {
+  completeIdempotencyKey,
+  releaseIdempotencyKey,
+  reserveIdempotencyKey,
+} from '@/core/payments/idempotency';
+import { resolveOrderNumber } from '@/core/payments/orderNumber';
 import { paymentRateLimiter } from '@/core/payments/rateLimiter';
+import {
+  asMetadataObject,
+  findSalePaymentRow,
+  type SaleIdentity,
+} from '@/core/payments/saleIdentity';
+import {
+  emitFulfillmentAlerts,
+  fulfillPaidSale,
+  readFulfillmentCartItems,
+  type FulfillmentResult,
+  type FulfillmentSnapshot,
+} from '@/core/payments/stockFulfillment';
 import { generateTrackingToken } from '@/core/utils/trackingToken';
 import { validateAmount } from '@/features/billing/validateAmount';
 import { captureEvent } from '@/lib/analytics/capture';
@@ -28,7 +41,6 @@ import { createClient } from '@/lib/supabase/server';
 import { sendOrderStatusSms } from '@/lib/twilio/orderSms';
 import { splitFullName } from '@/shared/payments/fullName';
 import type { CulqiChargeResponse } from '@/types/culqi';
-import { decrypt } from '@/utils/crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
@@ -123,54 +135,6 @@ interface ShippingInfoData {
   ubigeo?: string;
 }
 
-// ─── Helper: Resolve and validate Culqi secret key ──────────────────
-async function resolveCulqiSecretKey(
-  businessId: string,
-): Promise<{ secretKey: string; error: NextResponse | null }> {
-  const settings = await db.query.businessSettings.findFirst({
-    where: eq(businessSettings.businessId, businessId),
-    columns: { culqiSecretKey: true },
-  });
-
-  if (!settings?.culqiSecretKey) {
-    return {
-      secretKey: '',
-      error: NextResponse.json(
-        { error: 'El negocio no tiene configurada pasarela de pagos' },
-        { status: 400 },
-      ),
-    };
-  }
-
-  const secretKey = decrypt(settings.culqiSecretKey);
-  const isProd = process.env.NODE_ENV === 'production';
-  const isKeyLive = secretKey.startsWith('sk_live');
-
-  if (isProd && !isKeyLive) {
-    return {
-      secretKey: '',
-      error: NextResponse.json(
-        { error: 'Configuración inválida: Se requiere una llave de producción (sk_live).' },
-        { status: 400 },
-      ),
-    };
-  }
-
-  if (!isProd && isKeyLive) {
-    return {
-      secretKey: '',
-      error: NextResponse.json(
-        {
-          error: 'Configuración inválida: No se permiten llaves sk_live en entorno de desarrollo.',
-        },
-        { status: 400 },
-      ),
-    };
-  }
-
-  return { secretKey, error: null };
-}
-
 // ─── Helper: Execute Culqi charge API call ──────────────────────────
 interface ExecuteCulqiChargeParams {
   token: string;
@@ -183,6 +147,7 @@ interface ExecuteCulqiChargeParams {
   productTitle?: string;
   businessId: string;
   productId: string;
+  qty?: number;
 }
 
 async function executeCulqiCharge({
@@ -196,6 +161,7 @@ async function executeCulqiCharge({
   productTitle,
   businessId,
   productId,
+  qty,
 }: ExecuteCulqiChargeParams): Promise<{
   culqiData: CulqiChargeResponse;
   error: NextResponse | null;
@@ -221,7 +187,7 @@ async function executeCulqiCharge({
       source_id: token,
       description: `Compra: ${productTitle || 'Producto'} - Store Lite`,
       antifraud_details,
-      metadata: { businessId, productId, platform: 'store-lite' },
+      metadata: { businessId, productId, platform: 'store-lite', qty },
     }),
   });
 
@@ -242,6 +208,29 @@ async function executeCulqiCharge({
   }
 
   return { culqiData, error: null };
+}
+
+/**
+ * Chooses the snapshot a sale is fulfilled from, following the SALE's channel
+ * (design D6/W-A/W-B). Returns `null` when an order-backed sale has no
+ * persisted cart: the caller MUST fail closed instead of trusting the request.
+ */
+function selectFulfillmentSnapshot(args: {
+  isOrderFlow: boolean;
+  persistedOrderMetadata: unknown;
+  paymentMetadata: unknown;
+  productId: string;
+}): FulfillmentSnapshot | null {
+  if (args.isOrderFlow) {
+    const cartItems = readFulfillmentCartItems(args.persistedOrderMetadata);
+    return cartItems ? { cartItems } : null;
+  }
+
+  return {
+    cartItems: readFulfillmentCartItems(args.paymentMetadata),
+    qty: null,
+    productId: args.productId,
+  };
 }
 
 // eslint-disable-next-line complexity, sonarjs/cognitive-complexity
@@ -305,6 +294,24 @@ export async function POST(request: Request) {
       );
     }
 
+    // ─── Buyer-scoped Rate Limit Check (W-P2) ──────────────────────
+    // A second, independent bucket scoped to the buyer so a single buyer can't
+    // fan out across many product/business combinations. Skipped when the
+    // request carries no buyer identity (nothing to scope by).
+    const buyerRateLimitKey = buildBuyerRateLimitKey({
+      businessId,
+      productId,
+      email: email || customerAuth?.email,
+      dni: rawShipping.dni,
+      authId: customerAuth?.authId,
+    });
+    if (buyerRateLimitKey && !paymentRateLimiter.check(buyerRateLimitKey)) {
+      return NextResponse.json(
+        { error: 'Demasiados intentos. Esperá unos segundos antes de reintentar.' },
+        { status: 429 },
+      );
+    }
+
     // ─── COMMON: Business lookup + Security checks ────────
     // 🔥 Must happen BEFORE any Culqi API call to prevent charging a blocked business
     const business = await db.query.businesses.findFirst({
@@ -356,6 +363,17 @@ export async function POST(request: Request) {
     const isOrderFlow = !!culqiOrderId;
     const isTokenFlow = !!token;
 
+    // The PERSISTED `payment_orders.metadata` read by the order-flow gate. It
+    // is the ONLY sanctioned fulfilment snapshot for an order-backed sale
+    // (W-B): the request cart is buyer-controlled and must never size the
+    // decrement. Declared here so the transaction below can use the value the
+    // gate already read from the database (no second read, no extra tx query).
+    let persistedOrderMetadata: unknown = null;
+
+    // ─── ORDER FLOW — LOCAL PRE-CHECKS ──────────────────────────────
+    // Everything here reads only our own DB and touches no external system, so
+    // it must run BEFORE the reservation: a rejected request (unknown order,
+    // underpayment, wrong product) must not burn an idempotency key.
     if (isOrderFlow) {
       // ORDER-BASED: Culqi Checkout ya cobró contra la orden
       // Solo creamos el payment en DB y marcamos la orden como pagada
@@ -380,6 +398,10 @@ export async function POST(request: Request) {
           { status: 404 },
         );
       }
+
+      // The persisted snapshot the fulfilment step must use (W-B). Captured
+      // from the row read above — never from the request.
+      persistedOrderMetadata = orderRow.metadata;
 
       // ─── BINDING: the verified payment must be what gets recorded ───
       // A paid Culqi order only authorises ITS OWN amount and product. Without
@@ -425,18 +447,45 @@ export async function POST(request: Request) {
           { status: 402 },
         );
       }
+    }
 
+    // ─── RESERVE THE IDEMPOTENCY KEY BEFORE ANY EXTERNAL CALL (W-P1) ──
+    // The key exists to stop two in-flight requests from both charging the
+    // buyer. Reserving AFTER the Culqi call (the previous order of operations)
+    // let two concurrent requests with the same key execute the external call
+    // twice and only then race on the key. Reserving first makes the call
+    // single-flight. Any attempt that fails before money moves releases the
+    // reservation (see `releaseIdempotencyKey`) so a genuine retry still works.
+    const idempotencyReservation = await reserveIdempotencyKey(idempotencyKey);
+    if (
+      idempotencyReservation?.type === 'replay' ||
+      idempotencyReservation?.type === 'processing'
+    ) {
+      return idempotencyReservation.response;
+    }
+    reservedIdempotencyKey = idempotencyReservation?.key ?? null;
+
+    // ─── EXTERNAL CALLS ─────────────────────────────────────────────
+    if (isOrderFlow) {
       const { secretKey, error: keyError } = await resolveCulqiSecretKey(businessId);
-      if (keyError) return keyError;
+      if (keyError) {
+        await releaseIdempotencyKey(reservedIdempotencyKey);
+        return keyError;
+      }
 
       let culqiOrderPaid = false;
       try {
         culqiOrderPaid = isCulqiOrderPaid(await getCulqiOrder(culqiOrderId as string, secretKey));
       } catch (err) {
+        await releaseIdempotencyKey(reservedIdempotencyKey);
         return culqiReadErrorResponse(err);
       }
 
       if (!culqiOrderPaid) {
+        // Not paid yet is recoverable: the buyer may retry once Culqi confirms.
+        // The order-flow key is deterministic per Culqi order, so leaving it
+        // reserved would replay this 402 forever.
+        await releaseIdempotencyKey(reservedIdempotencyKey);
         return NextResponse.json(
           {
             success: false,
@@ -449,7 +498,16 @@ export async function POST(request: Request) {
     } else if (isTokenFlow) {
       // TOKEN-BASED: Ejecutar el cargo contra Culqi con la key del negocio
       const { secretKey, error: keyError } = await resolveCulqiSecretKey(businessId);
-      if (keyError) return keyError;
+      if (keyError) {
+        await releaseIdempotencyKey(reservedIdempotencyKey);
+        return keyError;
+      }
+
+      // Scalar qty for the Culqi metadata: the bound line's quantity when the
+      // cart carries a line for this product, else 1. Never the cart array.
+      const boundQty =
+        metadata?.cartItems?.find((i: { id: string; quantity: number }) => i.id === productId)
+          ?.quantity ?? 1;
 
       const { culqiData: chargeResult, error: chargeError } = await executeCulqiCharge({
         token,
@@ -462,45 +520,46 @@ export async function POST(request: Request) {
         productTitle: undefined, // product title not needed for charge
         businessId,
         productId,
+        qty: boundQty,
       });
-      if (chargeError) return chargeError;
+      if (chargeError) {
+        await releaseIdempotencyKey(reservedIdempotencyKey);
+        return chargeError;
+      }
       culqiData = chargeResult;
     }
 
-    const idempotencyReservation = await reserveIdempotencyKey(idempotencyKey);
-    if (
-      idempotencyReservation?.type === 'replay' ||
-      idempotencyReservation?.type === 'processing'
-    ) {
-      return idempotencyReservation.response;
-    }
-    reservedIdempotencyKey = idempotencyReservation?.key ?? null;
+    // The replay lookup is KIND-CORRECT (design D13): an order-flow sale is
+    // keyed by `culqi_order_id`, a token-flow sale by `culqi_charge_id`. The
+    // old lookup matched EITHER id against `culqi_charge_id`, so the same sale
+    // could be found under two different names depending on who looked.
+    const existingPayment = await findSalePaymentRow<typeof payments.$inferSelect>(db, {
+      businessId,
+      culqiOrderId: isOrderFlow ? (culqiOrderId as string) : null,
+      culqiChargeId: isOrderFlow ? null : (culqiData?.id ?? null),
+    });
 
-    const culqiChargeIdForLookup = culqiOrderId || culqiData?.id || null;
-    if (culqiChargeIdForLookup) {
-      const existingPayment = await db.query.payments.findFirst({
-        where: and(
-          eq(payments.culqiChargeId, culqiChargeIdForLookup),
-          eq(payments.businessId, businessId),
-        ),
-      });
-
-      if (existingPayment) {
-        const responseBody = {
-          success: true,
-          payment: projectReplayPayment(existingPayment),
-          charge: {
-            id: culqiChargeIdForLookup,
-            status: 'paid',
-          },
-          replayed: true,
-        };
-        await completeIdempotencyKey(reservedIdempotencyKey, responseBody, 200);
-        return NextResponse.json(responseBody);
-      }
+    if (existingPayment) {
+      const responseBody = {
+        success: true,
+        payment: projectReplayPayment(existingPayment),
+        charge: {
+          id: culqiOrderId || culqiData?.id || null,
+          status: 'paid',
+        },
+        replayed: true,
+      };
+      await completeIdempotencyKey(reservedIdempotencyKey, responseBody, 200);
+      return NextResponse.json(responseBody);
     }
 
     // 🔥 ATOMICITY: Transacción de Base de Datos
+    // Declared outside the transaction on purpose: the fulfillment result must
+    // only be emitted once the transaction COMMITS. Logging inside the callback
+    // would report a rollback as a real event.
+    let fulfillmentAnchor: SaleIdentity | null = null;
+    let fulfillmentResult: FulfillmentResult | null = null;
+
     const result = await db.transaction(
       // eslint-disable-next-line complexity
       async (tx) => {
@@ -524,44 +583,95 @@ export async function POST(request: Request) {
         } else {
           pm = 'card';
         }
-        const culqiChargeId = culqiOrderId || culqiData?.id || null;
+        // The id columns are KIND-CORRECT (design D13): the order flow writes
+        // the Culqi ORDER id (`ord_...`) into `culqi_order_id` and leaves
+        // `culqi_charge_id` NULL; the token flow writes the Culqi CHARGE id
+        // (`chr_...`) into `culqi_charge_id` and leaves `culqi_order_id` NULL.
+        //
+        // The old code wrote the ORDER id into `culqi_charge_id`, so the SAME
+        // sale answered to a different name depending on which writer touched
+        // it last — and the webhook (which upserts on the CHARGE id) never
+        // matched the order-flow row, creating a second `payments` row for one
+        // sale and decrementing its stock twice.
+        const culqiChargeId = isOrderFlow ? null : (culqiData?.id ?? null);
+        const culqiOrderIdForRow = isOrderFlow ? (culqiOrderId as string) : null;
         const culqiRefCode = culqiData?.reference_code || null;
 
-        const [payment] = await tx
-          .insert(payments)
-          .values({
-            businessId,
-            productId,
-            sellerUserId: business.ownerId,
-            amount: String(amount / 100),
-            currency,
-            paymentMethod: pm,
-            culqiChargeId,
-            culqiReferenceCode: culqiRefCode,
-            buyerEmail: email || 'cliente@culqi.com',
-            buyerPhone: rawShipping.phone ?? null,
-            buyerDni: rawShipping.dni ?? null,
-            status: 'paid',
-            orderNumber: (metadata?.orderNumber as string) ?? null,
-            shippingType,
-            shippingDepartment: rawShipping.department ?? null,
-            shippingProvince: rawShipping.province ?? null,
-            shippingDistrict: rawShipping.district ?? null,
-            shippingAddress: rawShipping.address ?? null,
-            shippingAgency: rawShipping.agency ?? null,
-            shippingPhone: rawShipping.phone ?? null,
-            shippingReference: rawShipping.reference ?? null,
-            shippingUbigeo: rawShipping.ubigeo ?? null,
-            metadata: {
-              ...metadata,
-              culqiId: culqiChargeId,
-              ...(customerAuth ? { customerAuth } : {}),
-            },
-            trackingToken: generateTrackingToken(),
-          })
-          .returning();
+        // RESOLVE-THEN-ADOPT (design D13): the webhook may have created this
+        // sale's row before this transaction ran. Adopting that row keeps ONE
+        // row per sale; a blind insert would create a second one and the sale
+        // would be decremented twice.
+        const adoptedRow = await findSalePaymentRow(tx, {
+          businessId,
+          culqiOrderId: culqiOrderIdForRow,
+          culqiChargeId,
+        });
+
+        // The route-owned fields. On adopt they OVERWRITE the adopted row; the
+        // id columns and the tracking token are NOT route-owned and are never
+        // touched (the token is a unique buyer-facing link).
+        const routeOwnedValues = {
+          businessId,
+          productId,
+          sellerUserId: business.ownerId,
+          amount: String(amount / 100),
+          currency,
+          paymentMethod: pm,
+          culqiReferenceCode: culqiRefCode,
+          buyerEmail: email || 'cliente@culqi.com',
+          buyerPhone: rawShipping.phone ?? null,
+          buyerDni: rawShipping.dni ?? null,
+          status: 'paid' as const,
+          orderNumber: resolveOrderNumber(metadata?.orderNumber),
+          shippingType,
+          shippingDepartment: rawShipping.department ?? null,
+          shippingProvince: rawShipping.province ?? null,
+          shippingDistrict: rawShipping.district ?? null,
+          shippingAddress: rawShipping.address ?? null,
+          shippingAgency: rawShipping.agency ?? null,
+          shippingPhone: rawShipping.phone ?? null,
+          shippingReference: rawShipping.reference ?? null,
+          shippingUbigeo: rawShipping.ubigeo ?? null,
+        };
+
+        // The metadata MERGE: the adopted row may already carry the scalar
+        // `qty` the webhook recovered from the Culqi charge metadata. Merging
+        // (existing first, client's second) keeps that value while letting the
+        // route's own cart snapshot win.
+        const mergedMetadata = {
+          ...asMetadataObject(adoptedRow?.metadata),
+          ...metadata,
+          culqiId: culqiChargeId ?? culqiOrderIdForRow,
+          ...(customerAuth ? { customerAuth } : {}),
+        };
+
+        let payment: typeof payments.$inferSelect;
+        if (adoptedRow) {
+          const [updated] = await tx
+            .update(payments)
+            .set({ ...routeOwnedValues, metadata: mergedMetadata, updatedAt: new Date() })
+            .where(eq(payments.id, adoptedRow.id))
+            .returning();
+          payment = updated;
+        } else {
+          const [inserted] = await tx
+            .insert(payments)
+            .values({
+              ...routeOwnedValues,
+              culqiChargeId,
+              culqiOrderId: culqiOrderIdForRow,
+              metadata: mergedMetadata,
+              trackingToken: generateTrackingToken(),
+            })
+            .returning();
+          payment = inserted;
+        }
 
         // 5b. Si es pago contra orden, marcar la orden como pagada
+        // The row uuid the flip actually updated is the ONLY safe key for the
+        // `payment_orders` claim slot (R5): a text `culqiOrderId` would crash
+        // the uuid `source_id`. Null for the token flow.
+        let paymentOrderId: string | null = null;
         if (culqiOrderId) {
           const flipped = await tx
             .update(paymentOrders)
@@ -579,22 +689,76 @@ export async function POST(request: Request) {
           if (flipped?.length !== 1) {
             throw new Error('payment_orders flip affected no row');
           }
+          paymentOrderId = flipped[0].id;
         }
 
-        // 5. Actualizar Stock
-        const cartItems = (metadata?.cartItems as { id: string; quantity: number }[]) || [];
-        const itemsToUpdate = cartItems.length > 0 ? cartItems : [{ id: productId, quantity: 1 }];
+        // 5. Fulfill stock via the shared helper (NEW-8, design D1/D5).
+        //
+        // The helper owns the ONLY implementation of "decrement for a paid
+        // sale": it claims the sale's ordered key set in the `stock_movements`
+        // ledger (a CAS INSERT ... ON CONFLICT DO NOTHING ... RETURNING) in THIS
+        // SAME transaction, then applies the conditional, business-scoped
+        // decrement (`WHERE id AND businessId AND stock >= qty` with
+        // `.returning()`). An already-claimed sale (0 claim rows) skips the
+        // decrement without failing the payment — the loser of a race is not a
+        // failure (R2). GREATEST/rowCount are forbidden: `rowCount` is
+        // `undefined` on postgres-js and would fail open.
+        //
+        // The claim is an INSERT, never a third `tx.update`: tests pin exactly
+        // two `mockTxUpdate` calls in the order flow (flip first, decrement
+        // second).
+        //
+        // The claim keys come from the CANONICAL sale identity (design D14):
+        // the resolved `payment_orders` row FIRST, then the resolved `payments`
+        // row. Both are DB row uuids; a Culqi text id never becomes a
+        // `source_id` (R2).
+        const identity: SaleIdentity = {
+          paymentOrderId,
+          paymentId: payment.id,
+          businessId,
+          culqiOrderId: culqiOrderIdForRow,
+          culqiChargeId,
+        };
 
-        for (const item of itemsToUpdate) {
-          await tx
-            .update(products)
-            .set({ stock: sql`GREATEST(${products.stock} - ${Math.max(1, item.quantity)}, 0)` })
-            .where(eq(products.id, item.id));
+        // W-B: the snapshot source follows the SALE's channel, never the
+        // request. An order-backed sale fulfils from the PERSISTED
+        // `payment_orders.metadata.cartItems` written by create-order. The
+        // request cart is buyer-controlled, so it MUST NOT size the decrement.
+        //
+        // If the persisted snapshot is absent or unusable the sale FAILS
+        // CLOSED: no claim, no decrement. It must never fall back to the
+        // request cart — that fallback is the W-B defect this branch closes.
+        // The sale stays unclaimed, so the D10 backstop can heal it later from
+        // the persisted rows.
+        const fulfillmentSnapshot = selectFulfillmentSnapshot({
+          isOrderFlow,
+          persistedOrderMetadata,
+          paymentMetadata: payment.metadata,
+          productId,
+        });
+
+        if (fulfillmentSnapshot) {
+          fulfillmentResult = await fulfillPaidSale(identity, fulfillmentSnapshot, { tx });
+          fulfillmentAnchor = identity;
         }
 
         return payment;
       },
     );
+
+    // A sale without enough stock is an operational incident: the buyer was
+    // charged for units that did not exist. Emitted POST-COMMIT only, through
+    // the helper's exported emitter (design D5).
+    //
+    // The emitter deliberately uses console.error, NOT `logger.error`: the
+    // structured logger runs scrubPII, whose PHONE_REGEX matches any 6-11 digit
+    // run and therefore mangles UUIDs ("...446655440001" ->
+    // "...44665[REDACTED_PHONE]"), destroying the productId/businessId that make
+    // this alert actionable. Do not "upgrade" this call until the scrubber stops
+    // corrupting identifiers (B-07).
+    if (fulfillmentAnchor && fulfillmentResult) {
+      emitFulfillmentAlerts('charge', fulfillmentAnchor, fulfillmentResult);
+    }
 
     // ─── Notificar al negocio ───
     // Fire-and-forget: no fallar si la notificación falla

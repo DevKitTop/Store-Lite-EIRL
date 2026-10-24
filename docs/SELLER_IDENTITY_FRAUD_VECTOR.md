@@ -19,13 +19,14 @@ Translation: **Can a seller make sales (orders + payments) and then change their
 
 **YES — the fraud scenario is possible end-to-end.**
 
-A seller can take sales, then change logo, business name, **RUC/taxId**, legal-representative data, slug, and product titles/prices/images — with no validation tied to order history, no KYB re-verification, and no audit trail. Every *newly rendered* buyer-facing proof (verify page, tracking page, dashboards, subsequent emails/SMS) shows the **new** identity.
+A seller can take sales, then change logo, business name, **RUC/taxId**, legal-representative data, slug, and product titles/prices/images — with no validation tied to order history, no KYB re-verification, and no audit trail. Every _newly rendered_ buyer-facing proof (verify page, tracking page, dashboards, subsequent emails/SMS) shows the **new** identity.
 
 The only true snapshots persisted are `amount`, `orderNumber`, buyer contact, and cart item **IDs + quantities**.
 
 Compounding detail: the intended snapshot (`metadata.cartItems` name/price, built in `useCulqiCallback.ts`) is **silently stripped by zod** before persistence — so the traceability that was designed never reached the database.
 
 **What protects buyers today** (the only solid anchors):
+
 - Immutable FKs: `businessId`, `productId`, `sellerUserId`, `amount`, `culqiChargeId`, `createdAt`
 - `ON DELETE RESTRICT` FK blocks deleting products with payments
 - Server-side amount validation (tamper-proof)
@@ -33,16 +34,16 @@ Compounding detail: the intended snapshot (`metadata.cartItems` name/price, buil
 
 ## 3. Verdict Matrix
 
-| Sub-vector | Verdict | Evidence |
-|---|---|---|
-| Logo change after sales | **POSSIBLE** (untraced) | `app/actions/business.ts:82-162` — ownerId check only; old logo files **deleted from storage** (137-152). Rendered LIVE in tracking page `app/[slug]/(app)/order/[token]/page.tsx:715-728` |
-| Business name change after sales | **POSSIBLE** (untraced) | `app/actions/business.ts:164-232` (`updateBusinessData`) — raw `Partial<{...}>` spread straight into `db.update` (216-222), **no zod schema**, no order check, no audit row. Rendered LIVE: verify page `order/verify/[orderNumber]/page.tsx:203`, tracking page `:447,731` |
-| taxId (RUC) / legal rep change | **POSSIBLE** (worst) | Same `updateBusinessData` (fields 176-184). `verificationStatus='verified'` set once at creation (`app/create-business/actions.ts:239`) and **never re-checked on update**. Verify page prints `RUC: {business.taxId}` LIVE on "Comprobante Oficial Verificado" (`verify/page.tsx:205-209`). DB-level CHECK constraints **commented out** (`schema/businesses.ts:87-106`) |
-| URL/slug change | **POSSIBLE**, partially traced | `app/[slug]/(app)/settings/actions.ts:34-122` — plan-gated, format-checked, old slug recorded in `business_slug_aliases` (84-85) + reserved via `isBusinessSlugTaken` (`src/core/business/slug.ts:82-95`), PostHog event. BUT no order-awareness: old tracking links 404 (strict slug compare `order/[token]/page.tsx:69`; verify page does direct slug lookup `verify/page.tsx:31-41`, no alias resolution) |
-| Product edit after sale | **POSSIBLE** | `src/features/storage/actions/products.ts:345-489` — `updateProduct` freely rewrites title/price/description/images (media delete+reinsert 441-452) with **no check for existing payments**. Receipts render LIVE `products.title`/`products.price`: `verify/page.tsx:92-113`, `order/[token]/page.tsx:1363,1780`, seller dashboard `dashboard/page.tsx:439-441` |
-| Product delete after sale | **BLOCKED** (DB FK) | `products.ts:591-621` would delete, but FK `payments.productId → products.id ON DELETE RESTRICT` (`schema/orders.ts:47-49`) blocks it. Note: media deleted before the failing delete — non-atomic, minor |
-| Order display mutation | **POSSIBLE** (core laundering) | Everything buyer-facing is a **live join**: verify page `:31-41,92-113`, tracking page `:61-67`, `generateMetadata :36`. Immutable anchors that survive: `businessId`/`productId`/`sellerUserId`/`amount`/`culqiChargeId`/`createdAt` (FK restrict), `order_events`/`order_timeline_events` status history, idempotency keys |
-| Culqi side | **PARTIALLY-TRACED** | Charge metadata pins only `{businessId, productId, platform}` (`charge/route.ts:148`); description is literally `Compra: Producto - Store Lite` (`productTitle: undefined`, `:293`). Buyer card statement shows the seller's own Culqi merchant account — external, unlaunderable by SaaS. Amount tampering blocked server-side (`billing/validateAmount.ts:35-71` at `charge/route.ts:208-216`); self-purchase blocked (`:263-270`) |
+| Sub-vector                       | Verdict                        | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Logo change after sales          | **POSSIBLE** (untraced)        | `app/actions/business.ts:82-162` — ownerId check only; old logo files **deleted from storage** (137-152). Rendered LIVE in tracking page `app/[slug]/(app)/order/[token]/page.tsx:715-728`                                                                                                                                                                                                                                           |
+| Business name change after sales | **POSSIBLE** (untraced)        | `app/actions/business.ts:164-232` (`updateBusinessData`) — raw `Partial<{...}>` spread straight into `db.update` (216-222), **no zod schema**, no order check, no audit row. Rendered LIVE: verify page `order/verify/[orderNumber]/page.tsx:203`, tracking page `:447,731`                                                                                                                                                          |
+| taxId (RUC) / legal rep change   | **POSSIBLE** (worst)           | Same `updateBusinessData` (fields 176-184). `verificationStatus='verified'` set once at creation (`app/create-business/actions.ts:239`) and **never re-checked on update**. Verify page prints `RUC: {business.taxId}` LIVE on "Comprobante Oficial Verificado" (`verify/page.tsx:205-209`). DB-level CHECK constraints **commented out** (`schema/businesses.ts:87-106`)                                                            |
+| URL/slug change                  | **POSSIBLE**, partially traced | `app/[slug]/(app)/settings/actions.ts:34-122` — plan-gated, format-checked, old slug recorded in `business_slug_aliases` (84-85) + reserved via `isBusinessSlugTaken` (`src/core/business/slug.ts:82-95`), PostHog event. BUT no order-awareness: old tracking links 404 (strict slug compare `order/[token]/page.tsx:69`; verify page does direct slug lookup `verify/page.tsx:31-41`, no alias resolution)                         |
+| Product edit after sale          | **POSSIBLE**                   | `src/features/storage/actions/products.ts:345-489` — `updateProduct` freely rewrites title/price/description/images (media delete+reinsert 441-452) with **no check for existing payments**. Receipts render LIVE `products.title`/`products.price`: `verify/page.tsx:92-113`, `order/[token]/page.tsx:1363,1780`, seller dashboard `dashboard/page.tsx:439-441`                                                                     |
+| Product delete after sale        | **BLOCKED** (DB FK)            | `products.ts:591-621` would delete, but FK `payments.productId → products.id ON DELETE RESTRICT` (`schema/orders.ts:47-49`) blocks it. Note: media deleted before the failing delete — non-atomic, minor                                                                                                                                                                                                                             |
+| Order display mutation           | **POSSIBLE** (core laundering) | Everything buyer-facing is a **live join**: verify page `:31-41,92-113`, tracking page `:61-67`, `generateMetadata :36`. Immutable anchors that survive: `businessId`/`productId`/`sellerUserId`/`amount`/`culqiChargeId`/`createdAt` (FK restrict), `order_events`/`order_timeline_events` status history, idempotency keys                                                                                                         |
+| Culqi side                       | **PARTIALLY-TRACED**           | Charge metadata pins only `{businessId, productId, platform}` (`charge/route.ts:148`); description is literally `Compra: Producto - Store Lite` (`productTitle: undefined`, `:293`). Buyer card statement shows the seller's own Culqi merchant account — external, unlaunderable by SaaS. Amount tampering blocked server-side (`billing/validateAmount.ts:35-71` at `charge/route.ts:208-216`); self-purchase blocked (`:263-270`) |
 
 ## 4. Gaps Ranked by Severity
 
@@ -60,7 +61,7 @@ Compounding detail: the intended snapshot (`metadata.cartItems` name/price, buil
 > Decision: the full plan (snapshot, re-KYB, audit table, render-from-snapshot, RLS) is **explicitly out of scope**.
 > The approved fix closes the actionable fraud vector with two mutation guards:
 
-1. **Business identity guard** — if `payments.count(businessId) > 0`, block edits to *identity* fields:
+1. **Business identity guard** — if `payments.count(businessId) > 0`, block edits to _identity_ fields:
    blocked: `businessName`, `taxId` (RUC), `legalRep`, `address/city`, `slug/URL`
    allowed: logo, cover, description, contact info, plan/theme settings, etc.
 2. **Product guard** — if a product has sold (`payments.productId` exists), block edits to `title` and `price`;
@@ -87,6 +88,7 @@ business owner asked to stop. Historical orders are not rewritten.
 - [ ] T5. Tests — guards unit/integration: business with 0 sales can edit identity; business with sales cannot edit RUC/name/slug; product with sales cannot edit title/price; cosmetic fields still editable in both cases.
 
 ### Explicitly deferred (NOT in this fix)
+
 - Snapshot of identity/product on `payments` + render proofs from snapshot (Phase A/C/D of old plan)
 - Re-KYB flow for taxId changes
 - `business_identity_events` audit table + legal-hold bucket for logo/cover files

@@ -90,7 +90,9 @@ vi.mock('@/lib/deactivation', () => ({
 // Import after mocks
 import { ORDER_STATUS_V2 } from '@/core/orders/orderStatus';
 import { setOrderAccessCookie } from '@/lib/orderAccessCookie';
-import { autoFinalizeExpiredPayments, confirmFinalization } from '../finalizationActions';
+import * as finalizationActionsModule from '../finalizationActions';
+import { confirmFinalization } from '../finalizationActions';
+import { autoFinalizeExpiredPayments } from '../finalizationAutoFinalize';
 
 const VALID_TOKEN = 'valid-token';
 const INVALID_TOKEN = 'invalid-token';
@@ -331,5 +333,19 @@ describe('autoFinalizeExpiredPayments', () => {
 
     expect(result.success).toBe(true);
     expect(result.processedCount).toBe(0);
+  });
+});
+
+// NEW-1: the sweep used to be exported from a `'use server'` module, which
+// Next.js turns into a public RPC endpoint — with NO guard, it let any anonymous
+// caller flip every tenant's expired payments to `completed`. A cross-tenant
+// system job cannot be scoped to a `businessId`, so the fix is to remove the
+// endpoint, not to add a user-permission check: the function now lives in a
+// plain (non-`'use server'`) module, so there is no action id to invoke.
+describe('NEW-1 — autoFinalizeExpiredPayments is NOT exposed as a server action', () => {
+  it('is absent from the finalizationActions action surface', () => {
+    expect(
+      (finalizationActionsModule as Record<string, unknown>).autoFinalizeExpiredPayments,
+    ).toBeUndefined();
   });
 });

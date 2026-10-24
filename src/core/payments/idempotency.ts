@@ -1,6 +1,6 @@
 import { db } from '@/core/database/client';
 import { paymentIdempotencyKeys } from '@/core/database/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
 export type JsonResponseBody = Record<string, unknown>;
@@ -63,4 +63,30 @@ export async function completeIdempotencyKey(
       updatedAt: new Date(),
     })
     .where(eq(paymentIdempotencyKeys.key, key));
+}
+
+/**
+ * Releases a reservation so a genuine retry can attempt the charge again.
+ *
+ * W-P1 reserves the idempotency key BEFORE the external Culqi call (the key's
+ * whole purpose is to prevent two in-flight requests from double-charging). That
+ * means an attempt which fails BEFORE any money moves — a Culqi order read that
+ * times out, an order not yet paid, a declined card, a config error — must not
+ * leave the key parked at `processing`. For the ORDER flow the client key is
+ * deterministic per Culqi order (`charge-${culqiOrderId}`), so a stale
+ * reservation would replay the failure forever and permanently lock the buyer
+ * out of an order that later becomes payable.
+ *
+ * Deletion is guarded by `status = 'processing'` on purpose: a key that was
+ * concurrently completed (a committed payment, a recorded failure) must never be
+ * removed by a late release, or a replay would re-run the charge.
+ */
+export async function releaseIdempotencyKey(key: string | null): Promise<void> {
+  if (!key) return;
+
+  await db
+    .delete(paymentIdempotencyKeys)
+    .where(
+      and(eq(paymentIdempotencyKeys.key, key), eq(paymentIdempotencyKeys.status, 'processing')),
+    );
 }
