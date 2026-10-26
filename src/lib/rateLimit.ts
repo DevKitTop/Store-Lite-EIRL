@@ -34,6 +34,19 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
 
 const isTestEnv = () => process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
 
+function getShared() {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require('@/core/payments/rateLimitShared');
+    return mod;
+  } catch {
+    return {
+      checkRateLimitShared: async () => ({ allowed: true, remaining: 100, resetInMs: 60000 }),
+      resetRateLimitShared: async () => {},
+    };
+  }
+}
+
 // In-memory store (fallback)
 const store = new Map<string, RateLimitEntry>();
 
@@ -123,7 +136,10 @@ export async function checkRateLimitAsync(
 export function resetRateLimit(identifier: string, config: RateLimitConfig): void {
   store.delete(`${identifier}:${config.windowMs}`);
   if (!isTestEnv()) {
-    resetRateLimitSharedFn(identifier, config).catch(() => {});
+    const s = getShared();
+    if (typeof s.resetRateLimitShared === 'function') {
+      s.resetRateLimitShared(identifier, config).catch(() => {});
+    }
   }
 }
 
@@ -133,7 +149,10 @@ export async function resetRateLimitAsync(
 ): Promise<void> {
   resetRateLimit(identifier, config);
   if (!isTestEnv()) {
-    await resetRateLimitSharedFn(identifier, config).catch(() => {});
+    const s = getShared();
+    if (typeof s.resetRateLimitShared === 'function') {
+      await s.resetRateLimitShared(identifier, config).catch(() => {});
+    }
   }
 }
 
