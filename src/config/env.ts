@@ -95,9 +95,14 @@
   whatsappRateLimitWindowMinutes: process.env.WHATSAPP_RATE_LIMIT_WINDOW_MINUTES || '5',
 } as const;
 
+const isProd = process.env.NODE_ENV === 'production';
+
 // Optional: Add validation here to throw early if vars are missing
 if (!env.supabaseUrl || !env.supabaseAnonKey) {
   console.warn('Supabase environment variables are missing. Some features may not work.');
+}
+if (isProd && !env.supabaseServiceRoleKey) {
+  throw new Error('SUPABASE_SERVICE_ROLE_KEY is required in production');
 }
 
 // Twilio validation
@@ -115,6 +120,9 @@ if (!env.resendApiKey || !env.resendFromEmail) {
 
 // OTP hash secret: warn if using dev fallback
 if (!process.env.OTP_HASH_SECRET) {
+  if (isProd) {
+    throw new Error('OTP_HASH_SECRET is required in production');
+  }
   console.warn(
     '[OTP] OTP_HASH_SECRET not set. Using DEV FALLBACK — DO NOT USE IN PRODUCTION. ' +
       'Set a strong random string in production.',
@@ -125,6 +133,9 @@ if (!process.env.OTP_HASH_SECRET) {
 // asymmetry with the message above — here the unset state denies everything, it
 // does not fall back.
 if (!process.env.ORDER_ACCESS_COOKIE_SECRET) {
+  if (isProd) {
+    throw new Error('ORDER_ACCESS_COOKIE_SECRET is required in production');
+  }
   console.warn(
     '[Orders] ORDER_ACCESS_COOKIE_SECRET not set. Order pages will serve the PII-free ' +
       'projection and never grant full access. Set a strong random string in production.',
@@ -137,7 +148,7 @@ if (!env.metaPixelId) {
   console.warn('NEXT_PUBLIC_META_PIXEL_ID is missing. Meta Pixel tracking will not load.');
 }
 if (!env.metaCapiAccessToken) {
-  console.warn('META_CAPI_ACCESS_TOKEN is missing. Meta CAPI events will not be sent.');
+  console.warn('META_CAPI_ACCESS_TOKEN is missing. Meta CAPI events will not sent.');
 }
 
 // YCloud WhatsApp validation
@@ -151,4 +162,24 @@ if (!env.ycloudWebhookSecret) {
   console.warn(
     'YCLOUD_WEBHOOK_SECRET is missing. Webhook signature verification will be skipped in development.',
   );
+}
+
+// Critical secrets for payments/webhooks
+if (isProd) {
+  if (!env.cronSecret) {
+    throw new Error('CRON_SECRET is required in production');
+  }
+  if (!env.culqiWebhookUser || !env.culqiWebhookPass) {
+    throw new Error('CULQI_WEBHOOK_USER and CULQI_WEBHOOK_PASS are required in production');
+  }
+  if (!env.sassApiKey) {
+    throw new Error('SASS_API_KEY is required in production');
+  }
+} else {
+  if (!env.cronSecret)
+    console.warn('[cron] CRON_SECRET not set. Cron endpoints may be unprotected.');
+  if (!env.culqiWebhookUser || !env.culqiWebhookPass)
+    console.warn(
+      '[culqi-webhook] CULQI_WEBHOOK_USER/PASS not set. Basic auth may be disabled in dev.',
+    );
 }
