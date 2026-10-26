@@ -437,3 +437,24 @@ export type NewSellerPayoutAccount = typeof sellerPayoutAccounts.$inferInsert;
 
 export type PlanPayment = typeof planPayments.$inferSelect;
 export type NewPlanPayment = typeof planPayments.$inferInsert;
+
+// =====================================================
+// TABLE: webhook_events — Shared deduplication across instances
+// =====================================================
+
+export const webhookEvents = pgTable(
+  'webhook_events',
+  {
+    eventId: text('event_id').primaryKey(),
+    eventType: text('event_type'),
+    processedAt: timestamp('processed_at', { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    expiresAtIdx: index('idx_webhook_events_expires_at').on(table.expiresAt),
+    processedAtIdx: index('idx_webhook_events_processed_at').on(table.processedAt),
+  }),
+);
+
+export type WebhookEvent = typeof webhookEvents.$inferSelect;
+export type NewWebhookEvent = typeof webhookEvents.$inferInsert;

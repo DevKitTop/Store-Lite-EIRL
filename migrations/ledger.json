@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-22T01:31:54.849Z",
+  "generatedAt": "2026-10-26T14:31:04.725Z",
   "counts": {
-    "sql": 80,
+    "sql": 81,
     "journal": 24,
-    "unjournaled": 56
+    "unjournaled": 57
   },
   "files": [
     {
@@ -405,6 +405,11 @@
     {
       "file": "0052_payments_culqi_order_id.sql",
       "prefix": "0052",
+      "method": "manual"
+    },
+    {
+      "file": "0053_webhook_events_dedup.sql",
+      "prefix": "0053",
       "method": "manual"
     }
   ],
