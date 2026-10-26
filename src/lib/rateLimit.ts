@@ -34,10 +34,9 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
 
 const isTestEnv = () => process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
 
-function getShared() {
+async function getShared() {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require('@/core/payments/rateLimitShared');
+    const mod = await import('@/core/payments/rateLimitShared');
     return mod;
   } catch {
     return {
@@ -86,20 +85,22 @@ export function checkRateLimit(
     store.set(key, { count: 1, resetAt: now + config.windowMs });
   // Fire and forget to sync to shared store
   if (!isTestEnv()) {
-    const s = getShared();
-    if (typeof s.checkRateLimitShared === 'function') {
-      s.checkRateLimitShared(identifier, config).catch(() => {});
-    }
+    void getShared().then((s) => {
+      if (typeof s.checkRateLimitShared === 'function') {
+        s.checkRateLimitShared(identifier, config).catch(() => {});
+      }
+    });
   }
   return { allowed: true, remaining: config.maxRequests - 1, resetInMs: config.windowMs };
 }
 
 entry.count += 1;
 if (!isTestEnv()) {
-  const s = getShared();
-  if (typeof s.checkRateLimitShared === 'function') {
-    s.checkRateLimitShared(identifier, config).catch(() => {});
-  }
+  void getShared().then((s) => {
+    if (typeof s.checkRateLimitShared === 'function') {
+      s.checkRateLimitShared(identifier, config).catch(() => {});
+    }
+  });
 }
   if (entry.count > config.maxRequests) {
     return { allowed: false, remaining: 0, resetInMs: entry.resetAt - now };
@@ -120,7 +121,7 @@ export async function checkRateLimitAsync(
     return checkRateLimit(identifier, config);
   }
   try {
-    const s = getShared();
+    const s = await getShared();
     if (typeof s.checkRateLimitShared === 'function') {
       return await s.checkRateLimitShared(identifier, config);
     }
@@ -136,10 +137,11 @@ export async function checkRateLimitAsync(
 export function resetRateLimit(identifier: string, config: RateLimitConfig): void {
   store.delete(`${identifier}:${config.windowMs}`);
   if (!isTestEnv()) {
-    const s = getShared();
-    if (typeof s.resetRateLimitShared === 'function') {
-      s.resetRateLimitShared(identifier, config).catch(() => {});
-    }
+    void getShared().then((s) => {
+      if (typeof s.resetRateLimitShared === 'function') {
+        s.resetRateLimitShared(identifier, config).catch(() => {});
+      }
+    });
   }
 }
 
@@ -149,9 +151,13 @@ export async function resetRateLimitAsync(
 ): Promise<void> {
   resetRateLimit(identifier, config);
   if (!isTestEnv()) {
-    const s = getShared();
-    if (typeof s.resetRateLimitShared === 'function') {
-      await s.resetRateLimitShared(identifier, config).catch(() => {});
+    try {
+      const s = await getShared();
+      if (typeof s.resetRateLimitShared === 'function') {
+        await s.resetRateLimitShared(identifier, config).catch(() => {});
+      }
+    } catch {
+      // ignore
     }
   }
 }
