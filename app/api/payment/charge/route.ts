@@ -429,7 +429,7 @@ export async function POST(request: Request) {
             extra: { culqiOrderId, expectedAmount: orderAmountMinor, providedAmount: amount },
           });
         } catch {
-          /* ignore */
+          // ignore
         }
         return NextResponse.json(
           {
@@ -511,7 +511,7 @@ export async function POST(request: Request) {
                 extra: { culqiOrderId, expectedAmount: authoritativeAmount, culqiAmount: co.amount },
               });
             } catch {
-              /* ignore */
+              // ignore
             }
             await releaseIdempotencyKey(reservedIdempotencyKey);
             return NextResponse.json(
@@ -548,7 +548,7 @@ export async function POST(request: Request) {
             extra: { culqiOrderId },
           });
         } catch {
-          /* ignore */
+          // ignore
         }
         // Not paid yet is recoverable: the buyer may retry once Culqi confirms.
         // The order-flow key is deterministic per Culqi order, so leaving it
