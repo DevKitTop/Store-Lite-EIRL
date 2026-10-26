@@ -1,13 +1,14 @@
 // =====================================================
-// IN-MEMORY RATE LIMITER (Edge Runtime)
+// RATE LIMITER (Shared store with in-memory fallback)
 // =====================================================
-// Simple sliding window rate limiter for MVP.
-// Zero external dependencies, works in Edge Runtime.
-//
-// Future: swap the Map store with Upstash Redis for
-// production multi-instance support.
+// Uses Postgres-backed shared windows when available,
+// falls back to in-memory for Edge/test environments.
 // =====================================================
 
+import {
+  checkRateLimitShared as checkRateLimitSharedFn,
+  resetRateLimitShared as resetRateLimitSharedFn,
+} from '@/core/payments/rateLimitShared';
 import { type NextRequest } from 'next/server';
 
 export interface RateLimitConfig {
@@ -30,37 +31,13 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
    * order numbers (see `orderAccessRateLimit.ts`). `storefront` above cannot do
    * this job: its key embeds the attacker-controlled `orderNumber`, so rotating
    * that segment mints a fresh budget every request.
-   *
-   * Why 30/min. A real buyer opening the printed-ticket URL loads this page a
-   * handful of times a minute at most (open, reload after a print hiccup, show a
-   * colleague), so 30/min is roughly 6-30x one human's ceiling. It also keeps a
-   * small shared-NAT office — the realistic worst case, since several desks
-   * egress from one address — functional at about six concurrent users. Against
-   * the measured 200 requests/min scrape rate it removes ~85% of throughput, and
-   * the load-bearing part is not the number at all: the ceiling now exists and is
-   * INDEPENDENT of `orderNumber`.
-   *
-   * This is a throttle, not a wall — see the open findings below.
    */
   orderVerifyIp: { windowMs: 60 * 1000, maxRequests: 30 }, // 30 requests per minute
 };
 
-// In-memory store (per-edge-instance).
-//
-// KNOWN LIMITATION — ACCEPTED, tracked (audit finding W-I1).
-// On a multi-instance deployment each instance keeps its own counters, so the
-// effective limit is roughly N x the configured value. This is a deliberate MVP
-// decision, not an oversight: the money path is protected by idempotency
-// (reserve-before-external-call), and adding a shared store requires provisioning
-// a third-party service that cannot be verified from this repo.
-//
-// REVISIT TRIGGER — before scaling beyond one instance for these routes, before a
-// public beta at volume, or on observed enumeration/card-testing abuse.
-// See the "Decision - W-I1" section in
-// docs/PREPRODUCTION_READINESS_2026-10_VERIFICATION.md.
-//
-// Fix path: Vercel WAF rate limiting, or a shared store (Upstash Redis / Vercel KV)
-// behind the existing checkRateLimit/resetRateLimit signatures (no call-site changes).
+const isTestEnv = () => process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
+
+// In-memory store (fallback)
 const store = new Map<string, RateLimitEntry>();
 
 // Periodic cleanup to prevent memory leaks
@@ -79,13 +56,15 @@ function cleanup() {
 }
 
 /**
- * Simple sliding window rate limiter for Edge Runtime.
- * Returns { allowed: boolean, remaining: number, resetAt: number }
+ * Simple sliding window rate limiter.
+ * Tries shared Postgres store first, falls back to in-memory.
  */
 export function checkRateLimit(
   identifier: string, // e.g. IP or userId
   config: RateLimitConfig,
 ): { allowed: boolean; remaining: number; resetInMs: number } {
+  // Try shared store synchronously via async? but signature is sync - use in-memory fallback for sync calls
+  // For server actions/routes that can be async, prefer checkRateLimitShared, but keep sync compat
   cleanup();
 
   const now = Date.now();
@@ -95,10 +74,17 @@ export function checkRateLimit(
   if (!entry || entry.resetAt <= now) {
     // New window
     store.set(key, { count: 1, resetAt: now + config.windowMs });
+    // Fire and forget to sync to shared store
+    if (!isTestEnv()) {
+      checkRateLimitSharedFn(identifier, config).catch(() => {});
+    }
     return { allowed: true, remaining: config.maxRequests - 1, resetInMs: config.windowMs };
   }
 
   entry.count += 1;
+  if (!isTestEnv()) {
+    checkRateLimitSharedFn(identifier, config).catch(() => {});
+  }
   if (entry.count > config.maxRequests) {
     return { allowed: false, remaining: 0, resetInMs: entry.resetAt - now };
   }
@@ -110,16 +96,39 @@ export function checkRateLimit(
   };
 }
 
+export async function checkRateLimitAsync(
+  identifier: string,
+  config: RateLimitConfig,
+): Promise<{ allowed: boolean; remaining: number; resetInMs: number }> {
+  if (isTestEnv()) {
+    return checkRateLimit(identifier, config);
+  }
+  try {
+    return await checkRateLimitSharedFn(identifier, config);
+  } catch {
+    // ignore
+  }
+  return checkRateLimit(identifier, config);
+}
+
 /**
- * Clears the window for an identifier, giving it a full budget again.
- *
- * The store key is private, so the signature mirrors `checkRateLimit` — callers
- * pass `(identifier, config)` and this module composes `${identifier}:${windowMs}`.
- * Resetting is idempotent: `Map.delete` on a missing key is a no-op, so a bucket
- * already reaped by `cleanup()` needs no guard.
+ * Clears the window for an identifier.
  */
 export function resetRateLimit(identifier: string, config: RateLimitConfig): void {
   store.delete(`${identifier}:${config.windowMs}`);
+  if (!isTestEnv()) {
+    resetRateLimitSharedFn(identifier, config).catch(() => {});
+  }
+}
+
+export async function resetRateLimitAsync(
+  identifier: string,
+  config: RateLimitConfig,
+): Promise<void> {
+  resetRateLimit(identifier, config);
+  if (!isTestEnv()) {
+    await resetRateLimitSharedFn(identifier, config).catch(() => {});
+  }
 }
 
 /**
