@@ -83,7 +83,20 @@ export function checkRateLimit(
   if (!entry || entry.resetAt <= now) {
     // New window
     store.set(key, { count: 1, resetAt: now + config.windowMs });
-  // Fire and forget to sync to shared store
+    // Fire and forget to sync to shared store
+    if (!isTestEnv()) {
+      getShared()
+        .then((s) => {
+          if (typeof s.checkRateLimitShared === 'function') {
+            s.checkRateLimitShared(identifier, config).catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }
+    return { allowed: true, remaining: config.maxRequests - 1, resetInMs: config.windowMs };
+  }
+
+  entry.count += 1;
   if (!isTestEnv()) {
     getShared()
       .then((s) => {
@@ -93,19 +106,6 @@ export function checkRateLimit(
       })
       .catch(() => {});
   }
-  return { allowed: true, remaining: config.maxRequests - 1, resetInMs: config.windowMs };
-}
-
-entry.count += 1;
-if (!isTestEnv()) {
-  getShared()
-    .then((s) => {
-      if (typeof s.checkRateLimitShared === 'function') {
-        s.checkRateLimitShared(identifier, config).catch(() => {});
-      }
-    })
-    .catch(() => {});
-}
   if (entry.count > config.maxRequests) {
     return { allowed: false, remaining: 0, resetInMs: entry.resetAt - now };
   }
