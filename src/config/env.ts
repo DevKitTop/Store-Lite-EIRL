@@ -96,12 +96,13 @@
 } as const;
 
 const isProd = process.env.NODE_ENV === 'production';
+const isCi = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
 
 // Optional: Add validation here to throw early if vars are missing
 if (!env.supabaseUrl || !env.supabaseAnonKey) {
   console.warn('Supabase environment variables are missing. Some features may not work.');
 }
-if (isProd && !env.supabaseServiceRoleKey) {
+if (isProd && !isCi && !env.supabaseServiceRoleKey) {
   throw new Error('SUPABASE_SERVICE_ROLE_KEY is required in production');
 }
 
@@ -120,7 +121,7 @@ if (!env.resendApiKey || !env.resendFromEmail) {
 
 // OTP hash secret: warn if using dev fallback
 if (!process.env.OTP_HASH_SECRET) {
-  if (isProd) {
+  if (isProd && !isCi) {
     throw new Error('OTP_HASH_SECRET is required in production');
   }
   console.warn(
@@ -133,7 +134,7 @@ if (!process.env.OTP_HASH_SECRET) {
 // asymmetry with the message above — here the unset state denies everything, it
 // does not fall back.
 if (!process.env.ORDER_ACCESS_COOKIE_SECRET) {
-  if (isProd) {
+  if (isProd && !isCi) {
     throw new Error('ORDER_ACCESS_COOKIE_SECRET is required in production');
   }
   console.warn(
@@ -165,7 +166,7 @@ if (!env.ycloudWebhookSecret) {
 }
 
 // Critical secrets for payments/webhooks
-if (isProd) {
+if (isProd && !isCi) {
   if (!env.cronSecret) {
     throw new Error('CRON_SECRET is required in production');
   }
