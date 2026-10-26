@@ -38,6 +38,7 @@ import { sendOrderConfirmationEmail } from '@/lib/email/orderEmails';
 import { notifyLowStock, notifyNewOrder, notifyOutOfStock } from '@/lib/notifications';
 import { setSentryContext } from '@/lib/sentryContext';
 import { createClient } from '@/lib/supabase/server';
+import * as Sentry from '@sentry/nextjs';
 import { sendOrderStatusSms } from '@/lib/twilio/orderSms';
 import { splitFullName } from '@/shared/payments/fullName';
 import type { CulqiChargeResponse } from '@/types/culqi';
@@ -421,6 +422,13 @@ export async function POST(request: Request) {
       // reserveIdempotencyKey (no key is burned).
       const orderAmountMinor = orderAmountToMinorUnits(orderRow.amount);
       if (orderAmountMinor === null || orderAmountMinor !== amount) {
+        try {
+          Sentry.captureMessage('payment_integrity_amount_mismatch', {
+            level: 'warning',
+            tags: { flow: 'order', businessId, productId },
+            extra: { culqiOrderId, expectedAmount: orderAmountMinor, providedAmount: amount },
+          });
+        } catch {}
         return NextResponse.json(
           {
             success: false,
@@ -494,6 +502,13 @@ export async function POST(request: Request) {
         if (culqiOrderPaid && culqiOrder && typeof culqiOrder === 'object') {
           const co = culqiOrder as Record<string, unknown>;
           if (typeof co.amount === 'number' && co.amount !== authoritativeAmount) {
+            try {
+              Sentry.captureMessage('payment_integrity_culqi_order_amount_mismatch', {
+                level: 'warning',
+                tags: { flow: 'order', businessId, productId },
+                extra: { culqiOrderId, expectedAmount: authoritativeAmount, culqiAmount: co.amount },
+              });
+            } catch {}
             await releaseIdempotencyKey(reservedIdempotencyKey);
             return NextResponse.json(
               {
@@ -522,6 +537,13 @@ export async function POST(request: Request) {
       }
 
       if (!culqiOrderPaid) {
+        try {
+          Sentry.captureMessage('payment_integrity_culqi_order_not_paid', {
+            level: 'info',
+            tags: { flow: 'order', businessId, productId },
+            extra: { culqiOrderId },
+          });
+        } catch {}
         // Not paid yet is recoverable: the buyer may retry once Culqi confirms.
         // The order-flow key is deterministic per Culqi order, so leaving it
         // reserved would replay this 402 forever.

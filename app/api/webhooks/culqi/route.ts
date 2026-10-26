@@ -75,6 +75,9 @@ function verifyBasicAuth(request: Request): boolean {
 
   // If no credentials configured, reject in production, allow in development
   if (!expectedUser || !expectedPass) {
+    if (process.env.NODE_ENV === 'production') {
+      return false;
+    }
     return process.env.NODE_ENV !== 'production';
   }
 
@@ -669,7 +672,13 @@ export async function POST(request: Request) {
   if (hasBasicAuth) {
     // CulqiPanel webhook authentication
     if (!verifyBasicAuth(request)) {
-      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
+      if (process.env.NODE_ENV === 'production') {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      const hasCreds = !!(process.env.CULQI_WEBHOOK_USER && process.env.CULQI_WEBHOOK_PASS);
+      if (hasCreds) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
     }
   } else if (hasSignatureHeader) {
     // HMAC signature authentication (API-created webhooks)
