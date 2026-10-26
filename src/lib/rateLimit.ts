@@ -5,10 +5,7 @@
 // falls back to in-memory for Edge/test environments.
 // =====================================================
 
-import {
-  checkRateLimitShared as checkRateLimitSharedFn,
-  resetRateLimitShared as resetRateLimitSharedFn,
-} from '@/core/payments/rateLimitShared';
+// (imports moved to lazy loader)
 import { type NextRequest } from 'next/server';
 
 export interface RateLimitConfig {
