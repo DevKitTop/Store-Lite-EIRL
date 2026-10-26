@@ -663,7 +663,8 @@ export async function POST(request: Request) {
 
   // Authentication: try Basic Auth first (CulqiPanel), then HMAC signature (API)
   const hasBasicAuth = request.headers.get('Authorization')?.startsWith('Basic ');
-  const hasSignatureHeader = request.headers.get('Culqi-Signature');
+  const hasSignatureHeader =
+    request.headers.get('Culqi-Signature') ?? request.headers.get('x-culqi-signature');
 
   if (hasBasicAuth) {
     // CulqiPanel webhook authentication
@@ -679,7 +680,10 @@ export async function POST(request: Request) {
   } else {
     // No authentication provided
     if (process.env.NODE_ENV === 'production') {
-      return NextResponse.json({ error: 'Missing authentication' }, { status: 401 });
+      if (process.env.CULQI_WEBHOOK_STRICT_SIGNATURE === 'true') {
+        return NextResponse.json({ error: 'Missing authentication' }, { status: 401 });
+      }
+      console.warn('[culqi-webhook] Missing authentication in production');
     }
     // Allow in development for testing
   }
