@@ -276,14 +276,21 @@ export async function POST(request: Request) {
     // ─── PRICE REVALIDATION (fix-price-tampering) ────────────────
     // Reject client-supplied amount that doesn't match the authoritative
     // product price from the DB, before any flow branching or Culqi call.
-    const priceCheck = await validateAmount({
-      productId,
-      businessId,
-      clientAmount: amount,
-      cartItems: metadata?.cartItems,
-    });
-    if (!priceCheck.ok) {
-      return NextResponse.json({ error: priceCheck.error }, { status: 400 });
+    let priceCheck: {
+      ok: boolean;
+      serverAmount?: number;
+      error?: string;
+    } | null = null;
+    if (!culqiOrderId) {
+      priceCheck = await validateAmount({
+        productId,
+        businessId,
+        clientAmount: amount,
+        cartItems: metadata?.cartItems,
+      });
+      if (!priceCheck.ok) {
+        return NextResponse.json({ error: priceCheck.error }, { status: 400 });
+      }
     }
 
     // ─── Rate Limit Check ──────────────────────────────────────────
@@ -369,6 +376,8 @@ export async function POST(request: Request) {
     // decrement. Declared here so the transaction below can use the value the
     // gate already read from the database (no second read, no extra tx query).
     let persistedOrderMetadata: unknown = null;
+    // Authoritative amount in cents (server-side). Never trust client amount.
+    let authoritativeAmount: number = amount;
 
     // ─── ORDER FLOW — LOCAL PRE-CHECKS ──────────────────────────────
     // Everything here reads only our own DB and touches no external system, so
@@ -421,6 +430,8 @@ export async function POST(request: Request) {
           { status: 402 },
         );
       }
+      // Authoritative amount comes from the persisted order (server-side)
+      authoritativeAmount = orderAmountMinor;
 
       if (currency !== orderRow.currency) {
         return NextResponse.json(
@@ -475,7 +486,36 @@ export async function POST(request: Request) {
 
       let culqiOrderPaid = false;
       try {
-        culqiOrderPaid = isCulqiOrderPaid(await getCulqiOrder(culqiOrderId as string, secretKey));
+        // PI-02: MUST verify against Culqi API server-side before marking paid.
+        // Never trust the client saying "already paid".
+        const culqiOrder = await getCulqiOrder(culqiOrderId as string, secretKey);
+        culqiOrderPaid = isCulqiOrderPaid(culqiOrder);
+        // Extra defensive checks: if Culqi returns amount/currency, they must match
+        if (culqiOrderPaid && culqiOrder && typeof culqiOrder === 'object') {
+          const co = culqiOrder as Record<string, unknown>;
+          if (typeof co.amount === 'number' && co.amount !== authoritativeAmount) {
+            await releaseIdempotencyKey(reservedIdempotencyKey);
+            return NextResponse.json(
+              {
+                success: false,
+                error: ORDER_AMOUNT_MISMATCH_MESSAGE,
+                code: 'ORDER_AMOUNT_MISMATCH',
+              },
+              { status: 402 },
+            );
+          }
+          if (typeof co.currency_code === 'string' && co.currency_code !== currency) {
+            await releaseIdempotencyKey(reservedIdempotencyKey);
+            return NextResponse.json(
+              {
+                success: false,
+                error: ORDER_CURRENCY_MISMATCH_MESSAGE,
+                code: 'ORDER_CURRENCY_MISMATCH',
+              },
+              { status: 402 },
+            );
+          }
+        }
       } catch (err) {
         await releaseIdempotencyKey(reservedIdempotencyKey);
         return culqiReadErrorResponse(err);
@@ -509,10 +549,14 @@ export async function POST(request: Request) {
         metadata?.cartItems?.find((i: { id: string; quantity: number }) => i.id === productId)
           ?.quantity ?? 1;
 
+      // Use server-authoritative amount from price validation
+      if (priceCheck?.serverAmount) {
+        authoritativeAmount = priceCheck.serverAmount;
+      }
       const { culqiData: chargeResult, error: chargeError } = await executeCulqiCharge({
         token,
         secretKey,
-        amount,
+        amount: authoritativeAmount,
         currency,
         email,
         customerName,
@@ -614,7 +658,7 @@ export async function POST(request: Request) {
           businessId,
           productId,
           sellerUserId: business.ownerId,
-          amount: String(amount / 100),
+          amount: String(authoritativeAmount / 100),
           currency,
           paymentMethod: pm,
           culqiReferenceCode: culqiRefCode,
@@ -765,7 +809,7 @@ export async function POST(request: Request) {
     notifyNewOrder(businessId, {
       orderId: result.id,
       customerName: customerName || email || 'cliente@culqi.com',
-      amount: amount / 100,
+      amount: authoritativeAmount / 100,
       itemsCount: (metadata?.cartItems as { id: string; quantity: number }[])?.length || 1,
     }).catch((notifyErr) => {
       console.error('[notifyNewOrder] Error:', notifyErr);
@@ -804,7 +848,7 @@ export async function POST(request: Request) {
     // Fire-and-forget: capture payment completed event
     captureEvent(AnalyticsEvents.PAYMENT_COMPLETED, {
       order_id: result.id,
-      amount: amount / 100,
+      amount: authoritativeAmount / 100,
       currency,
     }).catch(() => {});
 
