@@ -428,7 +428,9 @@ export async function POST(request: Request) {
             tags: { flow: 'order', businessId, productId },
             extra: { culqiOrderId, expectedAmount: orderAmountMinor, providedAmount: amount },
           });
-        } catch {}
+        } catch {
+          /* ignore */
+        }
         return NextResponse.json(
           {
             success: false,
@@ -508,7 +510,9 @@ export async function POST(request: Request) {
                 tags: { flow: 'order', businessId, productId },
                 extra: { culqiOrderId, expectedAmount: authoritativeAmount, culqiAmount: co.amount },
               });
-            } catch {}
+            } catch {
+              /* ignore */
+            }
             await releaseIdempotencyKey(reservedIdempotencyKey);
             return NextResponse.json(
               {
@@ -543,7 +547,9 @@ export async function POST(request: Request) {
             tags: { flow: 'order', businessId, productId },
             extra: { culqiOrderId },
           });
-        } catch {}
+        } catch {
+          /* ignore */
+        }
         // Not paid yet is recoverable: the buyer may retry once Culqi confirms.
         // The order-flow key is deterministic per Culqi order, so leaving it
         // reserved would replay this 402 forever.
