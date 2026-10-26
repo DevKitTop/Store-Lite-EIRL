@@ -91,4 +91,18 @@ export async function resetRateLimitShared(
   }
 }
 
-export { getClientIpFromHeaders };
+export function getClientIpFromHeaders(headers: Headers): string {
+  const forwarded = headers.get('x-forwarded-for');
+  if (forwarded) {
+    const parts = forwarded
+      .split(',')
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    if (parts.length > 0) {
+      const TRUSTED_PROXY_COUNT = Number.parseInt(process.env.TRUSTED_PROXY_COUNT ?? '1', 10) || 1;
+      const index = parts.length - TRUSTED_PROXY_COUNT;
+      return parts[index >= 0 ? index : parts.length - 1];
+    }
+  }
+  return headers.get('x-real-ip') ?? headers.get('cf-connecting-ip') ?? 'unknown';
+}
