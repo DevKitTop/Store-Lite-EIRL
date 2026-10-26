@@ -862,14 +862,18 @@ export async function POST(request: Request) {
         notifyOutOfStock(businessId, {
           productId: updatedProduct.id,
           productName: updatedProduct.title,
-        }).catch(() => {});
+        }).catch(() => {
+          // ignore
+        });
       } else if (updatedProduct && updatedProduct.stock <= LOW_STOCK_THRESHOLD) {
         notifyLowStock(businessId, {
           productId: updatedProduct.id,
           productName: updatedProduct.title,
           currentStock: updatedProduct.stock,
           minStock: LOW_STOCK_THRESHOLD,
-        }).catch(() => {});
+        }).catch(() => {
+          // ignore
+        });
       }
     }
 
@@ -878,7 +882,9 @@ export async function POST(request: Request) {
       order_id: result.id,
       amount: authoritativeAmount / 100,
       currency,
-    }).catch(() => {});
+    }).catch(() => {
+      // ignore
+    });
 
     // Attach user + business context to Sentry for multi-tenant error tracing.
     // Guest checkouts (anonymous buyers) safely skip user context.
