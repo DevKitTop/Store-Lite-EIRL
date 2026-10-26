@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-26T14:31:04.725Z",
+  "generatedAt": "2026-10-26T15:04:49.412Z",
   "counts": {
-    "sql": 81,
+    "sql": 82,
     "journal": 24,
-    "unjournaled": 57
+    "unjournaled": 58
   },
   "files": [
     {
@@ -410,6 +410,11 @@
     {
       "file": "0053_webhook_events_dedup.sql",
       "prefix": "0053",
+      "method": "manual"
+    },
+    {
+      "file": "0054_rate_limit_windows.sql",
+      "prefix": "0054",
       "method": "manual"
     }
   ],
