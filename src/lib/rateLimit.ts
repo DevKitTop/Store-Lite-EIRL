@@ -74,17 +74,23 @@ export function checkRateLimit(
   if (!entry || entry.resetAt <= now) {
     // New window
     store.set(key, { count: 1, resetAt: now + config.windowMs });
-    // Fire and forget to sync to shared store
-    if (!isTestEnv()) {
-      checkRateLimitSharedFn(identifier, config).catch(() => {});
-    }
-    return { allowed: true, remaining: config.maxRequests - 1, resetInMs: config.windowMs };
-  }
-
-  entry.count += 1;
+  // Fire and forget to sync to shared store
   if (!isTestEnv()) {
-    checkRateLimitSharedFn(identifier, config).catch(() => {});
+    const s = getShared();
+    if (typeof s.checkRateLimitShared === 'function') {
+      s.checkRateLimitShared(identifier, config).catch(() => {});
+    }
   }
+  return { allowed: true, remaining: config.maxRequests - 1, resetInMs: config.windowMs };
+}
+
+entry.count += 1;
+if (!isTestEnv()) {
+  const s = getShared();
+  if (typeof s.checkRateLimitShared === 'function') {
+    s.checkRateLimitShared(identifier, config).catch(() => {});
+  }
+}
   if (entry.count > config.maxRequests) {
     return { allowed: false, remaining: 0, resetInMs: entry.resetAt - now };
   }
@@ -104,7 +110,10 @@ export async function checkRateLimitAsync(
     return checkRateLimit(identifier, config);
   }
   try {
-    return await checkRateLimitSharedFn(identifier, config);
+    const s = getShared();
+    if (typeof s.checkRateLimitShared === 'function') {
+      return await s.checkRateLimitShared(identifier, config);
+    }
   } catch {
     // ignore
   }
