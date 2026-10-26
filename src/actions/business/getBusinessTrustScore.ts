@@ -36,6 +36,21 @@ export async function getBusinessTrustScore(
     return null;
   }
 
+  // The trust score is optional storefront enrichment (a badge/banner). It must
+  // never take the whole storefront render down: a schema drift or a transient
+  // DB failure here used to surface as a 500 on every /[slug] page.
+  try {
+    return await computeBusinessTrustScore(businessId);
+  } catch (error) {
+    console.error('[storefront] getBusinessTrustScore failed; hiding trust banner', {
+      businessId,
+      error,
+    });
+    return null;
+  }
+}
+
+async function computeBusinessTrustScore(businessId: string): Promise<BusinessTrustScore | null> {
   // Fetch business
   const business = await db.query.businesses.findFirst({
     where: eq(businesses.id, businessId),

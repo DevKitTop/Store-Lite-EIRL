@@ -1,5 +1,3 @@
-'use server';
-
 import { getBusinessTrustScore } from '@/actions/business/getBusinessTrustScore';
 import { replaceSlugInPath, resolveBusinessSlug } from '@/core/business/slug';
 import { db } from '@/core/database/client';
