@@ -30,10 +30,9 @@ async function resolveSessionActor(sessionId: string, guestId?: string) {
   if (userId) {
     const business = await db.query.businesses.findFirst({
       where: eq(businesses.id, session.businessId),
-      columns: { ownerId: true },
+      columns: { id: true, ownerId: true },
     });
 
-    // Check if user is owner
     if (business?.ownerId === userId) {
       return {
         allowed: true as const,

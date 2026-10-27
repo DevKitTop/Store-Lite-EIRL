@@ -66,7 +66,7 @@ export async function updateBusinessSlug(
 
   const currentBusiness = await db.query.businesses.findFirst({
     where: eq(businesses.id, businessId),
-    columns: { id: true, slug: true },
+    columns: { id: true, slug: true, ownerId: true },
   });
 
   if (!currentBusiness) {
