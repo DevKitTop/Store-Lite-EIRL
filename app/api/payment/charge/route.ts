@@ -412,6 +412,18 @@ export async function POST(request: Request) {
       // reserveIdempotencyKey (no key is burned).
       const orderAmountMinor = orderAmountToMinorUnits(orderRow.amount);
       if (orderAmountMinor === null || orderAmountMinor !== amount) {
+<<<<<<< HEAD
+=======
+        try {
+          Sentry.captureMessage('payment_integrity_amount_mismatch', {
+            level: 'warning',
+            tags: { flow: 'order', businessId, productId },
+            extra: { culqiOrderId, expectedAmount: orderAmountMinor, providedAmount: amount },
+          });
+        } catch {
+          // ignore
+        }
+>>>>>>> ab758dd (fix(payments): drop void operator in catch blocks)
         return NextResponse.json(
           {
             success: false,
@@ -475,13 +487,67 @@ export async function POST(request: Request) {
 
       let culqiOrderPaid = false;
       try {
+<<<<<<< HEAD
         culqiOrderPaid = isCulqiOrderPaid(await getCulqiOrder(culqiOrderId as string, secretKey));
+=======
+        // PI-02: MUST verify against Culqi API server-side before marking paid.
+        // Never trust the client saying "already paid".
+        const culqiOrder = await getCulqiOrder(culqiOrderId as string, secretKey);
+        culqiOrderPaid = isCulqiOrderPaid(culqiOrder);
+        // Extra defensive checks: if Culqi returns amount/currency, they must match
+        if (culqiOrderPaid && culqiOrder && typeof culqiOrder === 'object') {
+          const co = culqiOrder as Record<string, unknown>;
+          if (typeof co.amount === 'number' && co.amount !== authoritativeAmount) {
+            try {
+              Sentry.captureMessage('payment_integrity_culqi_order_amount_mismatch', {
+                level: 'warning',
+                tags: { flow: 'order', businessId, productId },
+                extra: { culqiOrderId, expectedAmount: authoritativeAmount, culqiAmount: co.amount },
+              });
+      } catch (e) {
+        // ignore
+      }
+            await releaseIdempotencyKey(reservedIdempotencyKey);
+            return NextResponse.json(
+              {
+                success: false,
+                error: ORDER_AMOUNT_MISMATCH_MESSAGE,
+                code: 'ORDER_AMOUNT_MISMATCH',
+              },
+              { status: 402 },
+            );
+          }
+          if (typeof co.currency_code === 'string' && co.currency_code !== currency) {
+            await releaseIdempotencyKey(reservedIdempotencyKey);
+            return NextResponse.json(
+              {
+                success: false,
+                error: ORDER_CURRENCY_MISMATCH_MESSAGE,
+                code: 'ORDER_CURRENCY_MISMATCH',
+              },
+              { status: 402 },
+            );
+          }
+        }
+>>>>>>> ab758dd (fix(payments): drop void operator in catch blocks)
       } catch (err) {
         await releaseIdempotencyKey(reservedIdempotencyKey);
         return culqiReadErrorResponse(err);
       }
 
       if (!culqiOrderPaid) {
+<<<<<<< HEAD
+=======
+        try {
+          Sentry.captureMessage('payment_integrity_culqi_order_not_paid', {
+            level: 'info',
+            tags: { flow: 'order', businessId, productId },
+            extra: { culqiOrderId },
+          });
+        } catch {
+          // ignore
+        }
+>>>>>>> ab758dd (fix(payments): drop void operator in catch blocks)
         // Not paid yet is recoverable: the buyer may retry once Culqi confirms.
         // The order-flow key is deterministic per Culqi order, so leaving it
         // reserved would replay this 402 forever.
