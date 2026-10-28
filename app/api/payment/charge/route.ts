@@ -412,8 +412,6 @@ export async function POST(request: Request) {
       // reserveIdempotencyKey (no key is burned).
       const orderAmountMinor = orderAmountToMinorUnits(orderRow.amount);
       if (orderAmountMinor === null || orderAmountMinor !== amount) {
-<<<<<<< HEAD
-=======
         try {
           Sentry.captureMessage('payment_integrity_amount_mismatch', {
             level: 'warning',
@@ -423,7 +421,6 @@ export async function POST(request: Request) {
         } catch {
           // ignore
         }
->>>>>>> ab758dd (fix(payments): drop void operator in catch blocks)
         return NextResponse.json(
           {
             success: false,
@@ -487,9 +484,6 @@ export async function POST(request: Request) {
 
       let culqiOrderPaid = false;
       try {
-<<<<<<< HEAD
-        culqiOrderPaid = isCulqiOrderPaid(await getCulqiOrder(culqiOrderId as string, secretKey));
-=======
         // PI-02: MUST verify against Culqi API server-side before marking paid.
         // Never trust the client saying "already paid".
         const culqiOrder = await getCulqiOrder(culqiOrderId as string, secretKey);
@@ -529,15 +523,12 @@ export async function POST(request: Request) {
             );
           }
         }
->>>>>>> ab758dd (fix(payments): drop void operator in catch blocks)
       } catch (err) {
         await releaseIdempotencyKey(reservedIdempotencyKey);
         return culqiReadErrorResponse(err);
       }
 
       if (!culqiOrderPaid) {
-<<<<<<< HEAD
-=======
         try {
           Sentry.captureMessage('payment_integrity_culqi_order_not_paid', {
             level: 'info',
@@ -547,7 +538,6 @@ export async function POST(request: Request) {
         } catch {
           // ignore
         }
->>>>>>> ab758dd (fix(payments): drop void operator in catch blocks)
         // Not paid yet is recoverable: the buyer may retry once Culqi confirms.
         // The order-flow key is deterministic per Culqi order, so leaving it
         // reserved would replay this 402 forever.
