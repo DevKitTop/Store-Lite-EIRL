@@ -428,8 +428,8 @@ export async function POST(request: Request) {
             tags: { flow: 'order', businessId, productId },
             extra: { culqiOrderId, expectedAmount: orderAmountMinor, providedAmount: amount },
           });
-        } catch (e) {
-          void e;
+        } catch {
+          // ignore
         }
         return NextResponse.json(
           {
@@ -510,9 +510,9 @@ export async function POST(request: Request) {
                 tags: { flow: 'order', businessId, productId },
                 extra: { culqiOrderId, expectedAmount: authoritativeAmount, culqiAmount: co.amount },
               });
-            } catch (e) {
-              void e;
-            }
+      } catch (e) {
+        // ignore
+      }
             await releaseIdempotencyKey(reservedIdempotencyKey);
             return NextResponse.json(
               {
@@ -547,8 +547,8 @@ export async function POST(request: Request) {
             tags: { flow: 'order', businessId, productId },
             extra: { culqiOrderId },
           });
-        } catch (e) {
-          void e;
+        } catch {
+          // ignore
         }
         // Not paid yet is recoverable: the buyer may retry once Culqi confirms.
         // The order-flow key is deterministic per Culqi order, so leaving it
