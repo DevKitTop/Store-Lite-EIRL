@@ -38,10 +38,10 @@ import { sendOrderConfirmationEmail } from '@/lib/email/orderEmails';
 import { notifyLowStock, notifyNewOrder, notifyOutOfStock } from '@/lib/notifications';
 import { setSentryContext } from '@/lib/sentryContext';
 import { createClient } from '@/lib/supabase/server';
-import * as Sentry from '@sentry/nextjs';
 import { sendOrderStatusSms } from '@/lib/twilio/orderSms';
 import { splitFullName } from '@/shared/payments/fullName';
 import type { CulqiChargeResponse } from '@/types/culqi';
+import * as Sentry from '@sentry/nextjs';
 import { and, eq, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
@@ -508,11 +508,15 @@ export async function POST(request: Request) {
               Sentry.captureMessage('payment_integrity_culqi_order_amount_mismatch', {
                 level: 'warning',
                 tags: { flow: 'order', businessId, productId },
-                extra: { culqiOrderId, expectedAmount: authoritativeAmount, culqiAmount: co.amount },
+                extra: {
+                  culqiOrderId,
+                  expectedAmount: authoritativeAmount,
+                  culqiAmount: co.amount,
+                },
               });
-      } catch (e) {
-        // ignore
-      }
+            } catch (e) {
+              // ignore
+            }
             await releaseIdempotencyKey(reservedIdempotencyKey);
             return NextResponse.json(
               {
