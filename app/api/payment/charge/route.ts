@@ -38,6 +38,7 @@ import { sendOrderConfirmationEmail } from '@/lib/email/orderEmails';
 import { notifyLowStock, notifyNewOrder, notifyOutOfStock } from '@/lib/notifications';
 import { setSentryContext } from '@/lib/sentryContext';
 import { createClient } from '@/lib/supabase/server';
+import * as Sentry from '@sentry/nextjs';
 import { sendOrderStatusSms } from '@/lib/twilio/orderSms';
 import { splitFullName } from '@/shared/payments/fullName';
 import type { CulqiChargeResponse } from '@/types/culqi';
@@ -276,14 +277,21 @@ export async function POST(request: Request) {
     // ─── PRICE REVALIDATION (fix-price-tampering) ────────────────
     // Reject client-supplied amount that doesn't match the authoritative
     // product price from the DB, before any flow branching or Culqi call.
-    const priceCheck = await validateAmount({
-      productId,
-      businessId,
-      clientAmount: amount,
-      cartItems: metadata?.cartItems,
-    });
-    if (!priceCheck.ok) {
-      return NextResponse.json({ error: priceCheck.error }, { status: 400 });
+    let priceCheck: {
+      ok: boolean;
+      serverAmount?: number;
+      error?: string;
+    } | null = null;
+    if (!culqiOrderId) {
+      priceCheck = await validateAmount({
+        productId,
+        businessId,
+        clientAmount: amount,
+        cartItems: metadata?.cartItems,
+      });
+      if (!priceCheck.ok) {
+        return NextResponse.json({ error: priceCheck.error }, { status: 400 });
+      }
     }
 
     // ─── Rate Limit Check ──────────────────────────────────────────
@@ -369,6 +377,8 @@ export async function POST(request: Request) {
     // decrement. Declared here so the transaction below can use the value the
     // gate already read from the database (no second read, no extra tx query).
     let persistedOrderMetadata: unknown = null;
+    // Authoritative amount in cents (server-side). Never trust client amount.
+    let authoritativeAmount: number = amount;
 
     // ─── ORDER FLOW — LOCAL PRE-CHECKS ──────────────────────────────
     // Everything here reads only our own DB and touches no external system, so
@@ -430,6 +440,8 @@ export async function POST(request: Request) {
           { status: 402 },
         );
       }
+      // Authoritative amount comes from the persisted order (server-side)
+      authoritativeAmount = orderAmountMinor;
 
       if (currency !== orderRow.currency) {
         return NextResponse.json(
@@ -565,10 +577,14 @@ export async function POST(request: Request) {
         metadata?.cartItems?.find((i: { id: string; quantity: number }) => i.id === productId)
           ?.quantity ?? 1;
 
+      // Use server-authoritative amount from price validation
+      if (priceCheck?.serverAmount) {
+        authoritativeAmount = priceCheck.serverAmount;
+      }
       const { culqiData: chargeResult, error: chargeError } = await executeCulqiCharge({
         token,
         secretKey,
-        amount,
+        amount: authoritativeAmount,
         currency,
         email,
         customerName,
@@ -670,7 +686,7 @@ export async function POST(request: Request) {
           businessId,
           productId,
           sellerUserId: business.ownerId,
-          amount: String(amount / 100),
+          amount: String(authoritativeAmount / 100),
           currency,
           paymentMethod: pm,
           culqiReferenceCode: culqiRefCode,
@@ -821,7 +837,7 @@ export async function POST(request: Request) {
     notifyNewOrder(businessId, {
       orderId: result.id,
       customerName: customerName || email || 'cliente@culqi.com',
-      amount: amount / 100,
+      amount: authoritativeAmount / 100,
       itemsCount: (metadata?.cartItems as { id: string; quantity: number }[])?.length || 1,
     }).catch((notifyErr) => {
       console.error('[notifyNewOrder] Error:', notifyErr);
@@ -846,23 +862,29 @@ export async function POST(request: Request) {
         notifyOutOfStock(businessId, {
           productId: updatedProduct.id,
           productName: updatedProduct.title,
-        }).catch(() => {});
+        }).catch(() => {
+          // ignore
+        });
       } else if (updatedProduct && updatedProduct.stock <= LOW_STOCK_THRESHOLD) {
         notifyLowStock(businessId, {
           productId: updatedProduct.id,
           productName: updatedProduct.title,
           currentStock: updatedProduct.stock,
           minStock: LOW_STOCK_THRESHOLD,
-        }).catch(() => {});
+        }).catch(() => {
+          // ignore
+        });
       }
     }
 
     // Fire-and-forget: capture payment completed event
     captureEvent(AnalyticsEvents.PAYMENT_COMPLETED, {
       order_id: result.id,
-      amount: amount / 100,
+      amount: authoritativeAmount / 100,
       currency,
-    }).catch(() => {});
+    }).catch(() => {
+      // ignore
+    });
 
     // Attach user + business context to Sentry for multi-tenant error tracing.
     // Guest checkouts (anonymous buyers) safely skip user context.
