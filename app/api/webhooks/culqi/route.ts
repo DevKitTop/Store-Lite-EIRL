@@ -14,6 +14,7 @@ import {
   fulfillPaidSale,
   isHistoricalPaidRow,
 } from '@/core/payments/stockFulfillment';
+import { claimWebhookEvent } from '@/core/payments/webhookDedup';
 import { buildWebhookPaymentValues } from '@/core/payments/webhookPaymentValues';
 import { generateTrackingToken } from '@/core/utils/trackingToken';
 import type { OrderStatus } from '@/types/order';
@@ -21,8 +22,6 @@ import { and, eq, or, sql } from 'drizzle-orm';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 const REPLAY_WINDOW_MS = 5 * 60 * 1000;
-const DEDUP_TTL_MS = 10 * 60 * 1000;
-const seenEvents = new Map<string, number>();
 
 /**
  * The `data` member of a Culqi webhook envelope ("the affected resource").
@@ -59,13 +58,7 @@ function safeTimingEquals(a: string, b: string) {
   return timingSafeEqual(aBuf, bBuf);
 }
 
-function cleanupSeenEvents(now: number) {
-  for (const [key, expiresAt] of seenEvents.entries()) {
-    if (expiresAt <= now) {
-      seenEvents.delete(key);
-    }
-  }
-}
+// Deduplication now uses shared DB store (webhook_events).
 
 /**
  * Verify webhook authenticity via Basic Auth (CulqiPanel webhook configuration).
@@ -82,6 +75,9 @@ function verifyBasicAuth(request: Request): boolean {
 
   // If no credentials configured, reject in production, allow in development
   if (!expectedUser || !expectedPass) {
+    if (process.env.NODE_ENV === 'production') {
+      return false;
+    }
     return process.env.NODE_ENV !== 'production';
   }
 
@@ -670,12 +666,19 @@ export async function POST(request: Request) {
 
   // Authentication: try Basic Auth first (CulqiPanel), then HMAC signature (API)
   const hasBasicAuth = request.headers.get('Authorization')?.startsWith('Basic ');
-  const hasSignatureHeader = request.headers.get('Culqi-Signature');
+  const hasSignatureHeader =
+    request.headers.get('Culqi-Signature') ?? request.headers.get('x-culqi-signature');
 
   if (hasBasicAuth) {
     // CulqiPanel webhook authentication
     if (!verifyBasicAuth(request)) {
-      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
+      if (process.env.NODE_ENV === 'production') {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      const hasCreds = !!(process.env.CULQI_WEBHOOK_USER && process.env.CULQI_WEBHOOK_PASS);
+      if (hasCreds) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
     }
   } else if (hasSignatureHeader) {
     // HMAC signature authentication (API-created webhooks)
@@ -686,7 +689,10 @@ export async function POST(request: Request) {
   } else {
     // No authentication provided
     if (process.env.NODE_ENV === 'production') {
-      return NextResponse.json({ error: 'Missing authentication' }, { status: 401 });
+      if (process.env.CULQI_WEBHOOK_STRICT_SIGNATURE === 'true') {
+        return NextResponse.json({ error: 'Missing authentication' }, { status: 401 });
+      }
+      console.warn('[culqi-webhook] Missing authentication in production');
     }
     // Allow in development for testing
   }
@@ -714,12 +720,15 @@ export async function POST(request: Request) {
   }
 
   const dedupId = event.id ?? `${eventType}:${chargeId}`;
-  const now = Date.now();
-  cleanupSeenEvents(now);
-  if (seenEvents.has(dedupId)) {
-    return NextResponse.json({ received: true, duplicate: true });
+  try {
+    const claimed = await claimWebhookEvent(dedupId, eventType);
+    if (!claimed) {
+      return NextResponse.json({ received: true, duplicate: true });
+    }
+  } catch (err) {
+    console.error('[culqi-webhook] Failed to claim webhook event:', err);
+    // Fail open to avoid blocking on DB issues, but prefer to dedup
   }
-  seenEvents.set(dedupId, now + DEDUP_TTL_MS);
 
   try {
     switch (eventType) {
