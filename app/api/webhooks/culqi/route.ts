@@ -14,7 +14,6 @@ import {
   fulfillPaidSale,
   isHistoricalPaidRow,
 } from '@/core/payments/stockFulfillment';
-import { claimWebhookEvent } from '@/core/payments/webhookDedup';
 import { buildWebhookPaymentValues } from '@/core/payments/webhookPaymentValues';
 import { generateTrackingToken } from '@/core/utils/trackingToken';
 import type { OrderStatus } from '@/types/order';
@@ -721,7 +720,6 @@ export async function POST(request: Request) {
 
   const dedupId = event.id ?? `${eventType}:${chargeId}`;
   try {
-    const claimed = await claimWebhookEvent(dedupId, eventType);
     if (!claimed) {
       return NextResponse.json({ received: true, duplicate: true });
     }
