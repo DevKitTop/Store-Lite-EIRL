@@ -228,6 +228,15 @@ const eslintConfig = defineConfig([
       'no-console': 'off',
     },
   },
+
+  // Next.js OpenGraph image generators run inside ImageResponse, where
+  // next/image cannot be used and a plain <img> is the only option.
+  {
+    files: ['**/opengraph-image.tsx'],
+    rules: {
+      '@next/next/no-img-element': 'off',
+    },
+  },
 ]);
 
 export default eslintConfig;

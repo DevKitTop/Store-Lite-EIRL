@@ -152,7 +152,6 @@ export default async function OpengraphImage({
             padding: 40,
           }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             alt=""
             src={`data:image/png;base64,${Buffer.from(productImageData).toString('base64')}`}
