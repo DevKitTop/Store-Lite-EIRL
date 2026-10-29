@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# TypeScript is the only gate that catches narrowed-comparison and dangling-name
+# errors; lint and the pre-commit formatter do not. Without this hook those reach
+# CI, where they block every downstream job.
+echo "Type-checking before push..."
+
+if ! pnpm type-check; then
+  echo ""
+  echo "Type check failed. Fix the errors above, or use --no-verify for a WIP branch."
+  exit 1
+fi
