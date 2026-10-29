@@ -219,6 +219,60 @@ describe('getBusinessTrustScore server action', () => {
     expect(result?.kybVerified).toBe(true);
   });
 
+  it('returns null instead of throwing when the complaints query fails (schema drift)', async () => {
+    const mockBusiness = {
+      id: 'biz-1',
+      slug: 'test-business',
+      name: 'Test Business',
+      isActive: true,
+      verificationStatus: 'verified',
+    };
+
+    (db.query.businesses.findFirst as any).mockResolvedValue(mockBusiness);
+
+    // Production drift: the deployed DB may not have the columns this optional
+    // banner needs (e.g. complaint_book_records.is_verified). A decorative trust
+    // signal must never take the whole storefront down.
+    const mockWhere = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('column "is_verified" does not exist'), { code: '42703' }),
+      );
+    const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+    (db.select as any).mockReturnValue({ from: mockFrom });
+
+    (calculateBusinessIncompleteOrderRate as any).mockResolvedValue({
+      totalOrders: 0,
+      incompleteOrders: 0,
+      incompleteRate: 0,
+      exceedsThreshold: false,
+    });
+
+    await expect(getBusinessTrustScore('biz-1')).resolves.toBeNull();
+  });
+
+  it('returns null instead of throwing when the incomplete-rate query fails', async () => {
+    const mockBusiness = {
+      id: 'biz-1',
+      slug: 'test-business',
+      name: 'Test Business',
+      isActive: true,
+      verificationStatus: 'verified',
+    };
+
+    (db.query.businesses.findFirst as any).mockResolvedValue(mockBusiness);
+
+    const mockWhere = vi.fn().mockResolvedValue([]);
+    const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+    (db.select as any).mockReturnValue({ from: mockFrom });
+
+    (calculateBusinessIncompleteOrderRate as any).mockRejectedValue(
+      new Error('connection terminated unexpectedly'),
+    );
+
+    await expect(getBusinessTrustScore('biz-1')).resolves.toBeNull();
+  });
+
   it('returns new when kyb not verified and < 2 complaints', async () => {
     const mockBusiness = {
       id: 'biz-1',

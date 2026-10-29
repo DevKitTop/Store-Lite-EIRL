@@ -1,4 +1,5 @@
 import { db } from '@/core/database/client';
+import { isSchemaDriftError } from '@/core/database/safe';
 import { businessSlugAliases, businesses } from '@/core/database/schema';
 import { and, eq, ne } from 'drizzle-orm';
 
@@ -26,37 +27,146 @@ export function isReservedBusinessSlug(slug: string): boolean {
   return RESERVED_BUSINESS_SLUGS.has(slug);
 }
 
+function isMissingColumnError(error: unknown): boolean {
+  return isSchemaDriftError(error);
+}
+
+const SAFE_BUSINESS_COLUMNS = {
+  id: businesses.id,
+  slug: businesses.slug,
+  name: businesses.name,
+  ownerId: businesses.ownerId,
+  isActive: businesses.isActive,
+  verificationStatus: businesses.verificationStatus,
+  country: businesses.country,
+  city: businesses.city,
+  logoUrl: businesses.logoUrl,
+  coverImageUrl: businesses.coverImageUrl,
+  description: businesses.description,
+  whatsappNumber: businesses.whatsappNumber,
+  socialLinks: businesses.socialLinks,
+  seoTitle: businesses.seoTitle,
+  seoDescription: businesses.seoDescription,
+  seoKeywords: businesses.seoKeywords,
+  paymentFlow: businesses.paymentFlow,
+  createdAt: businesses.createdAt,
+  updatedAt: businesses.updatedAt,
+  culqiBlocked: businesses.culqiBlocked,
+  penaltyDebt: businesses.penaltyDebt,
+  penaltyCount: businesses.penaltyCount,
+  blacklisted: businesses.blacklisted,
+  blacklistedAt: businesses.blacklistedAt,
+  taxId: businesses.taxId,
+  personType: businesses.personType,
+  address: businesses.address,
+  storeType: businesses.storeType,
+  email: businesses.email,
+  legalRepName: businesses.legalRepName,
+  legalRepRole: businesses.legalRepRole,
+  legalRepPhone: businesses.legalRepPhone,
+  legalRepEmail: businesses.legalRepEmail,
+  latitude: businesses.latitude,
+  longitude: businesses.longitude,
+  geoRegion: businesses.geoRegion,
+  geoPlacename: businesses.geoPlacename,
+  verificationData: businesses.verificationData,
+  deactivationReason: businesses.deactivationReason,
+  deactivationDate: businesses.deactivationDate,
+  appealStatus: businesses.appealStatus,
+  gracePeriodEndsAt: businesses.gracePeriodEndsAt,
+} as const;
+
 export async function resolveBusinessSlug(slug: string): Promise<ResolvedBusinessSlug | null> {
-  const directBusiness = await db.query.businesses.findFirst({
-    where: eq(businesses.slug, slug),
-  });
+  try {
+    const directBusiness = await db.query.businesses.findFirst({
+      where: eq(businesses.slug, slug),
+    });
 
-  if (directBusiness) {
+    if (directBusiness) {
+      return {
+        business: directBusiness,
+        canonicalSlug: directBusiness.slug,
+        requestedSlug: slug,
+        matchedAlias: false,
+      };
+    }
+
+    const alias = await db.query.businessSlugAliases.findFirst({
+      where: eq(businessSlugAliases.slug, slug),
+      with: {
+        business: true,
+      },
+    });
+
+    if (!alias?.business) {
+      return null;
+    }
+
     return {
-      business: directBusiness,
-      canonicalSlug: directBusiness.slug,
+      business: alias.business,
+      canonicalSlug: alias.business.slug,
       requestedSlug: slug,
-      matchedAlias: false,
+      matchedAlias: true,
     };
+  } catch (error) {
+    if (isMissingColumnError(error)) {
+      console.error(
+        '[resolveBusinessSlug] schema drift detected; falling back to explicit column projection',
+        {
+          slug,
+          error,
+        },
+      );
+
+      try {
+        const directRows = await db
+          .select(SAFE_BUSINESS_COLUMNS)
+          .from(businesses)
+          .where(eq(businesses.slug, slug))
+          .limit(1);
+
+        const directBusiness = directRows[0] as typeof businesses.$inferSelect | undefined;
+
+        if (directBusiness) {
+          return {
+            business: directBusiness,
+            canonicalSlug: directBusiness.slug,
+            requestedSlug: slug,
+            matchedAlias: false,
+          };
+        }
+
+        const aliasRows = await db
+          .select({
+            business: SAFE_BUSINESS_COLUMNS,
+          })
+          .from(businessSlugAliases)
+          .innerJoin(businesses, eq(businessSlugAliases.businessId, businesses.id))
+          .where(eq(businessSlugAliases.slug, slug))
+          .limit(1);
+
+        const aliasBusiness = aliasRows[0]?.business as typeof businesses.$inferSelect | undefined;
+        if (!aliasBusiness) {
+          return null;
+        }
+
+        return {
+          business: aliasBusiness,
+          canonicalSlug: aliasBusiness.slug,
+          requestedSlug: slug,
+          matchedAlias: true,
+        };
+      } catch (fallbackError) {
+        console.error('[resolveBusinessSlug] schema drift fallback failed', {
+          slug,
+          error: fallbackError,
+        });
+        return null;
+      }
+    }
+
+    throw error;
   }
-
-  const alias = await db.query.businessSlugAliases.findFirst({
-    where: eq(businessSlugAliases.slug, slug),
-    with: {
-      business: true,
-    },
-  });
-
-  if (!alias?.business) {
-    return null;
-  }
-
-  return {
-    business: alias.business,
-    canonicalSlug: alias.business.slug,
-    requestedSlug: slug,
-    matchedAlias: true,
-  };
 }
 
 export async function isBusinessSlugTaken(

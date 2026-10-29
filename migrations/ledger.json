@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-22T01:31:54.849Z",
+  "generatedAt": "2026-10-29T13:20:17.625Z",
   "counts": {
-    "sql": 80,
+    "sql": 84,
     "journal": 24,
-    "unjournaled": 56
+    "unjournaled": 60
   },
   "files": [
     {
@@ -405,6 +405,26 @@
     {
       "file": "0052_payments_culqi_order_id.sql",
       "prefix": "0052",
+      "method": "manual"
+    },
+    {
+      "file": "0053_webhook_events_dedup.sql",
+      "prefix": "0053",
+      "method": "manual"
+    },
+    {
+      "file": "0054_rate_limit_windows.sql",
+      "prefix": "0054",
+      "method": "manual"
+    },
+    {
+      "file": "0055_reconcile_storefront_schema_drift.sql",
+      "prefix": "0055",
+      "method": "manual"
+    },
+    {
+      "file": "0056_reconcile_pricing_webhooks_and_deactivation.sql",
+      "prefix": "0056",
       "method": "manual"
     }
   ],

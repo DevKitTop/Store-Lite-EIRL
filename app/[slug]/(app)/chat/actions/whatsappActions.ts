@@ -32,7 +32,7 @@ async function verifyBusinessAccess(businessId: string): Promise<boolean> {
 
   const business = await db.query.businesses.findFirst({
     where: eq(businesses.id, businessId),
-    columns: { ownerId: true },
+    columns: { id: true, ownerId: true },
   });
 
   if (!business) return false;

@@ -115,7 +115,7 @@ export default async function OrderVerificationPage({
   // ── 1. Lookup Business ──────────────────────────────────────────────
   const business = await db.query.businesses.findFirst({
     where: eq(businesses.slug, slug),
-    columns: BUSINESS_COLUMNS,
+    columns: { id: true, slug: true, name: true, taxId: true },
   });
 
   if (!business) {
