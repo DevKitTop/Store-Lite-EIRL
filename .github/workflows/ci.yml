@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Check source encoding
+        run: pnpm check:encoding
+
       - name: Run quality check
         run: pnpm lint --max-warnings=10000 && pnpm type-check
 

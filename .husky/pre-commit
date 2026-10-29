@@ -1,5 +1,10 @@
 #!/bin/bash
 
+node scripts/check-encoding.mjs || {
+  echo "Fix the encoding of the files above before committing."
+  exit 1
+}
+
 npx lint-staged
 # ai-review .
 
