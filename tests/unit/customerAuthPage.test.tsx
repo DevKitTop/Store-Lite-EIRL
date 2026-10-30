@@ -30,9 +30,9 @@ import CustomerAuthPage from '../../app/auth/customer/page';
 
 const { mockEnv, mockExchangeCodeForSession, mockGetSession, mockPostMessage, mockClose } =
   vi.hoisted(() => ({
-    // `env.authOrigin` is read at MODULE LOAD time in src/config/env.ts:9, so a
-    // late vi.stubEnv would never reach it. A mutable holder is the repo pattern
-    // (requestFinalizationAuthz.test.ts:26,47).
+    // `publicEnv.authOrigin` is read at MODULE LOAD time in
+    // src/config/env.public.ts, so a late vi.stubEnv would never reach it. A
+    // mutable holder is the repo pattern (requestFinalizationAuthz.test.ts:26,47).
     mockEnv: { authOrigin: '', featureSubdomainRewrite: false } as {
       authOrigin: string;
       featureSubdomainRewrite: boolean;
@@ -43,7 +43,7 @@ const { mockEnv, mockExchangeCodeForSession, mockGetSession, mockPostMessage, mo
     mockClose: vi.fn(),
   }));
 
-vi.mock('@/config/env', () => ({ env: mockEnv }));
+vi.mock('@/config/env.public', () => ({ publicEnv: mockEnv }));
 
 // `page.tsx` imports the `createClient` FACTORY, not a client instance.
 vi.mock('@/lib/supabase/client', () => ({

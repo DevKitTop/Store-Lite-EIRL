@@ -10,7 +10,7 @@
 
 'use client';
 
-import { env } from '@/config/env';
+import { publicEnv } from '@/config/env.public';
 import { useCallback, useEffect, useRef } from 'react';
 import {
   parseEmbeddedSignupEvent,
@@ -103,8 +103,8 @@ export function useFbEmbeddedSignup({ onFinish, onError, onCancel }: UseFbEmbedd
 
   // Kick the SDK load at modal open so FB.login stays inside the gesture.
   useEffect(() => {
-    if (!env.ycloudFbAppId) return;
-    loadFbSdk(env.ycloudFbAppId).catch((err: Error) => {
+    if (!publicEnv.ycloudFbAppId) return;
+    loadFbSdk(publicEnv.ycloudFbAppId).catch((err: Error) => {
       console.error('[useFbEmbeddedSignup] Failed to load FB SDK:', err);
     });
   }, []);
@@ -129,7 +129,7 @@ export function useFbEmbeddedSignup({ onFinish, onError, onCancel }: UseFbEmbedd
   }, []);
 
   const launch = useCallback(async () => {
-    const { ycloudFbAppId, ycloudFbConfigId, ycloudFbSolutionId } = env;
+    const { ycloudFbAppId, ycloudFbConfigId, ycloudFbSolutionId } = publicEnv;
     if (!ycloudFbAppId || !ycloudFbConfigId || !ycloudFbSolutionId) {
       callbacksRef.current.onError('Configuración de WhatsApp incompleta');
       return;

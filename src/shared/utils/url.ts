@@ -7,7 +7,7 @@
 //   without changing callers.
 // =====================================================
 
-import { env } from '@/config/env';
+import { publicEnv } from '@/config/env.public';
 
 /**
  * Subdominios reservados que NO deben resolverse como negocios.
@@ -75,7 +75,7 @@ function isSubdomainModeForSlug(slug: string): boolean {
   // Sin un proxy/rewrite que agregue el slug al path, las URLs sin slug
   // (ej: /order/{token}) no matchean ninguna ruta de Next.js.
   // Ver: https://nextjs.org/docs/app/api-reference/next-config-js/rewrites
-  if (!env.featureSubdomainRewrite) return false;
+  if (!publicEnv.featureSubdomainRewrite) return false;
 
   // Client-side: el hostname revela si ya estamos en un subdominio que coincide
   if (typeof window !== 'undefined') {
@@ -112,7 +112,7 @@ export function getCanonicalBusinessUrl(slug: string, path = ''): string {
   const base = getBaseUrl();
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
 
-  if (env.featureSubdomainRewrite) {
+  if (publicEnv.featureSubdomainRewrite) {
     const url = new URL(base);
     const port = url.port ? `:${url.port}` : '';
     return `${url.protocol}//${slug}.${url.hostname}${port}${normalizedPath === '/' ? '' : normalizedPath}`;
@@ -232,7 +232,7 @@ function normalizeOrigin(value: string): string | null {
  * param `origin` de la URL se usa SOLO como input de esta allowlist:
  *   - mismo origen que la página (en prod el storefront y el popup comparten
  *     dominio, así que esta cláusula es la que sostiene el flujo real)
- *   - env.authOrigin (NEXT_PUBLIC_AUTH_ORIGIN) — superconjunto del anterior
+ *   - publicEnv.authOrigin (NEXT_PUBLIC_AUTH_ORIGIN) — superconjunto del anterior
  *   - host tenant, únicamente si FEATURE_SUBDOMAIN_REWRITE está activo
  *     (la rama queda preparada; hoy el flag es false)
  * Cualquier otro caso se deniega (fail-closed), incluidos `javascript:`,
@@ -251,9 +251,9 @@ export function isAllowedAuthReturnOrigin(origin: string): boolean {
   }
 
   if (parsed.origin === window.location.origin) return true;
-  const configuredOrigin = normalizeOrigin(env.authOrigin);
+  const configuredOrigin = normalizeOrigin(publicEnv.authOrigin);
   if (configuredOrigin !== null && parsed.origin === configuredOrigin) return true;
-  if (env.featureSubdomainRewrite && isTenantHost(parsed.hostname)) return true;
+  if (publicEnv.featureSubdomainRewrite && isTenantHost(parsed.hostname)) return true;
 
   return false;
 }
