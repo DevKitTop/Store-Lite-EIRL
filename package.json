@@ -38,7 +38,7 @@
     "@types/qrcode": "^1.5.6",
     "@vercel/og": "^1.0.2",
     "canvas-confetti": "^1.9.4",
-    "dayjs": "^1.11.21",
+    "dayjs": "^1.11.23",
     "drizzle-orm": "^0.45.2",
     "html-to-image": "^1.11.13",
     "lucide-react": "^0.577.0",
