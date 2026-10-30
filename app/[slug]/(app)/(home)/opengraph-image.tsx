@@ -90,7 +90,6 @@ export default async function OpengraphImage({ params }: { params: Promise<{ slu
       }}
     >
       {logoData && (
-        // eslint-disable-next-line @next/next/no-img-element
         <img
           alt=""
           src={`data:image/png;base64,${Buffer.from(logoData).toString('base64')}`}
