@@ -1,3 +1,4 @@
+/* eslint-disable security/detect-non-literal-fs-filename, security/detect-non-literal-regexp */
 /**
  * Guards the server/client environment boundary.
  *

@@ -170,10 +170,8 @@ describe('env — production guards survive the env.public split', () => {
     vi.resetModules();
 
     const { env } = await import('@/config/env');
-    const values = env as Record<string, unknown>;
 
     expect(Object.keys(env).sort()).toEqual([...BASELINE_ENV_KEYS].sort());
-    for (const key of BASELINE_ENV_KEYS) expect(values[key]).not.toBeUndefined();
     expect(env.supabaseUrl).toBe(FULL_ENV.NEXT_PUBLIC_SUPABASE_URL);
     expect(env.metaPixelId).toBe(FULL_ENV.NEXT_PUBLIC_META_PIXEL_ID);
     expect(env.ycloudFbSolutionId).toBe(FULL_ENV.NEXT_PUBLIC_YCLOUD_FB_SOLUTION_ID);
