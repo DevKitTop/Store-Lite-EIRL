@@ -2,6 +2,9 @@ version: 2
 updates:
   - package-ecosystem: 'npm'
     directory: '/'
+    # main is production: dependency bumps must be validated on develop and reach
+    # main only through a release.
+    target-branch: 'develop'
     schedule:
       interval: 'weekly'
     open-pull-requests-limit: 10
@@ -10,6 +13,7 @@ updates:
 
   - package-ecosystem: 'github-actions'
     directory: '/'
+    target-branch: 'develop'
     schedule:
       interval: 'monthly'
     labels:
