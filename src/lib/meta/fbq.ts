@@ -1,6 +1,6 @@
 'use client';
 
-import { env } from '@/config/env';
+import { publicEnv } from '@/config/env.public';
 
 /**
  * Minimal typed shape of Meta's `fbq` global.
@@ -49,7 +49,7 @@ function ensureFbqQueue(): void {
  * No-op during SSR, without a configured pixel id, or when already
  * initialized (guards against double-init on repeated mounts / hot reloads).
  */
-export function initFbq(pixelId: string = env.metaPixelId): void {
+export function initFbq(pixelId: string = publicEnv.metaPixelId): void {
   if (typeof window === 'undefined' || initialized || !pixelId) return;
   ensureFbqQueue();
   window.fbq?.('init', pixelId);

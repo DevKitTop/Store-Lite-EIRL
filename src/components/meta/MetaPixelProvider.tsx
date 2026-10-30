@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import Script from 'next/script';
 import { useEffect, useRef, useState } from 'react';
 
-import { env } from '@/config/env';
+import { publicEnv } from '@/config/env.public';
 import { getConsentState } from '@/lib/consent/consentClient';
 import { trackPageView, trackViewContent } from '@/lib/meta/events';
 import { initFbq } from '@/lib/meta/fbq';
@@ -46,7 +46,7 @@ export default function MetaPixelProvider() {
   useEffect(() => {
     if (getConsentState() !== 'accepted') return;
     if (!isPlatformTrackingPage(window.location.hostname, window.location.pathname)) return;
-    if (!env.metaPixelId) return;
+    if (!publicEnv.metaPixelId) return;
     setMounted(true);
   }, []);
 
@@ -85,7 +85,7 @@ export default function MetaPixelProvider() {
         strategy="afterInteractive"
         src={FB_EVENTS_URL}
         onLoad={() => {
-          initFbq(env.metaPixelId);
+          initFbq(publicEnv.metaPixelId);
           setReady(true);
         }}
       />
@@ -95,7 +95,7 @@ export default function MetaPixelProvider() {
           height="1"
           width="1"
           style={{ display: 'none' }}
-          src={`https://www.facebook.com/tr?id=${env.metaPixelId}&ev=PageView&noscript=1`}
+          src={`https://www.facebook.com/tr?id=${publicEnv.metaPixelId}&ev=PageView&noscript=1`}
           alt=""
         />
       </noscript>

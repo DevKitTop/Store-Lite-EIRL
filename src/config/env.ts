@@ -1,17 +1,28 @@
-﻿export const env = {
-  supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+﻿import { publicEnv } from '@/config/env.public';
+
+/**
+ * SERVER-ONLY configuration.
+ *
+ * Consumed by server components, route handlers, server actions and the proxy.
+ * It reads server secrets and fails fast when a production secret is missing.
+ *
+ * DO NOT import this module from a `'use client'` module, or from any module
+ * reachable by one: Next.js only inlines `NEXT_PUBLIC_*` variables into the
+ * browser bundle, so every other variable is `undefined` there and the
+ * production checks below would throw on every page — which is exactly the
+ * "SUPABASE_SERVICE_ROLE_KEY is required in production" crash this file's
+ * client-safe sibling exists to prevent. Client-reachable code imports
+ * `@/config/env.public`; `tests/unit/envClientBoundary.test.ts` enforces the
+ * boundary.
+ */
+export const env = {
+  // Public values, shared with client-reachable code via @/config/env.public
+  ...publicEnv,
   // Only available server-side — never expose to the client
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  nextPublicAppUrl: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-  // Allowed return origin for the customer auth popup (public — used by
-  // isAllowedAuthReturnOrigin to validate postMessage targets).
-  authOrigin: process.env.NEXT_PUBLIC_AUTH_ORIGIN || '',
   // Feature flags
   // Order Flow V2 — nuevo ciclo de vida de 12 estados con state machine, timeline, attachments
   orderFlowV2: process.env.ORDER_FLOW_V2 === 'true',
-  // Habilita el rewrite de subdominios en proxy.ts (Fase 2 de la migración a subdominios)
-  featureSubdomainRewrite: process.env.FEATURE_SUBDOMAIN_REWRITE === 'true',
   // Dominio compartido para cookies cross-subdominio (Fase 4).
   //   Producción: `.store-lite.com`
   //   Desarrollo: `.localhost`
@@ -72,7 +83,6 @@
   //   META_CAPI_ACCESS_TOKEN: solo server-side, NUNCA exponer al cliente.
   //   META_TEST_EVENT_CODE: opcional, para validar eventos en Meta Events Manager.
   //   Todos con fallback vacío: sin config, warnings y no-op (el app nunca crashea).
-  metaPixelId: process.env.NEXT_PUBLIC_META_PIXEL_ID || '',
   metaCapiAccessToken: process.env.META_CAPI_ACCESS_TOKEN || '',
   metaTestEventCode: process.env.META_TEST_EVENT_CODE || '',
 
@@ -83,11 +93,7 @@
   ycloudApiKey: process.env.YCLOUD_API_KEY || '',
   ycloudWabaId: process.env.YCLOUD_WABA_ID || '',
   ycloudWebhookSecret: process.env.YCLOUD_WEBHOOK_SECRET || '',
-  // YCloud Meta Embedded Signup (FB SDK) - coexistence popup
-  ycloudFbAppId: process.env.NEXT_PUBLIC_YCLOUD_FB_APP_ID || '',
-  ycloudFbConfigId: process.env.NEXT_PUBLIC_YCLOUD_FB_CONFIG_ID || '',
-  ycloudFbSolutionId: process.env.NEXT_PUBLIC_YCLOUD_FB_SOLUTION_ID || '',
-  // YCloud Meta Embedded Signup (FB SDK) � coexistence popup
+  // YCloud Meta Embedded Signup (FB SDK) — coexistence popup
   // WhatsApp anti-spam rate limiting (per channel/seller) — protects the Meta
   // quality rating. Kept as STRINGS on purpose; parsing lives in the send
   // guards (src/core/whatsapp/guards/whatsappSendGuards.ts). Defaults are safe.

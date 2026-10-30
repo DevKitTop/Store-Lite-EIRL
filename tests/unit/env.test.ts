@@ -55,6 +55,50 @@ describe('env — Meta Pixel / CAPI configuration', () => {
   });
 });
 
+describe('env — production fail-fast guard stays server-side', () => {
+  const productionSecrets = {
+    SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+    OTP_HASH_SECRET: 'otp-secret',
+    ORDER_ACCESS_COOKIE_SECRET: 'order-access-secret',
+    CRON_SECRET: 'cron-secret',
+    CULQI_WEBHOOK_USER: 'culqi-user',
+    CULQI_WEBHOOK_PASS: 'culqi-pass',
+    SASS_API_KEY: 'sass-key',
+  };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('throws in production when SUPABASE_SERVICE_ROLE_KEY is missing', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('CI', '');
+    vi.stubEnv('GITHUB_ACTIONS', '');
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', '');
+    vi.resetModules();
+
+    await expect(import('@/config/env')).rejects.toThrow(
+      'SUPABASE_SERVICE_ROLE_KEY is required in production',
+    );
+  });
+
+  it('loads in production when every required secret is present and keeps public values', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('CI', '');
+    vi.stubEnv('GITHUB_ACTIONS', '');
+    vi.stubEnv('NEXT_PUBLIC_META_PIXEL_ID', '1234567890123');
+    for (const [name, value] of Object.entries(productionSecrets)) vi.stubEnv(name, value);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.resetModules();
+
+    const { env } = await import('@/config/env');
+
+    expect(env.supabaseServiceRoleKey).toBe('service-role-key');
+    expect(env.metaPixelId).toBe('1234567890123');
+  });
+});
+
 describe('env — WhatsApp send guards rate limiting', () => {
   afterEach(() => {
     vi.unstubAllEnvs();

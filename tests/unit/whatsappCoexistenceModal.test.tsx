@@ -15,8 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Meta partner envs are present when the coexistence modal is mounted
 // (slice 4 branches on them) — mirror that here, otherwise launch() would
 // hit the missing-env guard and never call FB.login.
-vi.mock('@/config/env', () => ({
-  env: {
+vi.mock('@/config/env.public', () => ({
+  publicEnv: {
     ycloudFbAppId: 'app-111',
     ycloudFbConfigId: 'config-222',
     ycloudFbSolutionId: 'solution-333',

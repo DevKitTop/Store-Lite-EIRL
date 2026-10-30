@@ -27,8 +27,8 @@ vi.mock('next/script', () => ({
   },
 }));
 
-vi.mock('@/config/env', () => ({
-  env: envState,
+vi.mock('@/config/env.public', () => ({
+  publicEnv: envState,
 }));
 
 vi.mock('@/lib/meta/tenantGuard', () => ({
