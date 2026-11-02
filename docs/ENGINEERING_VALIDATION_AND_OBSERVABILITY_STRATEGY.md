@@ -422,7 +422,7 @@ Esto **no lo detecta ningún escáner**. Requiere tests escritos a mano.
 | Un usuario no lee datos de otra tienda            | ✅ Verificado — 8/8, `pnpm check:tenancy` (2026-11-01)               |
 | Server Actions validan membresía                  | 🟡 Páginas privadas verificadas por HTTP; acción directa no cubierta |
 | Route Handlers validan ownership                  | 🟡 2 endpoints verificados (2026-11-01); resto pendiente             |
-| Acceso a archivos e imágenes aislado              | ⏳ Pendiente                                                         |
+| Acceso a archivos e imágenes aislado              | ❌ **Falla** — políticas de Storage sin control de inquilino         |
 | Operaciones administrativas protegidas            | ✅ Verificado — 4 endpoints, todos fallan cerrado                    |
 | `x-sass-key` y `platformAdminIds` no bypasseables | ✅ Falla cerrado; comparación no constant-time (menor)               |
 
@@ -451,6 +451,31 @@ Los cinco **fallan cerrado**, que es lo correcto.
 **Hallazgo menor:** `src/config/env.ts:186` advierte _"CRON_SECRET not set. Cron endpoints may be unprotected."_ Es inexacto — con el secreto vacío, `token !== ''` hace que toda petición reciba 401. El mensaje induce a creer que hay exposición y puede llevar a cargar una clave débil a las apuradas. Conviene cambiarlo por algo como _"cron endpoints will reject every request"_.
 
 **Nota:** la comparación de `x-sass-key` usa `!==`, no es constant-time. Para una clave aleatoria de longitud razonable el riesgo práctico es bajo, pero `secretsMatch` ya existe en el repo y podría reutilizarse.
+
+#### Almacenamiento de archivos (2026-11-01) — falla de aislamiento
+
+Supabase Storage no estaba incluido en la comparación de catálogo, que cubrió solo `public`. Al revisarlo aparecen dos problemas y una configuración ausente.
+
+**Buckets:** los seis (`avatars`, `product-images`, `products`, `store-covers`, `store-logos`, `tickets`) son `public: true`.
+
+**Políticas sobre `storage.objects`, texto exacto:**
+
+| Política                                     | Comando | Condición                                                  | Problema                                    |
+| -------------------------------------------- | ------- | ---------------------------------------------------------- | ------------------------------------------- |
+| `Authenticated Delete`                       | DELETE  | `bucket_id = 'products'`                                   | Sin control de propiedad                    |
+| `Authenticated Update`                       | UPDATE  | `bucket_id = 'products'`                                   | Sin control de propiedad                    |
+| `Authenticated Upload`                       | INSERT  | `bucket_id = 'products'`                                   | Cualquier autenticado sube a cualquier ruta |
+| `Authenticated users can delete store logos` | DELETE  | `bucket_id = 'store-logos'`                                | Sin control de propiedad                    |
+| `Authenticated users can update store logos` | UPDATE  | `bucket_id = 'store-logos'`                                | Sin control de propiedad                    |
+| `Users can delete own avatar`                | DELETE  | `bucket_id='avatars' AND foldername(name)[1] = auth.uid()` | **Correcta**                                |
+
+**Hallazgo alto — escritura entre inquilinos:** cualquier usuario autenticado puede borrar o sobrescribir imágenes de productos y logos de otro inquilino llamando directo a la API de Storage con su JWT. Las políticas solo filtran por bucket, no por dueño. El navegador de cualquier comerciante tiene la `anon key` y una sesión válida: no hace falta nada más. La app sube con `adminClient` (service role), así que su propio camino está protegido por `requireOwnedBusinessById`; la política abierta es una segunda puerta que queda sin vigilancia.
+
+**Hallazgo alto — comprobantes públicos:** el bucket `tickets` es público y el código publica la URL con `getPublicUrl`. Cualquiera con el enlace lee el comprobante de pago de un comprador. Es confidencialidad por URL impredecible, que no es control de acceso.
+
+**El patrón correcto ya existe en el repo:** `avatars` usa `(storage.foldername(name))[1] = auth.uid()`. Los productos se guardan en `productos/<businessId>/<archivo>`, así que el predicado equivalente es `(storage.foldername(name))[2]`, comparado contra los negocios propios o donde el usuario es miembro del equipo.
+
+**Brecha de entorno:** la base local tiene **cero buckets y cero políticas** de Storage. `supabase db reset` produce un entorno donde el aislamiento de archivos ni siquiera es observable. Ese esquema vive solo en el proyecto desplegado y debería versionarse, igual que `public`.
 
 #### Lo verificado (2026-11-01)
 
