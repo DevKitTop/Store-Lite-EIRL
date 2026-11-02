@@ -477,6 +477,27 @@ Supabase Storage no estaba incluido en la comparación de catálogo, que cubrió
 
 **Brecha de entorno:** la base local tiene **cero buckets y cero políticas** de Storage. `supabase db reset` produce un entorno donde el aislamiento de archivos ni siquiera es observable. Ese esquema vive solo en el proyecto desplegado y debería versionarse, igual que `public`.
 
+#### Corrección aplicada (2026-11-01)
+
+`supabase/migrations/0003_storage_tenant_isolation.sql` reemplaza las políticas abiertas por tres acotadas a la propiedad del negocio, reutilizando `is_business_member` y el segmento 2 de la ruta (`productos/<businessId>/<archivo>`). Las de `store-logos` se eliminan: el bucket no tiene objetos ni referencias en el código, así que no hay flujo legítimo que conservar.
+
+Aplicada en local y en staging; ambos entornos muestran exactamente las tres políticas nuevas.
+
+**Un error propio que vale registrar:** la primera versión escribía `storage.foldername(name)` dentro de un subquery sobre `businesses`. Ese `name` se resolvió a `businesses.name`, no al nombre del objeto: la política quedaba comparando un nombre de negocio contra un UUID y **nunca habría coincidido**. La migración se aplicó sin error. Solo se detectó al leer el texto de la política resultante con `pg_policies`. Revisar el DDL no alcanza; hay que leer lo que Postgres guardó.
+
+**Segundo detalle no obvio:** la API de Storage sube con `INSERT ... ON CONFLICT DO UPDATE`. Eso significa que la política de **UPDATE** también se evalúa, y una política de UPDATE mal escrita bloquea las subidas aunque la de INSERT sea correcta.
+
+**Qué quedó probado y qué no:**
+
+| Afirmación                                                    | Estado                                                   |
+| ------------------------------------------------------------- | -------------------------------------------------------- |
+| Las políticas abiertas ya no existen                          | ✅ Verificado por `pg_policies` en local y staging       |
+| El predicado es verdadero para el dueño y falso para un ajeno | ✅ Verificado en SQL ejecutando como rol `authenticated` |
+| La migración aplica limpia y es idempotente                   | ✅ `db reset` en local                                   |
+| Una subida real del dueño funciona por la API                 | ❌ **No verificado**                                     |
+
+El último punto quedó sin cerrar por un comportamiento del Storage local que no pude aislar: incluso con una política temporal `with check (true)` para todos los roles, la API sigue respondiendo `new row violates row-level security policy`. Eso descarta la lógica de la política como causa y apunta al entorno local, pero no lo demuestra. Debe verificarse contra staging antes de dar la corrección por buena.
+
 #### Lo verificado (2026-11-01)
 
 `scripts/tenancy-check.ts` crea dos inquilinos de prueba (`tenancy-a`, `tenancy-b`) con usuarios reales en Supabase Auth, y ataca con el token de A:
