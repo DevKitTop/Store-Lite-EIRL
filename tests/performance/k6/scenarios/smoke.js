@@ -9,13 +9,9 @@ import { check, sleep } from 'k6';
 import http from 'k6/http';
 
 import { baseUrl, buildOptions, businessSlug, thinkTimeMs } from '../lib/config.js';
-import { homePath, requestHeaders } from '../lib/data.js';
+import { homePath, isAppPage, looksLikeProtectionWall, requestHeaders } from '../lib/data.js';
 
 export const options = buildOptions({ scenario: 'smoke' });
-
-function isHealthyBody(body) {
-  return typeof body === 'string' && body.length > 5000 && !body.includes('Application error');
-}
 
 export default function () {
   const response = http.get(`${baseUrl}${homePath()}`, {
@@ -25,9 +21,10 @@ export default function () {
 
   check(response, {
     'home: status is 200': (r) => r.status === 200,
+    'home: is the app, not a protection wall': (r) => !looksLikeProtectionWall(r.body),
     'home: renders the business slug': (r) =>
       typeof r.body === 'string' && r.body.includes(businessSlug),
-    'home: returns a full page': (r) => isHealthyBody(r.body),
+    'home: returns a full page': (r) => isAppPage(r.body),
   });
 
   sleep(thinkTimeMs / 1000);

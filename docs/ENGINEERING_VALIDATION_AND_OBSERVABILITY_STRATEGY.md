@@ -185,7 +185,7 @@ tests/performance/k6/
     smoke.js            # ✅ implementado
     storefront-read.js  # ✅ implementado
     api-ratelimit.js    # ✅ implementado
-    order-lookup.js     # ⏳ pendiente
+    order-lookup.js     # ✅ implementado (usa el pedido sembrado)
     auth-session.js     # ✅ implementado
     checkout-mocked.js  # ⏳ pendiente
     cron-concurrent.js  # ⏳ pendiente
@@ -273,40 +273,26 @@ Cada iteración es un password grant real contra GoTrue. Con 2 VUs no hay tensi�
 
 El escenario exige las credenciales por variable de entorno y aborta si falta alguna. No hay usuario ni contraseña en el repositorio.
 
-### 5.9 Primera medición en staging (2026-11-01)
+### 5.9 Mediciones de staging — INVALIDADAS (2026-11-01)
 
-Preview de Vercel apuntando al proyecto de staging, negocio real `store-girl` (170 productos), Supabase remoto.
+> **Corrección de la misma jornada.** Las mediciones que había acá estaban mal y se retiran. El preview de Vercel estaba detrás de **Deployment Protection**: cada ruta devolvía `200` con `<title>Login - Vercel</title>`. Los checks pasaban por dos razones: `status === 200` se cumplía, y `body.includes(businessSlug)` también, porque la página de login embebe la URL original en el parámetro de redirect.
 
-| Escenario         | Perfil       | Requests | Fallos | p(95)  |
-| ----------------- | ------------ | -------- | ------ | ------ |
-| `smoke`           | 2 VUs, 1 min | 111      | 0%     | 945 ms |
-| `storefront-read` | 2 VUs, 1 min | 114      | 0%     | 1,02 s |
+Evidencia de la corrección:
 
-Esto cierra la Fase 0 con evidencia: el preview sirve el storefront desde staging, con datos reales y las dos tablas nuevas en su lugar.
+| Comprobación                                  | Resultado                          |
+| --------------------------------------------- | ---------------------------------- |
+| `GET /demo-store` en el preview               | `200`, título `Login - Vercel`     |
+| `GET /demo-store/order/<token>` en el preview | idéntico                           |
+| `smoke` con el check nuevo `isAppPage`        | **0/37 checks**, exit 99           |
+| Requests y latencia de esa corrida            | 111 y ~476 ms, igual que la previa |
 
-**Cómo leerlo:** son 2 VUs, con `min` de 100 ms y `med` de ~500 ms. La dispersión viene de arranques en frío de funciones serverless, no de la base. No es un baseline: es la prueba de que el camino funciona de punta a punta. Un baseline real necesita el perfil `baseline` (10 VUs, 10 min) y una ventana sin despliegues en curso.
+Las cifras retiradas eran: `smoke` 111 requests / p95 945 ms; `storefront-read` 114 requests / p95 1,02 s; `baseline` 10 VUs, 6.960 requests, p95 996 ms. Todas describen la pared de login, no el storefront.
 
-### 5.10 Baseline de staging (2026-11-01)
+**Qué se corrigió en el código, no en el documento:** `lib/data.js` expone `looksLikeProtectionWall()` e `isAppPage()`, y `smoke`, `storefront-read` y `order-lookup` rechazan explícitamente la página de login. Un `200` dejó de ser prueba de algo.
 
-Perfil `baseline`: 10 VUs sostenidos durante 10 minutos contra el preview de staging, negocio `store-girl`, 4 productos rotando.
+**Qué falta para medir staging de verdad:** un **Protection Bypass for Automation** (Vercel → Settings → Deployment Protection) enviado como cabecera `x-vercel-protection-bypass`, o desactivar la protección en Preview. Mientras no exista, cualquier número de staging mide la pantalla de Vercel.
 
-| Métrica     | Valor                |
-| ----------- | -------------------- |
-| Iteraciones | 1.160                |
-| Requests    | 6.960                |
-| Fallos      | **0**                |
-| Checks      | 6.960 / 6.960 (100%) |
-| p(50)       | 422 ms               |
-| p(90)       | 929 ms               |
-| p(95)       | **996 ms**           |
-| Máximo      | 3,86 s               |
-| Abortos     | ninguno              |
-
-**Threshold recomendado:** `K6_P95_MS=1500`, aproximadamente 1,5× el p95 medido. Deja margen para la variación entre despliegues sin volverse decorativo.
-
-**Cómo leerlo:** con 10 VUs el backend no muestra saturación — cero fallos y ningún aborto. La distancia entre p50 (422 ms) y p95 (996 ms) es casi toda tiempo de arranque en frío de funciones serverless, no contención de base. Para separar ambas cosas haría falta medir con VUs sostenidos más tiempo, de modo que el p95 quede dominado por ejecuciones calientes.
-
-**Qué no prueba:** no dice nada sobre 100 VUs, ni sobre escrituras, ni sobre el checkout. Es un baseline del camino de lectura anónima bajo un mix concreto.
+**Estado:** Fase 0 cerrada en lo estructural (staging tiene el esquema correcto, verificado por catálogo) y **abierta en lo funcional** hasta que el preview sea alcanzable.
 
 ---
 
@@ -637,7 +623,7 @@ Un test que pasa no autoriza el lanzamiento por sí solo. La conclusión debe re
 | 8    | Decidir cómo reparar la cadena de migraciones                 | ✅ Hecho: baseline forward-only en `supabase/migrations/` (ver 15.2)            |
 | 9    | Definir cómo poblar la base local (seed o dump)               | ✅ Hecho: `scripts/seed.ts` + `pnpm db:seed`                                    |
 | 10   | Aplicar `0002` a staging y verificar paridad de catálogo      | ✅ Hecho: 0 diferencias en 11 categorías                                        |
-| 11   | Validar el flujo completo contra el preview de staging        | ✅ Hecho: `smoke` y `storefront-read` en verde (ver 5.9)                        |
+| 11   | Validar el flujo completo contra el preview de staging        | ⏳ Bloqueado por Deployment Protection de Vercel (ver 5.9)                      |
 
 **Evidencia del paso 7 (2026-10-31):** backup en `%TEMP%\opencode\env-backup-20261031-162122.txt`. Solo se reemplazaron `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` y `DATABASE_URL`; las otras 40 claves quedaron intactas. Verificación: `select count(*) from businesses` → 0, `information_schema.tables` de `public` → 41, `auth.users` → 0.
 
@@ -645,10 +631,11 @@ Un test que pasa no autoriza el lanzamiento por sí solo. La conclusión debe re
 
 **Seed local (paso 9):** `scripts/seed.ts`, ejecutado con `pnpm db:seed`.
 
-- Guard duro: aborta si `NODE_ENV=production`, o si `DATABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL` no resuelven a `127.0.0.1` / `localhost`.
+- Guard: aborta si `NODE_ENV=production`. Los targets locales (`127.0.0.1` / `localhost` / `::1`) corren directo; cualquier otro exige **a la vez** `SEED_CONFIRM=yes` y cada host listado en `SEED_ALLOWED_HOSTS`. Un typo en `DATABASE_URL` no alcanza para escribir en una base remota.
 - Escrituras idempotentes: todo es upsert sobre clave natural. Sin `DELETE`, sin `TRUNCATE`.
-- Crea el usuario dueño vía Admin API local (el trigger `on_auth_user_created` no existe en la base local — ver 10.2).
-- Alcance: 1 negocio (`demo-store`), 2 categorías, 6 productos, 6 filas de media. Sin pedidos.
+- Crea el usuario dueño vía Admin API (el trigger `on_auth_user_created` no existe ni en local ni en staging — ver 10.2).
+- Alcance: 1 negocio (`demo-store`), 2 categorías, 6 productos, 6 filas de media y 1 pedido determinístico (`DEMO-0001`, token `demo-tracking-token-0001`) que alimenta el escenario `order-lookup`.
+- Sembrado en local y en staging el 2026-11-01; el candado se probó apuntando a staging sin `SEED_CONFIRM` y abortó sin escribir.
 
 Verificación ejecutada:
 

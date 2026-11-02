@@ -15,13 +15,16 @@ import { check, sleep } from 'k6';
 import http from 'k6/http';
 
 import { baseUrl, buildOptions, businessSlug, thinkTimeMs } from '../lib/config.js';
-import { homePath, pickProductSlug, productPath, requestHeaders } from '../lib/data.js';
+import {
+  homePath,
+  isAppPage,
+  looksLikeProtectionWall,
+  pickProductSlug,
+  productPath,
+  requestHeaders,
+} from '../lib/data.js';
 
 export const options = buildOptions({ scenario: 'storefront-read' });
-
-function isHealthyBody(body) {
-  return typeof body === 'string' && body.length > 5000 && !body.includes('Application error');
-}
 
 export default function () {
   const home = http.get(`${baseUrl}${homePath()}`, {
@@ -31,9 +34,10 @@ export default function () {
 
   check(home, {
     'home: status is 200': (r) => r.status === 200,
+    'home: is the app, not a protection wall': (r) => !looksLikeProtectionWall(r.body),
     'home: renders the business slug': (r) =>
       typeof r.body === 'string' && r.body.includes(businessSlug),
-    'home: returns a full page': (r) => isHealthyBody(r.body),
+    'home: returns a full page': (r) => isAppPage(r.body),
   });
 
   sleep(thinkTimeMs / 1000);
@@ -46,9 +50,10 @@ export default function () {
 
   check(product, {
     'product: status is 200': (r) => r.status === 200,
+    'product: is the app, not a protection wall': (r) => !looksLikeProtectionWall(r.body),
     'product: renders the requested slug': (r) =>
       typeof r.body === 'string' && r.body.includes(productSlug),
-    'product: returns a full page': (r) => isHealthyBody(r.body),
+    'product: returns a full page': (r) => isAppPage(r.body),
   });
 
   sleep(thinkTimeMs / 1000);

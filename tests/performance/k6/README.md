@@ -22,31 +22,34 @@ tests/performance/k6/
     smoke.js            # is the storefront reachable?
     storefront-read.js  # anonymous catalogue + product detail
     api-ratelimit.js    # is the /api/* budget actually enforced?
+    order-lookup.js     # order tracking page by token
     auth-session.js     # password login under load
   results/              # JSON summaries per run (git-ignored contents)
 ```
 
-The remaining scenarios (`order-lookup`, `checkout-mocked`, `cron-concurrent`)
-are not implemented yet.
+The remaining scenarios (`checkout-mocked`, `cron-concurrent`) are not
+implemented yet.
 Order of implementation lives in section 5.3 of
 `docs/ENGINEERING_VALIDATION_AND_OBSERVABILITY_STRATEGY.md`.
 
 ## Environment variables
 
-| Variable                             | Default                  | Meaning                                                |
-| ------------------------------------ | ------------------------ | ------------------------------------------------------ |
-| `K6_BASE_URL`                        | `http://localhost:3000`  | Target origin, no trailing slash                       |
-| `K6_BUSINESS_SLUG`                   | `demo-store`             | Storefront under test                                  |
-| `K6_PRODUCT_SLUGS`                   | seeded demo products     | Comma-separated product slugs                          |
-| `K6_PROFILE`                         | `smoke`                  | `smoke`, `baseline`, `load`, `stress`, `spike`, `soak` |
-| `K6_THINK_TIME_MS`                   | `1000`                   | Pause between requests per VU                          |
-| `K6_P95_MS`                          | unset                    | Enables the `p(95)` latency threshold                  |
-| `K6_API_PATH`                        | `/api/auth/user`         | Target of `api-ratelimit.js`                           |
-| `K6_RATE_LIMIT_MAX`                  | `30`                     | Expected `/api/*` budget                               |
-| `K6_RATE_LIMIT_PROBES`               | `35`                     | Requests sent by `api-ratelimit.js`                    |
-| `K6_SUPABASE_URL`                    | `http://127.0.0.1:54321` | Auth endpoint for `auth-session.js`                    |
-| `K6_SUPABASE_ANON_KEY`               | —                        | Required by `auth-session.js`                          |
-| `K6_AUTH_EMAIL` / `K6_AUTH_PASSWORD` | —                        | Required by `auth-session.js`, never committed         |
+| Variable                             | Default                    | Meaning                                                |
+| ------------------------------------ | -------------------------- | ------------------------------------------------------ |
+| `K6_BASE_URL`                        | `http://localhost:3000`    | Target origin, no trailing slash                       |
+| `K6_BUSINESS_SLUG`                   | `demo-store`               | Storefront under test                                  |
+| `K6_PRODUCT_SLUGS`                   | seeded demo products       | Comma-separated product slugs                          |
+| `K6_PROFILE`                         | `smoke`                    | `smoke`, `baseline`, `load`, `stress`, `spike`, `soak` |
+| `K6_THINK_TIME_MS`                   | `1000`                     | Pause between requests per VU                          |
+| `K6_P95_MS`                          | unset                      | Enables the `p(95)` latency threshold                  |
+| `K6_API_PATH`                        | `/api/auth/user`           | Target of `api-ratelimit.js`                           |
+| `K6_RATE_LIMIT_MAX`                  | `30`                       | Expected `/api/*` budget                               |
+| `K6_RATE_LIMIT_PROBES`               | `35`                       | Requests sent by `api-ratelimit.js`                    |
+| `K6_SUPABASE_URL`                    | `http://127.0.0.1:54321`   | Auth endpoint for `auth-session.js`                    |
+| `K6_SUPABASE_ANON_KEY`               | —                          | Required by `auth-session.js`                          |
+| `K6_AUTH_EMAIL` / `K6_AUTH_PASSWORD` | —                          | Required by `auth-session.js`, never committed         |
+| `K6_ORDER_TOKEN`                     | `demo-tracking-token-0001` | Seeded by `scripts/seed.ts`                            |
+| `K6_ORDER_NUMBER`                    | `DEMO-0001`                | Expected on the tracking page                          |
 
 ## Running
 
@@ -94,6 +97,21 @@ every merchant session does, and the one dependency this app does not control.
 It reads `K6_AUTH_EMAIL`, `K6_AUTH_PASSWORD`, `K6_SUPABASE_ANON_KEY` and
 `K6_SUPABASE_URL` and fails immediately if a credential is missing, so nothing
 sensitive lives in the repository. It creates sessions only, never data.
+
+## Protection walls
+
+A Vercel preview behind Deployment Protection answers **200 with a login page**
+on every path, and that page embeds the original URL in its redirect. A check
+like `body.includes(slug)` therefore passes against it, and a run "succeeds"
+while measuring Vercel instead of the app. This actually happened: a 10-minute
+baseline was recorded against the login page before it was caught.
+
+Every HTML scenario calls `isAppPage()` and `looksLikeProtectionWall()` from
+`lib/data.js`, so pointing one at a protected preview yields `0/N` checks. That
+is the correct answer, not a regression.
+
+To measure a protected preview, generate a Protection Bypass for Automation and
+send it as `x-vercel-protection-bypass`, or disable protection for Preview.
 
 ## Thresholds are measured, not invented
 
