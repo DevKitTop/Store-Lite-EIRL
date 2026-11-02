@@ -36,6 +36,7 @@ checkout_diff.txt
 /coverage
 playwright-report/
 test-results/
+tests/performance/k6/results/*.json
 
 # next.js
 /.next/
