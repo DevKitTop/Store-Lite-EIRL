@@ -20,11 +20,12 @@ tests/performance/k6/
   scenarios/
     smoke.js            # is the storefront reachable?
     storefront-read.js  # anonymous catalogue + product detail
+    api-ratelimit.js    # is the /api/* budget actually enforced?
   results/              # JSON summaries per run (git-ignored contents)
 ```
 
-`lib/auth.js` and the remaining scenarios (`api-ratelimit`, `order-lookup`,
-`auth-session`, `checkout-mocked`, `cron-concurrent`) are not implemented yet.
+`lib/auth.js` and the remaining scenarios (`order-lookup`, `auth-session`,
+`checkout-mocked`, `cron-concurrent`) are not implemented yet.
 Order of implementation lives in section 5.3 of
 `docs/ENGINEERING_VALIDATION_AND_OBSERVABILITY_STRATEGY.md`.
 
@@ -59,6 +60,23 @@ k6 run tests/performance/k6/scenarios/storefront-read.js
 k6 run --summary-export tests/performance/k6/results/storefront-read-baseline.json `
        tests/performance/k6/scenarios/storefront-read.js
 ```
+
+## Rate limiting scenario
+
+`api-ratelimit.js` is not a load test, it is a behavioural assertion. It sends
+`K6_RATE_LIMIT_PROBES` (35) sequential requests from one client and expects
+`K6_RATE_LIMIT_MAX` (30) to succeed before the limiter answers 429 with a
+`Retry-After` header.
+
+Two things to know:
+
+- The limiter is an in-memory sliding window per instance, so the scenario waits
+  for a clear window first and fails if it cannot get one.
+- `http_req_failed` reports roughly 14% failed. Those are the expected 429s, not
+  breakage, which is why this scenario has no `http_req_failed` threshold.
+
+Target: `K6_API_PATH`, default `/api/auth/user`. Never point it at a writing
+endpoint.
 
 ## Thresholds are measured, not invented
 
