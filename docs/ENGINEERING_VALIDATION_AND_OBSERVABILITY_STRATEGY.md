@@ -273,6 +273,19 @@ Cada iteración es un password grant real contra GoTrue. Con 2 VUs no hay tensi�
 
 El escenario exige las credenciales por variable de entorno y aborta si falta alguna. No hay usuario ni contraseña en el repositorio.
 
+### 5.9 Primera medición en staging (2026-11-01)
+
+Preview de Vercel apuntando al proyecto de staging, negocio real `store-girl` (170 productos), Supabase remoto.
+
+| Escenario         | Perfil       | Requests | Fallos | p(95)  |
+| ----------------- | ------------ | -------- | ------ | ------ |
+| `smoke`           | 2 VUs, 1 min | 111      | 0%     | 945 ms |
+| `storefront-read` | 2 VUs, 1 min | 114      | 0%     | 1,02 s |
+
+Esto cierra la Fase 0 con evidencia: el preview sirve el storefront desde staging, con datos reales y las dos tablas nuevas en su lugar.
+
+**Cómo leerlo:** son 2 VUs, con `min` de 100 ms y `med` de ~500 ms. La dispersión viene de arranques en frío de funciones serverless, no de la base. No es un baseline: es la prueba de que el camino funciona de punta a punta. Un baseline real necesita el perfil `baseline` (10 VUs, 10 min) y una ventana sin despliegues en curso.
+
 ---
 
 ## 6. Fase 2 — Funcional con Playwright
@@ -573,12 +586,14 @@ Un test que pasa no autoriza el lanzamiento por sí solo. La conclusión debe re
 | 1    | Abrir Docker Desktop y verificar el daemon                    | ✅ v29.5.3                                                                      |
 | 2    | `npx supabase init` (crea `supabase/config.toml`)             | ✅ Hecho                                                                        |
 | 3    | `npx supabase start` (Postgres + Auth + Storage local)        | ✅ Corriendo en `127.0.0.1:54321`                                               |
-| 4    | Provisionar el esquema local                                  | ⚠️ Vía `db:push`, no vía migraciones (ver 10.1)                                 |
+| 4    | Provisionar el esquema local                                  | ✅ Vía baseline forward-only (ver 15.2); `db:push` quedó descartado             |
 | 5    | Reasignar Vercel Preview al proyecto staging                  | ✅ Ya apuntaba a `likloeyrdzfsrwelpdoz` (dev)                                   |
 | 6    | Confirmar que producción no comparte credenciales con staging | ⚠️ Parcial: Preview = dev confirmado; Production ilegible por marca `SENSITIVE` |
 | 7    | Apuntar el desarrollo local a Supabase local (`127.0.0.1`)    | ✅ Hecho: `.env` — 4 claves, 44 antes/después, conexión verificada              |
 | 8    | Decidir cómo reparar la cadena de migraciones                 | ✅ Hecho: baseline forward-only en `supabase/migrations/` (ver 15.2)            |
 | 9    | Definir cómo poblar la base local (seed o dump)               | ✅ Hecho: `scripts/seed.ts` + `pnpm db:seed`                                    |
+| 10   | Aplicar `0002` a staging y verificar paridad de catálogo      | ✅ Hecho: 0 diferencias en 11 categorías                                        |
+| 11   | Validar el flujo completo contra el preview de staging        | ✅ Hecho: `smoke` y `storefront-read` en verde (ver 5.9)                        |
 
 **Evidencia del paso 7 (2026-10-31):** backup en `%TEMP%\opencode\env-backup-20261031-162122.txt`. Solo se reemplazaron `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` y `DATABASE_URL`; las otras 40 claves quedaron intactas. Verificación: `select count(*) from businesses` → 0, `information_schema.tables` de `public` → 41, `auth.users` → 0.
 
