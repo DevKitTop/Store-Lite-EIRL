@@ -1,22 +1,25 @@
 /**
- * Local development seed.
+ * Development seed.
  *
- * Gives a fresh local Supabase instance enough data for the storefront to
- * render, so development no longer depends on the shared cloud project.
+ * Gives a database enough data for the storefront and the order tracking page
+ * to render, so development does not depend on production data.
  *
  * Safety rules:
  *   - Refuses to run when NODE_ENV=production.
- *   - Refuses to run when DATABASE_URL or NEXT_PUBLIC_SUPABASE_URL does not
- *     resolve to 127.0.0.1 / localhost.
+ *   - Local targets (127.0.0.1 / localhost / ::1) run without extra ceremony.
+ *   - Any other target requires BOTH SEED_CONFIRM=yes and every host listed in
+ *     SEED_ALLOWED_HOSTS. A typo in DATABASE_URL alone cannot reach a remote
+ *     database, and production is never allowlisted by accident.
  *   - Idempotent: every write is an upsert keyed on a stable natural key.
  *     No DELETE, no TRUNCATE.
  *
- * Usage: pnpm db:seed
+ * Usage:
+ *   pnpm db:seed
+ *   SEED_CONFIRM=yes SEED_ALLOWED_HOSTS=db.<ref>.supabase.co,<ref>.supabase.co pnpm db:seed
  *
- * Note: the local database is built with `drizzle-kit push`, so it contains
- * tables and columns only. Triggers, RLS policies and SQL functions from
- * `migrations/` are NOT present locally, which is why the owner profile is
- * inserted explicitly instead of relying on the `on_auth_user_created` trigger.
+ * Note: neither the local nor the deployed database has a trigger on
+ * auth.users, so the owner profile is inserted explicitly instead of relying on
+ * `on_auth_user_created`.
  */
 import 'dotenv/config';
 import postgres from 'postgres';
@@ -49,13 +52,37 @@ const supabaseHost = parseHost(process.env.NEXT_PUBLIC_SUPABASE_URL, 'NEXT_PUBLI
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 
-if (!LOCAL_HOSTS.has(databaseHost)) {
-  abort(`DATABASE_URL points to "${databaseHost}". This seed only targets a local database.`);
-}
-if (!LOCAL_HOSTS.has(supabaseHost)) {
-  abort(
-    `NEXT_PUBLIC_SUPABASE_URL points to "${supabaseHost}". This seed only targets local Supabase.`,
-  );
+const allowedHosts = new Set(
+  (process.env.SEED_ALLOWED_HOSTS ?? '')
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean),
+);
+
+const targets = [
+  { label: 'DATABASE_URL', host: databaseHost },
+  { label: 'NEXT_PUBLIC_SUPABASE_URL', host: supabaseHost },
+];
+
+const remoteTargets = targets.filter((target) => !LOCAL_HOSTS.has(target.host));
+
+if (remoteTargets.length > 0) {
+  if (process.env.SEED_CONFIRM !== 'yes') {
+    abort(
+      `Refusing to seed a remote database (${remoteTargets
+        .map((target) => target.host)
+        .join(', ')}). Set SEED_CONFIRM=yes and list every host in SEED_ALLOWED_HOSTS.`,
+    );
+  }
+
+  const notAllowed = remoteTargets.filter((target) => !allowedHosts.has(target.host.toLowerCase()));
+  if (notAllowed.length > 0) {
+    abort(
+      `SEED_ALLOWED_HOSTS does not include ${notAllowed
+        .map((target) => `${target.label}=${target.host}`)
+        .join(', ')}. List it explicitly to confirm the target.`,
+    );
+  }
 }
 
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -255,6 +282,8 @@ async function main(): Promise<void> {
     categoryIds.set(category.slug, row.id);
   }
 
+  const productIds = new Map<string, string>();
+
   for (const [index, product] of PRODUCTS.entries()) {
     const [row] = await sql<{ id: string }[]>`
       insert into products (
@@ -289,6 +318,8 @@ async function main(): Promise<void> {
       returning id
     `;
 
+    productIds.set(product.slug, row.id);
+
     await sql`
       insert into product_media (product_id, media_url, media_type, display_order, alt_text)
       values (
@@ -305,21 +336,75 @@ async function main(): Promise<void> {
     `;
   }
 
-  const [counts] = await sql<{ categories: number; products: number; media: number }[]>`
+  // Deterministic order for the order-tracking load scenario. The tracking
+  // token is the URL secret, so it must stay stable across seeds.
+  const DEMO_ORDER = {
+    orderNumber: 'DEMO-0001',
+    trackingToken: 'demo-tracking-token-0001',
+    productSlug: 'polo-algodon',
+    amount: '39.90',
+    buyerEmail: 'buyer@storelite.test',
+  } as const;
+
+  const orderProductId = productIds.get(DEMO_ORDER.productSlug);
+
+  if (!orderProductId) {
+    abort(
+      `Seed product "${DEMO_ORDER.productSlug}" was not created; cannot attach the demo order.`,
+    );
+  }
+
+  await sql`
+    insert into payments (
+      business_id, product_id, seller_user_id, amount, currency, payment_method,
+      buyer_email, status, order_number, tracking_token, version
+    ) values (
+      ${businessId},
+      ${orderProductId},
+      ${ownerId},
+      ${DEMO_ORDER.amount},
+      ${'PEN'},
+      ${'yape'},
+      ${DEMO_ORDER.buyerEmail},
+      ${'pending'},
+      ${DEMO_ORDER.orderNumber},
+      ${DEMO_ORDER.trackingToken},
+      1
+    )
+    on conflict (tracking_token) do update
+      set business_id = excluded.business_id,
+          product_id = excluded.product_id,
+          seller_user_id = excluded.seller_user_id,
+          amount = excluded.amount,
+          currency = excluded.currency,
+          payment_method = excluded.payment_method,
+          buyer_email = excluded.buyer_email,
+          status = excluded.status,
+          order_number = excluded.order_number,
+          updated_at = now()
+  `;
+
+  const [counts] = await sql<
+    { categories: number; products: number; media: number; orders: number }[]
+  >`
     select
       (select count(*)::int from product_categories where business_id = ${businessId}) as categories,
       (select count(*)::int from products where business_id = ${businessId}) as products,
       (select count(*)::int from product_media pm
          join products p on p.id = pm.product_id
-        where p.business_id = ${businessId}) as media
+        where p.business_id = ${businessId}) as media,
+      (select count(*)::int from payments pay
+        where pay.business_id = ${businessId}) as orders
   `;
 
   console.log(`  business ........... /${BUSINESS_SLUG}`);
   console.log(`  categories ......... ${counts.categories}`);
   console.log(`  products ........... ${counts.products}`);
   console.log(`  media rows ......... ${counts.media}`);
+  console.log(`  orders ............. ${counts.orders} (tracking: ${DEMO_ORDER.trackingToken})`);
   console.log(`\n  Login: ${SEED_EMAIL} / ${SEED_PASSWORD}`);
-  console.log(`  Storefront: http://localhost:3000/${BUSINESS_SLUG}\n`);
+  const storefrontBase = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  console.log(`  Storefront: ${storefrontBase}/${BUSINESS_SLUG}\n`);
 }
 
 main()
