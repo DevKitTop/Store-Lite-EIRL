@@ -25,19 +25,29 @@ export function pickProductSlug(index) {
   return productSlugs[index % productSlugs.length];
 }
 
+// Vercel Deployment Protection bypass. Never committed: supplied at run time.
+// Without it a protected preview answers 200 with a login page (see README).
+export const vercelBypassHeaders = __ENV.K6_VERCEL_BYPASS
+  ? { 'x-vercel-protection-bypass': __ENV.K6_VERCEL_BYPASS }
+  : {};
+
 export const requestHeaders = {
   Accept: 'text/html,application/xhtml+xml',
   'Accept-Language': 'es-PE,es;q=0.9',
+  ...vercelBypassHeaders,
 };
 
 // Vercel Deployment Protection answers 200 with a login page for every path,
 // and that page embeds the original URL — so a "body contains the slug" check
 // passes against it. Every scenario that reads HTML must reject it explicitly.
-const PROTECTION_WALL_MARKERS = ['Login - Vercel', 'vercel.com/login'];
+// The wall title uses an en dash (U+2013), not an ASCII hyphen. Matching the
+// literal string silently failed, which is how a login page was mistaken for
+// the storefront for a whole 10-minute run.
+const PROTECTION_WALL_PATTERN = /Login\s*[-\u2013\u2014]\s*Vercel/;
 
 export function looksLikeProtectionWall(body) {
   if (typeof body !== 'string') return false;
-  return PROTECTION_WALL_MARKERS.some((marker) => body.includes(marker));
+  return PROTECTION_WALL_PATTERN.test(body) || body.includes('vercel.com/login');
 }
 
 export function isAppPage(body) {

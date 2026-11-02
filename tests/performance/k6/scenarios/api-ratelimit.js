@@ -19,6 +19,7 @@ import http from 'k6/http';
 import { Trend } from 'k6/metrics';
 
 import { baseUrl } from '../lib/config.js';
+import { vercelBypassHeaders } from '../lib/data.js';
 
 const apiPath = __ENV.K6_API_PATH || '/api/auth/user';
 const budget = Number(__ENV.K6_RATE_LIMIT_MAX || 30);
@@ -47,7 +48,7 @@ export const options = {
 
 function probe() {
   return http.get(`${baseUrl}${apiPath}`, {
-    headers: { Accept: 'application/json' },
+    headers: { Accept: 'application/json', ...vercelBypassHeaders },
     tags: { endpoint: 'api-rate-limited' },
   });
 }
