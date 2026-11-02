@@ -382,6 +382,20 @@ Los resultados aparecen en la pestaña Security y como anotaciones en el PR. Usa
 
 **Decisión: adoptada.** Es la única herramienta de análisis estático del stack.
 
+**Primer análisis (2026-11-01):**
+
+| Métrica           | Valor               |
+| ----------------- | ------------------- |
+| Workflow `CodeQL` | success, 1m36s      |
+| Query suite       | default (seguridad) |
+| Reglas evaluadas  | 87                  |
+| Resultados        | **0**               |
+| Alertas abiertas  | 0                   |
+
+**Cómo leerlo:** el suite por defecto no encontró ningún flujo de datos no confiable llegando a un sink peligroso. Eso es bueno y **no** significa "sin vulnerabilidades". CodeQL no entiende reglas de negocio: un `businessId` que llega del cliente y se usa sin verificar propiedad puede ser técnicamente limpio y seguir siendo un fallo de autorización entre tenants. Esa clase de bug la cubren los tests de 7.5, no el escáner.
+
+Tampoco es una foto definitiva: las reglas se actualizan y el análisis corre semanal, así que un resultado limpio hoy describe el código de hoy con las reglas de hoy.
+
 ### 7.2 Semgrep — descartada (por ahora)
 
 Se evaluó y se descartó por solapamiento: cubre más del 80% de lo mismo que CodeQL, pero exige configuración adicional (Docker o `pipx`) y mantenimiento de reglas propias.
@@ -552,19 +566,19 @@ Un test que pasa no autoriza el lanzamiento por sí solo. La conclusión debe re
 
 ## 12. Plan de ejecución con gates
 
-| Fase   | Trabajo                                                                            | Gate de salida                                                                    |
-| ------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| **0a** | Levantar Supabase local (`supabase init` + `supabase start`) con Docker corriendo  | ✅ `http://127.0.0.1:54321` responde                                              |
-| **0b** | Reasignar el proyecto Supabase dev cloud como staging y apuntar Vercel Preview ahí | Preview usa credenciales de staging, nunca las de producción                      |
-| **0c** | Verificar separación de credenciales entre los tres entornos                       | Checklist de variables aprobado                                                   |
-| **1**  | Cargar dataset con volumen realista en staging                                     | 500+ productos, pedidos de prueba                                                 |
-| **2**  | Implementar k6 `storefront-read` + smoke                                           | 🟡 Scripts implementados, 100% de checks verdes en local; falta correr en staging |
-| **3**  | Ejecutar baseline y fijar thresholds                                               | Baseline documentado                                                              |
-| **4**  | Load, Stress, Spike, Soak                                                          | Resultados con evidencia                                                          |
-| **5**  | Ampliar Playwright a los flujos faltantes                                          | Flujos críticos cubiertos                                                         |
-| **6**  | CodeQL + ZAP Baseline + tests de tenancy                                           | 0 críticos abiertos                                                               |
-| **7**  | Runbook de observabilidad                                                          | Documentado y probado                                                             |
-| **8**  | Integración CI incremental                                                         | CodeQL + k6 smoke en PR                                                           |
+| Fase   | Trabajo                                                                            | Gate de salida                                                                         |
+| ------ | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| **0a** | Levantar Supabase local (`supabase init` + `supabase start`) con Docker corriendo  | ✅ `http://127.0.0.1:54321` responde                                                   |
+| **0b** | Reasignar el proyecto Supabase dev cloud como staging y apuntar Vercel Preview ahí | Preview usa credenciales de staging, nunca las de producción                           |
+| **0c** | Verificar separación de credenciales entre los tres entornos                       | Checklist de variables aprobado                                                        |
+| **1**  | Cargar dataset con volumen realista en staging                                     | 500+ productos, pedidos de prueba                                                      |
+| **2**  | Implementar k6 `storefront-read` + smoke                                           | 🟡 Scripts implementados, 100% de checks verdes en local; falta correr en staging      |
+| **3**  | Ejecutar baseline y fijar thresholds                                               | Baseline documentado                                                                   |
+| **4**  | Load, Stress, Spike, Soak                                                          | Resultados con evidencia                                                               |
+| **5**  | Ampliar Playwright a los flujos faltantes                                          | Flujos críticos cubiertos                                                              |
+| **6**  | CodeQL + ZAP Baseline + tests de tenancy                                           | 🟡 CodeQL activo y sin hallazgos (87 reglas, 0 alertas); faltan ZAP y tests de tenancy |
+| **7**  | Runbook de observabilidad                                                          | Documentado y probado                                                                  |
+| **8**  | Integración CI incremental                                                         | CodeQL + k6 smoke en PR                                                                |
 
 ---
 
