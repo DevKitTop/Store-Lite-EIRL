@@ -417,14 +417,14 @@ Se evaluó y se descartó por solapamiento: cubre más del 80% de lo mismo que C
 
 Esto **no lo detecta ningún escáner**. Requiere tests escritos a mano.
 
-| Verificación                                      | Estado                                                 |
-| ------------------------------------------------- | ------------------------------------------------------ |
-| Un usuario no lee datos de otra tienda            | ✅ Verificado — 8/8, `pnpm check:tenancy` (2026-11-01) |
-| Server Actions validan membresía                  | Parcialmente cubierto (C6 en auditoría previa)         |
-| Route Handlers validan ownership                  | Parcialmente cubierto (C5, C7)                         |
-| Acceso a archivos e imágenes aislado              | A verificar                                            |
-| Operaciones administrativas protegidas            | A verificar                                            |
-| `x-sass-key` y `platformAdminIds` no bypasseables | A verificar                                            |
+| Verificación                                      | Estado                                                   |
+| ------------------------------------------------- | -------------------------------------------------------- |
+| Un usuario no lee datos de otra tienda            | ✅ Verificado — 8/8, `pnpm check:tenancy` (2026-11-01)   |
+| Server Actions validan membresía                  | Parcialmente cubierto (C6 en auditoría previa)           |
+| Route Handlers validan ownership                  | 🟡 2 endpoints verificados (2026-11-01); resto pendiente |
+| Acceso a archivos e imágenes aislado              | A verificar                                              |
+| Operaciones administrativas protegidas            | A verificar                                              |
+| `x-sass-key` y `platformAdminIds` no bypasseables | A verificar                                              |
 
 #### Lo verificado (2026-11-01)
 
@@ -443,7 +443,20 @@ Esto **no lo detecta ningún escáner**. Requiere tests escritos a mano.
 
 El control es lo que hace válido al resto: sin él, un fixture que no se creó también devolvería cero filas y todo "pasaría". El `status < 400` en los intentos de escritura descarta además el falso positivo de un token rechazado, que dejaría la fila intacta por el motivo equivocado.
 
-**Lo que esto NO cubre:** solo RLS a nivel de tabla vía PostgREST. No ejercita Server Actions, Route Handlers, rutas de archivos ni endpoints administrativos. Esas cuatro filas siguen abiertas.
+**Lo que esto NO cubre:** solo RLS a nivel de tabla vía PostgREST. No ejercita Server Actions, Route Handlers, rutas de archivos ni endpoints administrativos.
+
+#### Route Handlers (2026-11-01)
+
+Los Route Handlers autentican por cookie SSR, no por cabecera `Authorization`, así que se ejercitaron construyendo la cookie `sb-<ref>-auth-token` del inquilino A a partir de un login real: prefijo `base64-`, payload base64url, en trozos de 3180 bytes. Una cookie mal formada devuelve 401, lo que hace evidente cuándo el montaje falla.
+
+| Endpoint                                          | Resultado                                                      |
+| ------------------------------------------------- | -------------------------------------------------------------- |
+| `GET /api/business/permissions?businessId=<B>`    | 200, `isOwner: false`, `permissions: []`                       |
+| `GET /api/business/penalty-status?businessId=<B>` | 200, solo campos públicos; sin `penaltyDebt` ni `penaltyCount` |
+
+**Hallazgo de baja severidad:** `/api/business/permissions` devuelve además `business.name` y `business.slug` del inquilino consultado, incluso a quien no es miembro. No escala privilegios ni expone datos de clientes, y el slug es público por diseño — es la URL del storefront. Queda registrado como divulgación menor, no como falla de aislamiento. Si preferís cerrarlo, basta omitir el objeto `business` cuando `isOwner` es `false` y `permissions` está vacío.
+
+Los demás Route Handlers (miembros, importaciones, notificaciones, pedidos) siguen sin ejercitar.
 
 **Nota de diseño:** `products` no tiene RLS a propósito — el storefront es público. Leer productos de otra tienda no es un fallo; escribir en ellos sí, y eso lo bloquea la ausencia de políticas de escritura.
 

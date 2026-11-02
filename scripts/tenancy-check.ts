@@ -206,6 +206,60 @@ async function rest(
   return { status: response.status, rows };
 }
 
+/**
+ * Builds the Supabase SSR session cookie the app expects.
+ *
+ * Route Handlers read the session from cookies (`sb-<ref>-auth-token`), not from
+ * an Authorization header, so exercising them as a specific tenant means
+ * reproducing that cookie: `base64-` prefix, base64url payload, chunked at
+ * 3180 bytes. Verified against the running app: a wrong cookie yields 401, the
+ * right one returns that user's permissions.
+ */
+async function buildSessionCookie(email: string, password: string): Promise<string> {
+  const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: {
+      apikey: anonKey as string,
+      Authorization: `Bearer ${anonKey as string}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!response.ok) abort(`Could not build a session cookie for ${email}.`);
+  const session = (await response.json()) as Record<string, unknown>;
+
+  const payload = JSON.stringify({
+    access_token: session.access_token,
+    token_type: session.token_type,
+    expires_in: session.expires_in,
+    expires_at: session.expires_at,
+    refresh_token: session.refresh_token,
+    user: session.user,
+  });
+
+  const encoded = `base64-${Buffer.from(payload, 'utf8').toString('base64url')}`;
+  const storageKey = `sb-${new URL(supabaseUrl).hostname.split('.')[0]}-auth-token`;
+
+  const chunks: string[] = [];
+  for (let index = 0; index < encoded.length; index += 3180) {
+    chunks.push(encoded.slice(index, index + 3180));
+  }
+
+  return chunks
+    .map((chunk, index) => `${storageKey}${chunks.length > 1 ? `.${index}` : ''}=${chunk}`)
+    .join('; ');
+}
+
+async function appIsReachable(base: string): Promise<boolean> {
+  try {
+    const response = await fetch(base, { signal: AbortSignal.timeout(5000) });
+    return response.status < 500;
+  } catch {
+    return false;
+  }
+}
+
 const results: { name: string; ok: boolean; detail: string }[] = [];
 
 function expect(name: string, ok: boolean, detail: string): void {
@@ -313,6 +367,52 @@ async function main(): Promise<void> {
     serviceView.rows.length === 2,
     `${serviceView.rows.length} rows`,
   );
+
+  // Route Handler checks. They need the app running; without it they are
+  // reported as SKIP rather than FAIL, because an environment problem is not a
+  // security result.
+  const appUrl = process.env.TENANCY_APP_URL ?? 'http://localhost:3000';
+
+  if (!(await appIsReachable(appUrl))) {
+    console.log(`  SKIP  Route Handler checks — app not reachable at ${appUrl}`);
+  } else {
+    const cookie = await buildSessionCookie(TENANT_A.email, TENANT_A.password);
+
+    const permissions = await fetch(
+      `${appUrl}/api/business/permissions?businessId=${b.businessId}`,
+      { headers: { Cookie: cookie } },
+    );
+    const permissionsBody = (await permissions.json()) as {
+      isOwner?: boolean;
+      permissions?: unknown[];
+      business?: { name?: string; slug?: string };
+    };
+    expect(
+      'API: foreign business grants no ownership or permissions',
+      permissions.status === 200 &&
+        permissionsBody.isOwner === false &&
+        Array.isArray(permissionsBody.permissions) &&
+        permissionsBody.permissions.length === 0,
+      `status ${permissions.status}, isOwner=${String(permissionsBody.isOwner)}`,
+    );
+
+    const penalty = await fetch(
+      `${appUrl}/api/business/penalty-status?businessId=${b.businessId}`,
+      { headers: { Cookie: cookie } },
+    );
+    const penaltyText = await penalty.text();
+    expect(
+      'API: penalty status hides owner-only fields',
+      penalty.status === 200 && !/penaltyDebt|penaltyCount/.test(penaltyText),
+      /penaltyDebt|penaltyCount/.test(penaltyText) ? 'owner fields leaked' : 'public fields only',
+    );
+
+    if (permissionsBody.business?.slug) {
+      console.log(
+        `  WARN  /api/business/permissions echoes a foreign business identity to a non-member (slug "${permissionsBody.business.slug}")`,
+      );
+    }
+  }
 
   const failed = results.filter((result) => !result.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed\n`);
