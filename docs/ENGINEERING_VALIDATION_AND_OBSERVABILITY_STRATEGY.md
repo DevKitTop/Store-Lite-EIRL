@@ -422,7 +422,7 @@ Esto **no lo detecta ningún escáner**. Requiere tests escritos a mano.
 | Un usuario no lee datos de otra tienda            | ✅ Verificado — 8/8, `pnpm check:tenancy` (2026-11-01)               |
 | Server Actions validan membresía                  | 🟡 Páginas privadas verificadas por HTTP; acción directa no cubierta |
 | Route Handlers validan ownership                  | 🟡 2 endpoints verificados (2026-11-01); resto pendiente             |
-| Acceso a archivos e imágenes aislado              | ❌ **Falla** — políticas de Storage sin control de inquilino         |
+| Acceso a archivos e imágenes aislado              | 🟡 Corregido y verificado en staging; `tickets` sigue público        |
 | Operaciones administrativas protegidas            | ✅ Verificado — 4 endpoints, todos fallan cerrado                    |
 | `x-sass-key` y `platformAdminIds` no bypasseables | ✅ Falla cerrado; comparación no constant-time (menor)               |
 
@@ -487,16 +487,21 @@ Aplicada en local y en staging; ambos entornos muestran exactamente las tres pol
 
 **Segundo detalle no obvio:** la API de Storage sube con `INSERT ... ON CONFLICT DO UPDATE`. Eso significa que la política de **UPDATE** también se evalúa, y una política de UPDATE mal escrita bloquea las subidas aunque la de INSERT sea correcta.
 
-**Qué quedó probado y qué no:**
+**Tercer obstáculo, y el más informativo:** la primera versión consultaba `public.businesses` directamente desde el predicado. En staging falló con `permission denied for table businesses`: el rol con el que Storage evalúa la política no tiene `GRANT` sobre esa tabla, aunque RLS le habría permitido la fila. La condición vive ahora en `public.is_storage_path_owner(text)`, `SECURITY DEFINER`, que se ejecuta con los privilegios de su dueño.
 
-| Afirmación                                                    | Estado                                                   |
-| ------------------------------------------------------------- | -------------------------------------------------------- |
-| Las políticas abiertas ya no existen                          | ✅ Verificado por `pg_policies` en local y staging       |
-| El predicado es verdadero para el dueño y falso para un ajeno | ✅ Verificado en SQL ejecutando como rol `authenticated` |
-| La migración aplica limpia y es idempotente                   | ✅ `db reset` en local                                   |
-| Una subida real del dueño funciona por la API                 | ❌ **No verificado**                                     |
+**Verificación end-to-end en staging (2026-11-01):**
 
-El último punto quedó sin cerrar por un comportamiento del Storage local que no pude aislar: incluso con una política temporal `with check (true)` para todos los roles, la API sigue respondiendo `new row violates row-level security policy`. Eso descarta la lógica de la política como causa y apunta al entorno local, pero no lo demuestra. Debe verificarse contra staging antes de dar la corrección por buena.
+| Caso                                     | Resultado                |
+| ---------------------------------------- | ------------------------ |
+| Dueño sube a `productos/<su negocio>/`   | **200**                  |
+| Dueño borra su propio objeto             | **200**                  |
+| Dueño borra un objeto de otro negocio    | **403** `AccessDenied`   |
+| Dueño sube a la carpeta de otro negocio  | **403** RLS              |
+| La migración aplica limpia e idempotente | ✅ `db reset` desde cero |
+
+El objeto ajeno de prueba lo plantó el service role y se borró al final: no se tocó ningún archivo real.
+
+**Lo único que no se reproduce es en local.** El Storage local rechaza también la subida legítima del dueño, con la misma política que en staging funciona. Descarté la lógica como causa —incluso con una política temporal `with check (true)` para todos los roles, la API rechaza— y apunta a una particularidad del contenedor local. No afecta al desarrollo: la aplicación sube con `adminClient` (service role), que no pasa por estas políticas.
 
 #### Lo verificado (2026-11-01)
 
