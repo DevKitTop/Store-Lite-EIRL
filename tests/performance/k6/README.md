@@ -138,9 +138,13 @@ start from tripping them.
 
 ## Known baseline (staging, 2026-11-01)
 
-10 VUs for 10 minutes against the preview, real business with 170 products:
-6.960 requests, 0 failures, p95 996 ms. Recommended starting threshold for that
-environment is `K6_P95_MS=1500`.
+10 VUs for 10 minutes against the preview over `demo-store`: 2.642 requests,
+10.568 checks with 0 failures, p95 1.78 s. Recommended starting threshold for
+that environment is `K6_P95_MS=2700`.
+
+An earlier "baseline" of 6.960 requests and p95 996 ms was recorded against the
+Deployment Protection login page and is retracted. See the protection wall
+section above.
 
 ## What a result means
 

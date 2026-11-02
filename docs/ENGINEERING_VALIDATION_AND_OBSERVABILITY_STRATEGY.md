@@ -273,26 +273,39 @@ Cada iteración es un password grant real contra GoTrue. Con 2 VUs no hay tensi�
 
 El escenario exige las credenciales por variable de entorno y aborta si falta alguna. No hay usuario ni contraseña en el repositorio.
 
-### 5.9 Mediciones de staging — INVALIDADAS (2026-11-01)
+### 5.9 Primera medición válida en staging (2026-11-01)
 
-> **Corrección de la misma jornada.** Las mediciones que había acá estaban mal y se retiran. El preview de Vercel estaba detrás de **Deployment Protection**: cada ruta devolvía `200` con `<title>Login - Vercel</title>`. Los checks pasaban por dos razones: `status === 200` se cumplía, y `body.includes(businessSlug)` también, porque la página de login embebe la URL original en el parámetro de redirect.
+> **Antes de esto hubo un error y se conserva como registro.** El preview estaba detrás de **Deployment Protection** y respondía `200` con `Login – Vercel` en todas las rutas. La detección falló porque ese título usa un **en dash** (U+2013) y el marcador comparaba un guion ASCII: nunca coincidió. Se llegó a registrar un "baseline" de 10 minutos contra la pantalla de login. Corregido con regex en `lib/data.js`; con la pared presente, `smoke` da ahora **74/148** checks en vez de pasar entero.
 
-Evidencia de la corrección:
+Acceso: bypass de Deployment Protection por cabecera, con un secret de 32 caracteres cargado en el proyecto `store-lite-eirl`. Sin él no hay medición posible: cualquier número describe la pantalla de Vercel.
 
-| Comprobación                                  | Resultado                          |
-| --------------------------------------------- | ---------------------------------- |
-| `GET /demo-store` en el preview               | `200`, título `Login - Vercel`     |
-| `GET /demo-store/order/<token>` en el preview | idéntico                           |
-| `smoke` con el check nuevo `isAppPage`        | **0/37 checks**, exit 99           |
-| Requests y latencia de esa corrida            | 111 y ~476 ms, igual que la previa |
+| Escenario         | Perfil       | Requests | Checks  | Fallos | p(95)  |
+| ----------------- | ------------ | -------- | ------- | ------ | ------ |
+| `smoke`           | 2 VUs, 1 min | 38       | 152/152 | 0%     | 1,50 s |
+| `storefront-read` | 2 VUs, 1 min | 46       | 184/184 | 0%     | 1,50 s |
+| `order-lookup`    | 2 VUs, 1 min | 51       | 204/204 | 0%     | 820 ms |
 
-Las cifras retiradas eran: `smoke` 111 requests / p95 945 ms; `storefront-read` 114 requests / p95 1,02 s; `baseline` 10 VUs, 6.960 requests, p95 996 ms. Todas describen la pared de login, no el storefront.
+**Baseline (`storefront-read`, 10 VUs, 10 minutos):**
 
-**Qué se corrigió en el código, no en el documento:** `lib/data.js` expone `looksLikeProtectionWall()` e `isAppPage()`, y `smoke`, `storefront-read` y `order-lookup` rechazan explícitamente la página de login. Un `200` dejó de ser prueba de algo.
+| Métrica     | Valor                  |
+| ----------- | ---------------------- |
+| Iteraciones | 1.321                  |
+| Requests    | 2.642                  |
+| Checks      | 10.568 / 10.568 (100%) |
+| Fallos      | **0**                  |
+| p(50)       | 1,35 s                 |
+| p(90)       | 1,68 s                 |
+| p(95)       | **1,78 s**             |
+| Máximo      | 3,36 s                 |
+| Abortos     | ninguno                |
 
-**Qué falta para medir staging de verdad:** un **Protection Bypass for Automation** (Vercel → Settings → Deployment Protection) enviado como cabecera `x-vercel-protection-bypass`, o desactivar la protección en Preview. Mientras no exista, cualquier número de staging mide la pantalla de Vercel.
+**Threshold recomendado:** `K6_P95_MS=2700`, aproximadamente 1,5× el p95 medido.
 
-**Estado:** Fase 0 cerrada en lo estructural (staging tiene el esquema correcto, verificado por catálogo) y **abierta en lo funcional** hasta que el preview sea alcanzable.
+**Cómo leerlo:** 10 VUs no saturan nada: cero fallos y ningún aborto. La mediana (1,35 s) supera al promedio (1,14 s), señal de que la distribución tiene una cola de arranques en frío más que una degradación progresiva. Son números de una ventana concreta, no una capacidad declarada.
+
+**Qué no prueba:** nada sobre 100 VUs, escrituras ni checkout. Y no es comparable con las cifras retiradas: aquellas medían otra cosa.
+
+**Estado:** Fase 0 cerrada en estructura (catálogo idéntico, 0 diferencias) y en funcional (los tres escenarios en verde contra staging real).
 
 ---
 
@@ -623,7 +636,7 @@ Un test que pasa no autoriza el lanzamiento por sí solo. La conclusión debe re
 | 8    | Decidir cómo reparar la cadena de migraciones                 | ✅ Hecho: baseline forward-only en `supabase/migrations/` (ver 15.2)            |
 | 9    | Definir cómo poblar la base local (seed o dump)               | ✅ Hecho: `scripts/seed.ts` + `pnpm db:seed`                                    |
 | 10   | Aplicar `0002` a staging y verificar paridad de catálogo      | ✅ Hecho: 0 diferencias en 11 categorías                                        |
-| 11   | Validar el flujo completo contra el preview de staging        | ⏳ Bloqueado por Deployment Protection de Vercel (ver 5.9)                      |
+| 11   | Validar el flujo completo contra el preview de staging        | ✅ Con bypass de Deployment Protection (ver 5.9)                                |
 
 **Evidencia del paso 7 (2026-10-31):** backup en `%TEMP%\opencode\env-backup-20261031-162122.txt`. Solo se reemplazaron `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` y `DATABASE_URL`; las otras 40 claves quedaron intactas. Verificación: `select count(*) from businesses` → 0, `information_schema.tables` de `public` → 41, `auth.users` → 0.
 
