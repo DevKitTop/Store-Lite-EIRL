@@ -187,7 +187,7 @@ tests/performance/k6/
     api-ratelimit.js    # ✅ implementado
     order-lookup.js     # ✅ implementado (usa el pedido sembrado)
     auth-session.js     # ✅ implementado
-    checkout-mocked.js  # ⏳ pendiente
+    checkout-mocked.js  # ⛔ bloqueado: POST /api/payment/create-order exige sesión y llama a Culqi real; no hay seam de mock
     cron-concurrent.js  # ⏳ pendiente
   results/           # reportes JSON por ejecución
   README.md          # ✅ implementado
@@ -417,14 +417,35 @@ Se evaluó y se descartó por solapamiento: cubre más del 80% de lo mismo que C
 
 Esto **no lo detecta ningún escáner**. Requiere tests escritos a mano.
 
-| Verificación                                      | Estado                                         |
-| ------------------------------------------------- | ---------------------------------------------- |
-| Un usuario no lee datos de otra tienda            | A verificar                                    |
-| Server Actions validan membresía                  | Parcialmente cubierto (C6 en auditoría previa) |
-| Route Handlers validan ownership                  | Parcialmente cubierto (C5, C7)                 |
-| Acceso a archivos e imágenes aislado              | A verificar                                    |
-| Operaciones administrativas protegidas            | A verificar                                    |
-| `x-sass-key` y `platformAdminIds` no bypasseables | A verificar                                    |
+| Verificación                                      | Estado                                                 |
+| ------------------------------------------------- | ------------------------------------------------------ |
+| Un usuario no lee datos de otra tienda            | ✅ Verificado — 8/8, `pnpm check:tenancy` (2026-11-01) |
+| Server Actions validan membresía                  | Parcialmente cubierto (C6 en auditoría previa)         |
+| Route Handlers validan ownership                  | Parcialmente cubierto (C5, C7)                         |
+| Acceso a archivos e imágenes aislado              | A verificar                                            |
+| Operaciones administrativas protegidas            | A verificar                                            |
+| `x-sass-key` y `platformAdminIds` no bypasseables | A verificar                                            |
+
+#### Lo verificado (2026-11-01)
+
+`scripts/tenancy-check.ts` crea dos inquilinos de prueba (`tenancy-a`, `tenancy-b`) con usuarios reales en Supabase Auth, y ataca con el token de A:
+
+| Check                                                | Resultado                  |
+| ---------------------------------------------------- | -------------------------- |
+| `anon` no lista ningún negocio                       | 0 filas                    |
+| El dueño lee su propio negocio                       | 1 fila                     |
+| El dueño no lee el negocio ajeno                     | 0 filas                    |
+| El dueño no lee los pagos ajenos                     | 0 filas                    |
+| El listado de pagos propios no contiene filas ajenas | 0 ajenas                   |
+| El dueño no puede renombrar un negocio ajeno         | status 200, nombre intacto |
+| El dueño no puede borrar un pago ajeno               | status 200, fila intacta   |
+| **Control:** `service_role` ve ambos inquilinos      | 2 filas                    |
+
+El control es lo que hace válido al resto: sin él, un fixture que no se creó también devolvería cero filas y todo "pasaría". El `status < 400` en los intentos de escritura descarta además el falso positivo de un token rechazado, que dejaría la fila intacta por el motivo equivocado.
+
+**Lo que esto NO cubre:** solo RLS a nivel de tabla vía PostgREST. No ejercita Server Actions, Route Handlers, rutas de archivos ni endpoints administrativos. Esas cuatro filas siguen abiertas.
+
+**Nota de diseño:** `products` no tiene RLS a propósito — el storefront es público. Leer productos de otra tienda no es un fallo; escribir en ellos sí, y eso lo bloquea la ausencia de políticas de escritura.
 
 Referencia: `docs/PREPRODUCTION_READINESS_2026-10.md` ya clasifica estos hallazgos.
 
