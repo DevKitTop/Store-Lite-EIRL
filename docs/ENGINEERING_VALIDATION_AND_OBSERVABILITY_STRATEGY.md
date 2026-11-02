@@ -368,7 +368,15 @@ Perfil `baseline`: 10 VUs sostenidos durante 10 minutos contra el preview de sta
 
 **Por qué encaja particularmente bien acá:** el riesgo dominante de Store Lite no es un patrón suelto, es **datos de un tenant llegando a otro**. El taint tracking es exactamente la técnica que detecta ese tipo de flujo.
 
-**Cómo se activa:** _Settings → Code security → CodeQL default setup_. Sin escribir YAML. Los resultados aparecen en la pestaña Security y como anotaciones en el PR.
+**Cómo se activa (estado real, 2026-11-01):** se intentó primero la vía sin YAML, _Settings → Code security → CodeQL default setup_. El API del repositorio siguió respondiendo `state: not-configured` con `updated_at: null`, sin análisis y sin alertas, así que esa vía no quedó efectiva. La configuración se pasó a un workflow versionado: `.github/workflows/codeql.yml`.
+
+**Por qué el workflow y no el ajuste del repositorio:**
+
+- Es determinista y revisable: la configuración vive en el repo, no en un clic invisible.
+- No exige permisos de administrador para verificarla; el estado se comprueba por API.
+- Corre en cada PR además de `develop` y `main`, más un análisis semanal para recibir query packs nuevos.
+
+Los resultados aparecen en la pestaña Security y como anotaciones en el PR. Usa el query suite por defecto (seguridad); `security-and-quality` se puede activar después si hace falta más cobertura, a costa de ruido que ESLint ya cubre.
 
 **Qué NO puede hacer:** no entiende que `businessId` debe pertenecer al usuario. Un flujo puede ser técnicamente limpio y seguir siendo un bug de autorización. Eso lo cubren los tests de 7.5.
 
