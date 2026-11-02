@@ -417,14 +417,14 @@ Se evaluó y se descartó por solapamiento: cubre más del 80% de lo mismo que C
 
 Esto **no lo detecta ningún escáner**. Requiere tests escritos a mano.
 
-| Verificación                                      | Estado                                                   |
-| ------------------------------------------------- | -------------------------------------------------------- |
-| Un usuario no lee datos de otra tienda            | ✅ Verificado — 8/8, `pnpm check:tenancy` (2026-11-01)   |
-| Server Actions validan membresía                  | ⏳ Pendiente (ver hallazgo estructural abajo)            |
-| Route Handlers validan ownership                  | 🟡 2 endpoints verificados (2026-11-01); resto pendiente |
-| Acceso a archivos e imágenes aislado              | ⏳ Pendiente                                             |
-| Operaciones administrativas protegidas            | ✅ Verificado — 4 endpoints, todos fallan cerrado        |
-| `x-sass-key` y `platformAdminIds` no bypasseables | ✅ Falla cerrado; comparación no constant-time (menor)   |
+| Verificación                                      | Estado                                                               |
+| ------------------------------------------------- | -------------------------------------------------------------------- |
+| Un usuario no lee datos de otra tienda            | ✅ Verificado — 8/8, `pnpm check:tenancy` (2026-11-01)               |
+| Server Actions validan membresía                  | 🟡 Páginas privadas verificadas por HTTP; acción directa no cubierta |
+| Route Handlers validan ownership                  | 🟡 2 endpoints verificados (2026-11-01); resto pendiente             |
+| Acceso a archivos e imágenes aislado              | ⏳ Pendiente                                                         |
+| Operaciones administrativas protegidas            | ✅ Verificado — 4 endpoints, todos fallan cerrado                    |
+| `x-sass-key` y `platformAdminIds` no bypasseables | ✅ Falla cerrado; comparación no constant-time (menor)               |
 
 #### Hallazgo estructural: el código del servidor no pasa por RLS
 
@@ -483,6 +483,24 @@ Los Route Handlers autentican por cookie SSR, no por cabecera `Authorization`, a
 **Hallazgo de baja severidad:** `/api/business/permissions` devuelve además `business.name` y `business.slug` del inquilino consultado, incluso a quien no es miembro. No escala privilegios ni expone datos de clientes, y el slug es público por diseño — es la URL del storefront. Queda registrado como divulgación menor, no como falla de aislamiento. Si preferís cerrarlo, basta omitir el objeto `business` cuando `isOwner` es `false` y `permissions` está vacío.
 
 Los demás Route Handlers (miembros, importaciones, notificaciones, pedidos) siguen sin ejercitar.
+
+#### Páginas privadas de inquilino vía Playwright (2026-11-01)
+
+`tests/e2e/tenancy.spec.ts` ejercita el camino completo —Next, middleware, sesión SSR y chequeos de autorización— inyectando la cookie de sesión en lugar de usar el formulario de login. Si el login fallara, un fallo de aislamiento sería indistinguible de un fallo de UI.
+
+| Caso                                       | Resultado                   |
+| ------------------------------------------ | --------------------------- |
+| Anónimo entra a un dashboard privado       | 302, no apunta al dashboard |
+| Dueño entra a su propio dashboard          | 200                         |
+| Dueño entra al dashboard de otro inquilino | 307, sin marcador ajeno     |
+| Dueño entra a `settings` de otro inquilino | 404, sin marcador ajeno     |
+| Dueño entra a `storage` de otro inquilino  | 404, sin marcador ajeno     |
+
+El marcador (`private-marker-tenancy-b`) vive en el `description` del fixture: si aparece mientras navega otro inquilino, el aislamiento se rompió. Es dato de prueba, no un secreto; su única función es ser greppable.
+
+**Límite honesto:** esto verifica la autorización de _páginas_, incluyendo los helpers que también usan las Server Actions (`requireAccess`, `requireOwnedBusinessById`). No invoca una Server Action directamente: el identificador de acción que Next genera es un hash de build, y falsificarlo no probaría el camino real.
+
+La suite está detrás de `TENANCY_E2E=1` porque los fixtures viven en una base que el runner de CI no tiene, y una suite que falla por razones de entorno enseña a ignorarla. En CI los 5 casos se reportan como `skipped`, no como éxito.
 
 **Nota de diseño:** `products` no tiene RLS a propósito — el storefront es público. Leer productos de otra tienda no es un fallo; escribir en ellos sí, y eso lo bloquea la ausencia de políticas de escritura.
 
@@ -663,7 +681,7 @@ Un test que pasa no autoriza el lanzamiento por sí solo. La conclusión debe re
 2. Diagrama de arquitectura de validación.
 3. Matriz de entornos y responsabilidades — **sección 4**.
 4. Scripts k6 funcionales — **parcial**: `smoke` y `storefront-read` implementados y verificados; faltan los otros cinco escenarios de §5.3.
-5. Pruebas Playwright faltantes.
+5. Pruebas Playwright faltantes — **parcial**: aislamiento de páginas de inquilino cubierto (`tests/e2e/tenancy.spec.ts`, 5 casos); flujos de negocio pendientes.
 6. Configuración de Semgrep y ZAP.
 7. Recomendaciones de observabilidad — **sección 8**.
 8. README de la suite de performance — **cubierto**: `tests/performance/k6/README.md`.

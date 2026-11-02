@@ -119,10 +119,20 @@ async function ensureFixture(tenant: typeof TENANT_A): Promise<Fixture> {
     on conflict (id) do update set email = excluded.email, updated_at = now()
   `;
 
+  // `description` carries a marker the E2E spec looks for. If it ever shows up
+  // while browsing as another tenant, isolation is broken. It is fixture data,
+  // not a secret: its only job is to be greppable.
   const [business] = await sql<{ id: string }[]>`
-    insert into businesses (owner_id, name, slug, city, country, is_active, verification_status)
-    values (${userId}, ${tenant.name}, ${tenant.slug}, ${'Lima'}, ${'PE'}, true, ${'verified'})
-    on conflict (slug) do update set owner_id = excluded.owner_id, updated_at = now()
+    insert into businesses (owner_id, name, slug, description, city, country, is_active, verification_status)
+    values (
+      ${userId}, ${tenant.name}, ${tenant.slug},
+      ${`private-marker-${tenant.slug}`},
+      ${'Lima'}, ${'PE'}, true, ${'verified'}
+    )
+    on conflict (slug) do update
+      set owner_id = excluded.owner_id,
+          description = excluded.description,
+          updated_at = now()
     returning id
   `;
 
