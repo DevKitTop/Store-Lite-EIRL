@@ -104,6 +104,17 @@ before the first measurement measures nothing but your optimism.
 The check thresholds (`checks > 99%`, `http_req_failed < 1%`) are always on,
 because they describe correctness, not performance.
 
+`http_req_failed` and the latency threshold abort the run instead of only
+failing the summary: a remote load test that keeps hammering an environment
+already breaking only generates noise. A 30s/60s `delayAbortEval` keeps a cold
+start from tripping them.
+
+## Known baseline (staging, 2026-11-01)
+
+10 VUs for 10 minutes against the preview, real business with 170 products:
+6.960 requests, 0 failures, p95 996 ms. Recommended starting threshold for that
+environment is `K6_P95_MS=1500`.
+
 ## What a result means
 
 A k6 result describes **the scenario you ran**: this request mix, this data

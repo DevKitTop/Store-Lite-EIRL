@@ -286,6 +286,28 @@ Esto cierra la Fase 0 con evidencia: el preview sirve el storefront desde stagin
 
 **Cómo leerlo:** son 2 VUs, con `min` de 100 ms y `med` de ~500 ms. La dispersión viene de arranques en frío de funciones serverless, no de la base. No es un baseline: es la prueba de que el camino funciona de punta a punta. Un baseline real necesita el perfil `baseline` (10 VUs, 10 min) y una ventana sin despliegues en curso.
 
+### 5.10 Baseline de staging (2026-11-01)
+
+Perfil `baseline`: 10 VUs sostenidos durante 10 minutos contra el preview de staging, negocio `store-girl`, 4 productos rotando.
+
+| Métrica     | Valor                |
+| ----------- | -------------------- |
+| Iteraciones | 1.160                |
+| Requests    | 6.960                |
+| Fallos      | **0**                |
+| Checks      | 6.960 / 6.960 (100%) |
+| p(50)       | 422 ms               |
+| p(90)       | 929 ms               |
+| p(95)       | **996 ms**           |
+| Máximo      | 3,86 s               |
+| Abortos     | ninguno              |
+
+**Threshold recomendado:** `K6_P95_MS=1500`, aproximadamente 1,5× el p95 medido. Deja margen para la variación entre despliegues sin volverse decorativo.
+
+**Cómo leerlo:** con 10 VUs el backend no muestra saturación — cero fallos y ningún aborto. La distancia entre p50 (422 ms) y p95 (996 ms) es casi toda tiempo de arranque en frío de funciones serverless, no contención de base. Para separar ambas cosas haría falta medir con VUs sostenidos más tiempo, de modo que el p95 quede dominado por ejecuciones calientes.
+
+**Qué no prueba:** no dice nada sobre 100 VUs, ni sobre escrituras, ni sobre el checkout. Es un baseline del camino de lectura anónima bajo un mix concreto.
+
 ---
 
 ## 6. Fase 2 — Funcional con Playwright

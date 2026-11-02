@@ -59,15 +59,22 @@ export const PROFILES = {
 
 // Latency thresholds stay disabled until a baseline is measured.
 // Set K6_P95_MS once you know the real number for this environment.
+//
+// The integrity thresholds abort the run instead of only failing the summary:
+// a remote load test that keeps hammering an environment already breaking is
+// just generating noise. `delayAbortEval` avoids tripping on the first seconds
+// of a cold start.
 export function thresholds() {
   const result = {
-    checks: ['rate>0.99'],
-    http_req_failed: ['rate<0.01'],
+    checks: [{ threshold: 'rate>0.99', abortOnFail: false }],
+    http_req_failed: [{ threshold: 'rate<0.01', abortOnFail: true, delayAbortEval: '30s' }],
   };
 
   const p95 = Number(__ENV.K6_P95_MS || 0);
   if (p95 > 0) {
-    result.http_req_duration = [`p(95)<${p95}`];
+    result.http_req_duration = [
+      { threshold: `p(95)<${p95}`, abortOnFail: true, delayAbortEval: '60s' },
+    ];
   }
 
   return result;
