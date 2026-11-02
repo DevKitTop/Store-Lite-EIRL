@@ -180,13 +180,13 @@ tests/performance/k6/
   lib/
     config.js        # ✅ baseURL, perfiles, think time, thresholds desde env
     data.js          # ✅ slugs y builders de URL
-    auth.js          # ⏳ login y sesión reutilizable
+    auth.js          # ✅ password grant contra Supabase Auth
   scenarios/
     smoke.js            # ✅ implementado
     storefront-read.js  # ✅ implementado
     api-ratelimit.js    # ✅ implementado
     order-lookup.js     # ⏳ pendiente
-    auth-session.js     # ⏳ pendiente (depende de auth.js)
+    auth-session.js     # ✅ implementado
     checkout-mocked.js  # ⏳ pendiente
     cron-concurrent.js  # ⏳ pendiente
   results/           # reportes JSON por ejecución
@@ -258,6 +258,20 @@ El presupuesto configurado se respeta con exactitud. Pero el escenario destapó 
 **Hallazgo de arquitectura:** `checkRateLimit` (`src/lib/rateLimit.ts:71`) es síncrono y usa una `Map` **en memoria por proceso**. El almacén compartido en Postgres se escribe _fire-and-forget_ (`getShared()` más `.catch(() => {})`, líneas 87-108) y su resultado **nunca se lee** en ese camino. Con N instancias, el límite efectivo es N × el configurado, y cada instancia nueva arranca con el balde vacío. `checkRateLimitAsync` sí consulta el compartido, pero el pipeline del edge usa la variante síncrona.
 
 Eso responde la pregunta 2 de §5.3 —"¿el limitador respaldado por DB escala?"— con un **no**: en el camino que realmente aplica el límite, no hay DB. Es el mismo defecto de fondo que R12, visto desde el otro lado.
+
+### 5.8 Medición de autenticación (2026-11-01)
+
+`auth-session` contra Supabase local, perfil `smoke` (2 VUs, 1 min):
+
+| Métrica           | Valor |
+| ----------------- | ----- |
+| Logins ejecutados | 1.611 |
+| Fallos            | 0     |
+| p(95)             | 59 ms |
+
+Cada iteración es un password grant real contra GoTrue. Con 2 VUs no hay tensión: esto es una línea base de latencia, no una prueba de carga. GoTrue corre fuera de este repositorio y escala por separado, así que el número describe a Supabase, no a Next.
+
+El escenario exige las credenciales por variable de entorno y aborta si falta alguna. No hay usuario ni contraseña en el repositorio.
 
 ---
 

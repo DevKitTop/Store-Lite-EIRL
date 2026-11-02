@@ -17,28 +17,36 @@ that writes must target staging, never production.
 tests/performance/k6/
   lib/config.js         # base URL, profiles, thresholds (all env-driven)
   lib/data.js           # slugs and URL builders
+  lib/auth.js           # Supabase password grant, credentials from env
   scenarios/
     smoke.js            # is the storefront reachable?
     storefront-read.js  # anonymous catalogue + product detail
     api-ratelimit.js    # is the /api/* budget actually enforced?
+    auth-session.js     # password login under load
   results/              # JSON summaries per run (git-ignored contents)
 ```
 
-`lib/auth.js` and the remaining scenarios (`order-lookup`, `auth-session`,
-`checkout-mocked`, `cron-concurrent`) are not implemented yet.
+The remaining scenarios (`order-lookup`, `checkout-mocked`, `cron-concurrent`)
+are not implemented yet.
 Order of implementation lives in section 5.3 of
 `docs/ENGINEERING_VALIDATION_AND_OBSERVABILITY_STRATEGY.md`.
 
 ## Environment variables
 
-| Variable           | Default                 | Meaning                                                |
-| ------------------ | ----------------------- | ------------------------------------------------------ |
-| `K6_BASE_URL`      | `http://localhost:3000` | Target origin, no trailing slash                       |
-| `K6_BUSINESS_SLUG` | `demo-store`            | Storefront under test                                  |
-| `K6_PRODUCT_SLUGS` | seeded demo products    | Comma-separated product slugs                          |
-| `K6_PROFILE`       | `smoke`                 | `smoke`, `baseline`, `load`, `stress`, `spike`, `soak` |
-| `K6_THINK_TIME_MS` | `1000`                  | Pause between requests per VU                          |
-| `K6_P95_MS`        | unset                   | Enables the `p(95)` latency threshold                  |
+| Variable                             | Default                  | Meaning                                                |
+| ------------------------------------ | ------------------------ | ------------------------------------------------------ |
+| `K6_BASE_URL`                        | `http://localhost:3000`  | Target origin, no trailing slash                       |
+| `K6_BUSINESS_SLUG`                   | `demo-store`             | Storefront under test                                  |
+| `K6_PRODUCT_SLUGS`                   | seeded demo products     | Comma-separated product slugs                          |
+| `K6_PROFILE`                         | `smoke`                  | `smoke`, `baseline`, `load`, `stress`, `spike`, `soak` |
+| `K6_THINK_TIME_MS`                   | `1000`                   | Pause between requests per VU                          |
+| `K6_P95_MS`                          | unset                    | Enables the `p(95)` latency threshold                  |
+| `K6_API_PATH`                        | `/api/auth/user`         | Target of `api-ratelimit.js`                           |
+| `K6_RATE_LIMIT_MAX`                  | `30`                     | Expected `/api/*` budget                               |
+| `K6_RATE_LIMIT_PROBES`               | `35`                     | Requests sent by `api-ratelimit.js`                    |
+| `K6_SUPABASE_URL`                    | `http://127.0.0.1:54321` | Auth endpoint for `auth-session.js`                    |
+| `K6_SUPABASE_ANON_KEY`               | —                        | Required by `auth-session.js`                          |
+| `K6_AUTH_EMAIL` / `K6_AUTH_PASSWORD` | —                        | Required by `auth-session.js`, never committed         |
 
 ## Running
 
@@ -77,6 +85,15 @@ Two things to know:
 
 Target: `K6_API_PATH`, default `/api/auth/user`. Never point it at a writing
 endpoint.
+
+## Auth session scenario
+
+`auth-session.js` measures the Supabase Auth password grant: the first thing
+every merchant session does, and the one dependency this app does not control.
+
+It reads `K6_AUTH_EMAIL`, `K6_AUTH_PASSWORD`, `K6_SUPABASE_ANON_KEY` and
+`K6_SUPABASE_URL` and fails immediately if a credential is missing, so nothing
+sensitive lives in the repository. It creates sessions only, never data.
 
 ## Thresholds are measured, not invented
 
