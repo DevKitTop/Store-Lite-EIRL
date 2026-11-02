@@ -420,11 +420,37 @@ Esto **no lo detecta ningún escáner**. Requiere tests escritos a mano.
 | Verificación                                      | Estado                                                   |
 | ------------------------------------------------- | -------------------------------------------------------- |
 | Un usuario no lee datos de otra tienda            | ✅ Verificado — 8/8, `pnpm check:tenancy` (2026-11-01)   |
-| Server Actions validan membresía                  | Parcialmente cubierto (C6 en auditoría previa)           |
+| Server Actions validan membresía                  | ⏳ Pendiente (ver hallazgo estructural abajo)            |
 | Route Handlers validan ownership                  | 🟡 2 endpoints verificados (2026-11-01); resto pendiente |
-| Acceso a archivos e imágenes aislado              | A verificar                                              |
-| Operaciones administrativas protegidas            | A verificar                                              |
-| `x-sass-key` y `platformAdminIds` no bypasseables | A verificar                                              |
+| Acceso a archivos e imágenes aislado              | ⏳ Pendiente                                             |
+| Operaciones administrativas protegidas            | ✅ Verificado — 4 endpoints, todos fallan cerrado        |
+| `x-sass-key` y `platformAdminIds` no bypasseables | ✅ Falla cerrado; comparación no constant-time (menor)   |
+
+#### Hallazgo estructural: el código del servidor no pasa por RLS
+
+`src/core/database/client.ts` conecta con `DATABASE_URL`, que es el rol `postgres`. Ese rol es superusuario y **las políticas RLS no le aplican**. Todas las consultas Drizzle de la aplicación ven, por lo tanto, las filas de todos los inquilinos.
+
+Consecuencia: RLS protege solo a quien llega por PostgREST con un JWT — el navegador y el cliente `anon`. Para Server Actions y Route Handlers la única defensa es el chequeo explícito en código (`requireAccess`, `requireOwnedBusinessById`). Un `where` olvidado no lo atrapa nada: ni RLS, ni el linter, ni CodeQL.
+
+Eso reordena las prioridades: las filas de Server Actions y Route Handlers no son verificación complementaria, son la línea principal de aislamiento.
+
+#### Endpoints administrativos auditados (2026-11-01)
+
+De 33 Route Handlers, 5 no usan ningún helper de authz de negocio. Se auditó su guard:
+
+| Endpoint                                 | Guard                                                | Sin secreto configurado  |
+| ---------------------------------------- | ---------------------------------------------------- | ------------------------ |
+| `GET /api/cron/check-plans`              | `CRON_SECRET` por query o Bearer                     | Rechaza (401)            |
+| `GET /api/cron/reconcile-payments`       | `CRON_SECRET` por header o Bearer, timing-safe       | Rechaza (`return false`) |
+| `POST /api/sass/notifications/broadcast` | `x-sass-key` contra `SASS_API_KEY`                   | Rechaza (401)            |
+| `POST /api/webhooks/ycloud`              | HMAC-SHA256 + ventana anti-replay de 5 min           | Rechaza en producción    |
+| `POST /api/payment/create-order`         | Sesión de usuario; el negocio se deriva del servidor | 401                      |
+
+Los cinco **fallan cerrado**, que es lo correcto.
+
+**Hallazgo menor:** `src/config/env.ts:186` advierte _"CRON_SECRET not set. Cron endpoints may be unprotected."_ Es inexacto — con el secreto vacío, `token !== ''` hace que toda petición reciba 401. El mensaje induce a creer que hay exposición y puede llevar a cargar una clave débil a las apuradas. Conviene cambiarlo por algo como _"cron endpoints will reject every request"_.
+
+**Nota:** la comparación de `x-sass-key` usa `!==`, no es constant-time. Para una clave aleatoria de longitud razonable el riesgo práctico es bajo, pero `secretsMatch` ya existe en el repo y podría reutilizarse.
 
 #### Lo verificado (2026-11-01)
 
