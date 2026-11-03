@@ -140,10 +140,6 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
     notFound();
   }
 
-  // The `tickets` bucket is private, so the stored value (a path, or a legacy
-  // public URL) is exchanged for a short-lived signed URL before rendering.
-  order.ticketImageUrl = await getSignedTicketUrl(order.ticketImageUrl);
-
   // 🔒 SECURITY: Block sellers and team members from accessing customer order pages.
   // Even if they somehow obtain the trackingToken, they cannot self-confirm.
   const supabase = await createClient();
@@ -235,6 +231,11 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
       );
     }
   }
+
+  // The `tickets` bucket is private, so the stored value (a path, or a legacy
+  // public URL) is exchanged for a short-lived signed URL before rendering.
+  // Signed after the access checks: a blocked viewer never triggers signing.
+  order.ticketImageUrl = await getSignedTicketUrl(order.ticketImageUrl);
 
   // 🔒 SECURITY: Server-side Google customer pre-auth.
   // If the logged-in user's Supabase ID matches the order's stored

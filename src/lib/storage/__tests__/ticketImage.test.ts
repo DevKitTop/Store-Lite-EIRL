@@ -4,7 +4,7 @@ import { extractTicketPath } from '../ticketImage';
 describe('extractTicketPath', () => {
   it('extracts the object path from a legacy public URL', () => {
     const url =
-      'https://likloeyrdzfsrwelpdoz.supabase.co/storage/v1/object/public/tickets/2825d7fb-e9f6-473c-9a1e-4e0db6b2d814/4DFCWBNV.jpg';
+      'https://example.supabase.co/storage/v1/object/public/tickets/2825d7fb-e9f6-473c-9a1e-4e0db6b2d814/4DFCWBNV.jpg';
 
     expect(extractTicketPath(url)).toBe('2825d7fb-e9f6-473c-9a1e-4e0db6b2d814/4DFCWBNV.jpg');
   });

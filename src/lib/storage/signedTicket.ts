@@ -56,17 +56,17 @@ export async function getSignedTicketUrls(
   const paths = values.map((value) => extractTicketPath(value));
   const result: (string | null)[] = paths.map(() => null);
 
-  const signable = paths
+  const signableIndexes = paths
     .map((path, index) => ({ path, index }))
     .filter((entry): entry is { path: string; index: number } => entry.path !== null);
 
-  if (signable.length === 0) return result;
+  if (signableIndexes.length === 0) return result;
 
   try {
     const { data, error } = await adminClient()
       .storage.from(BUCKET)
       .createSignedUrls(
-        signable.map((entry) => entry.path),
+        signableIndexes.map((entry) => entry.path),
         ttlSeconds,
       );
 
@@ -75,10 +75,12 @@ export async function getSignedTicketUrls(
       return result;
     }
 
-    for (const item of data) {
-      const target = signable.find((entry) => entry.path === item.path);
+    // Storage answers in the same order it was asked, so position is the map.
+    // Matching by path instead would collapse two orders that share a file.
+    data.forEach((item, position) => {
+      const target = signableIndexes.at(position);
       if (target && item.signedUrl) result[target.index] = item.signedUrl;
-    }
+    });
   } catch (error) {
     console.error(
       '[signedTicket] Batch signing threw:',
