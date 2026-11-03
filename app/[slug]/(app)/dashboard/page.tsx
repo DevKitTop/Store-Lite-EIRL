@@ -479,7 +479,7 @@ export default async function Dashboard({ params, searchParams }: DashboardProps
       // ⚠️ trackingToken NO se envía al cliente — se obtiene directo de la DB en server actions
       // ⚠️ buyerDni se enmascara para evitar que el seller acceda al portal del customer
       maskedDni: maskDni(order.buyerDni),
-      ticketImageUrl: signedTicketUrls[orderIndex],
+      ticketImageUrl: signedTicketUrls.at(orderIndex) ?? null,
       finalizationDeadline: formatDeadline,
       completedAt: formatCompleted,
       // ⚠️ metadata NO incluye buyerDni — se sanitiza para seguridad
