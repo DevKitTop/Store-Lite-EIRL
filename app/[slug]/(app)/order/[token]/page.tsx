@@ -2,6 +2,7 @@ import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, businessTeamMembers, payments } from '@/core/database/schema';
 import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
+import { getSignedTicketUrl } from '@/lib/storage/signedTicket';
 import { createClient } from '@/lib/supabase/server';
 import { Icon } from '@/shared/components/ui';
 import { and, eq } from 'drizzle-orm';
@@ -138,6 +139,10 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
   if (!order || !order.business || order.business.slug.toLowerCase() !== slug.toLowerCase()) {
     notFound();
   }
+
+  // The `tickets` bucket is private, so the stored value (a path, or a legacy
+  // public URL) is exchanged for a short-lived signed URL before rendering.
+  order.ticketImageUrl = await getSignedTicketUrl(order.ticketImageUrl);
 
   // 🔒 SECURITY: Block sellers and team members from accessing customer order pages.
   // Even if they somehow obtain the trackingToken, they cannot self-confirm.

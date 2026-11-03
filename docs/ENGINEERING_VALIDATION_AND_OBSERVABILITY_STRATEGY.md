@@ -422,7 +422,7 @@ Esto **no lo detecta ningún escáner**. Requiere tests escritos a mano.
 | Un usuario no lee datos de otra tienda            | ✅ Verificado — 8/8, `pnpm check:tenancy` (2026-11-01)               |
 | Server Actions validan membresía                  | 🟡 Páginas privadas verificadas por HTTP; acción directa no cubierta |
 | Route Handlers validan ownership                  | 🟡 2 endpoints verificados (2026-11-01); resto pendiente             |
-| Acceso a archivos e imágenes aislado              | 🟡 Corregido y verificado en staging; `tickets` sigue público        |
+| Acceso a archivos e imágenes aislado              | ✅ Verificado en staging (productos y comprobantes)                  |
 | Operaciones administrativas protegidas            | ✅ Verificado — 4 endpoints, todos fallan cerrado                    |
 | `x-sass-key` y `platformAdminIds` no bypasseables | ✅ Falla cerrado; comparación no constant-time (menor)               |
 
@@ -502,6 +502,23 @@ Aplicada en local y en staging; ambos entornos muestran exactamente las tres pol
 El objeto ajeno de prueba lo plantó el service role y se borró al final: no se tocó ningún archivo real.
 
 **Lo único que no se reproduce es en local.** El Storage local rechaza también la subida legítima del dueño, con la misma política que en staging funciona. Descarté la lógica como causa —incluso con una política temporal `with check (true)` para todos los roles, la API rechaza— y apunta a una particularidad del contenedor local. No afecta al desarrollo: la aplicación sube con `adminClient` (service role), que no pasa por estas políticas.
+
+#### Comprobantes de pago: bucket privado (2026-11-03)
+
+`supabase/migrations/0004_tickets_bucket_privacy.sql` cierra el hallazgo de las URLs públicas.
+
+Además de poner `tickets` en `public: false`, hubo que corregir una política que anulaba el cambio: `storage.objects` tenía una política llamada **`Public Access`** cuyo `USING` **no filtraba por bucket**, de modo que otorgaba lectura anónima sobre todo objeto de todo bucket, incluidos los que se declararan privados. Se reemplazó por una equivalente acotada a los buckets marcados `public = true`, que se mantiene sola si otro bucket pasa a privado.
+
+El código ya no publica `getPublicUrl`: las páginas del servidor y la server action de subida firman una URL de corta duración (`src/lib/storage/signedTicket.ts`, en lote para el dashboard). Los valores viejos guardados como URL pública absoluta siguen resolviendo: `extractTicketPath` recupera la ruta y se firma igual. Las filas no se reescriben.
+
+**Un detalle operativo que conviene tener presente:** el endpoint público sigue devolviendo `200` para un objeto ya cacheado en el CDN de Supabase aunque el bucket ya sea privado. Con cache-bypass responde `400`. La ventana de exposición residual es la del TTL de caché, no la migración.
+
+| Caso                                           | Resultado |
+| ---------------------------------------------- | --------- |
+| `products` por endpoint público (cache bypass) | 200       |
+| Comprobante de compra por endpoint público     | 400       |
+| Comprobante de envío por endpoint público      | 400       |
+| Comprobante firmado (`createSignedUrl`)        | 200       |
 
 #### Lo verificado (2026-11-01)
 
