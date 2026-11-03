@@ -6,6 +6,7 @@ import { businesses, payments, profiles } from '@/core/database/schema';
 import { transition } from '@/core/orders/orderService';
 import { ORDER_STATUS, ORDER_STATUS_V2 } from '@/core/orders/orderStatus';
 import { checkPermission } from '@/lib/permissions';
+import { getSignedTicketUrl } from '@/lib/storage/signedTicket';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { createClient } from '@supabase/supabase-js';
 import { and, eq } from 'drizzle-orm';
@@ -159,9 +160,9 @@ export async function uploadTicketAndUpdatePayment(
       return { success: false, error: uploadError.message };
     }
 
-    // 5. Get public URL
-    const { data: urlData } = adminClient.storage.from(BUCKET_NAME).getPublicUrl(filePath);
-    const ticketImageUrl = urlData.publicUrl;
+    // 5. Store the object path — the bucket is private, readers sign it. Storing
+    // the path keeps the row valid when a signed URL expires.
+    const ticketImageUrl = filePath;
 
     // 6. Update payment — V2 path uses OrderService, legacy uses inline
     if (env.orderFlowV2) {
@@ -201,7 +202,11 @@ export async function uploadTicketAndUpdatePayment(
       }
     }
 
-    return { success: true, ticketImageUrl, trackingToken: existingPayment.trackingToken };
+    return {
+      success: true,
+      ticketImageUrl: (await getSignedTicketUrl(ticketImageUrl)) ?? undefined,
+      trackingToken: existingPayment.trackingToken,
+    };
   } catch (error) {
     console.error('[uploadTicket] Error:', error instanceof Error ? error.message : String(error));
     return { success: false, error: 'Error al procesar el ticket' };

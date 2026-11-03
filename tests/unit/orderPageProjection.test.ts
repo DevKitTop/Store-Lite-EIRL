@@ -113,6 +113,16 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: () => ({ auth: { getUser: async () => ({ data: { user: null } }) } }),
 }));
 
+// The `tickets` bucket is private: the page exchanges the stored receipt value
+// for a signed URL before rendering. Signing is out of scope here (it talks to
+// Storage), so it is stubbed to a deterministic null. That also means the stored
+// value never reaches the tree, which is why `ticketImageUrl` no longer appears
+// in the pinned exposure set below.
+vi.mock('@/lib/storage/signedTicket', () => ({
+  getSignedTicketUrl: async () => null,
+  getSignedTicketUrls: async (values: unknown[]) => values.map(() => null),
+}));
+
 // ── Fixtures ─────────────────────────────────────────
 
 const SLUG = 'mi-tienda';
@@ -378,13 +388,17 @@ describe('order page — PII-free public projection (R14)', () => {
       PII_SENTINELS.shippingDepartment, // :1548 ENVÍO
       PII_SENTINELS.shippingAgency, // :1556 ENVÍO
       PII_SENTINELS.shippingReference, // :1563 ENVÍO
-      PII_SENTINELS.ticketImageUrl, // :1167 / :1239 / :1354 / :1368 ticket modals
       PII_SENTINELS.metadataName, // :1684 VERIFICACIÓN (metadata.customerAuth.name)
     ]);
     // Columns the page never reads, pinned so a future read of any of them fails
     // above: `shippingPhone`, `shippingUbigeo`, `pickupCode` (gated on
     // `env.orderFlowV2` + status, false for this fixture), `ticketUrl`,
     // `deliveryCodeHash`, `deliveryCodeExpiresAt`, `metadata.customerAuth.authId`.
+    //
+    // `ticketImageUrl` is deliberately absent from the pinned set: the page now
+    // replaces the stored value with a signed URL before rendering, so the raw
+    // column never reaches the tree even against a hostile database. If that
+    // swap is ever removed, this assertion fails because the sentinel reappears.
   });
 
   it('reads the full row when a valid access cookie is present', async () => {

@@ -2,6 +2,7 @@ import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, businessTeamMembers, payments } from '@/core/database/schema';
 import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
+import { getSignedTicketUrl } from '@/lib/storage/signedTicket';
 import { createClient } from '@/lib/supabase/server';
 import { Icon } from '@/shared/components/ui';
 import { and, eq } from 'drizzle-orm';
@@ -230,6 +231,11 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
       );
     }
   }
+
+  // The `tickets` bucket is private, so the stored value (a path, or a legacy
+  // public URL) is exchanged for a short-lived signed URL before rendering.
+  // Signed after the access checks: a blocked viewer never triggers signing.
+  order.ticketImageUrl = await getSignedTicketUrl(order.ticketImageUrl);
 
   // 🔒 SECURITY: Server-side Google customer pre-auth.
   // If the logged-in user's Supabase ID matches the order's stored
