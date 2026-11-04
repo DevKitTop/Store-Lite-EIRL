@@ -1,4 +1,4 @@
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import type { NotificationCategory } from '@/core/database/schema';
 import { notificationCategoryEnum } from '@/core/database/schema';
@@ -28,11 +28,11 @@ export async function GET(request: Request) {
   // Resolver businessId
   let resolvedBusinessId = businessId;
   if (!resolvedBusinessId && slug) {
-    const resolved = await resolveBusinessSlug(slug);
+    const resolved = await resolvePublicBusinessSlug(slug);
     if (!resolved) {
       return NextResponse.json({ error: 'Negocio no encontrado' }, { status: 404 });
     }
-    resolvedBusinessId = resolved.business.id;
+    resolvedBusinessId = resolved.id;
   }
 
   if (!resolvedBusinessId) {

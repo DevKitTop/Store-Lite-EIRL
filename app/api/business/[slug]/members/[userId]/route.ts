@@ -1,7 +1,8 @@
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businessTeamMembers } from '@/core/database/schema';
 import type { Permission } from '@/lib/permissions';
+import { isBusinessOwner } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -32,14 +33,14 @@ export async function PATCH(
   }
 
   // Obtener negocio por slug
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     return NextResponse.json({ error: 'Negocio no encontrado' }, { status: 404 });
   }
 
   // Verificar que el usuario actual es el owner
-  if (business.ownerId !== user.id) {
+  if (!(await isBusinessOwner(business.id, user.id))) {
     return NextResponse.json(
       { error: 'Solo el dueño puede gestionar miembros del equipo' },
       { status: 403 },
@@ -156,14 +157,14 @@ export async function DELETE(
   }
 
   // Obtener negocio por slug
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     return NextResponse.json({ error: 'Negocio no encontrado' }, { status: 404 });
   }
 
   // Verificar que el usuario actual es el owner
-  if (business.ownerId !== user.id) {
+  if (!(await isBusinessOwner(business.id, user.id))) {
     return NextResponse.json(
       { error: 'Solo el dueño puede eliminar miembros del equipo' },
       { status: 403 },
@@ -171,7 +172,7 @@ export async function DELETE(
   }
 
   // No permitir eliminarse a sí mismo
-  if (business.ownerId === userId) {
+  if (await isBusinessOwner(business.id, userId)) {
     return NextResponse.json(
       { error: 'No puedes eliminarte a ti mismo del equipo' },
       { status: 400 },

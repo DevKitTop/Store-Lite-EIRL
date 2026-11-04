@@ -1,4 +1,4 @@
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businesses } from '@/core/database/schema';
 import { getMemberPermissions } from '@/lib/permissions';
@@ -33,15 +33,17 @@ export async function GET(request: Request) {
 
   // Resolver businessId desde slug si es necesario
   let resolvedBusinessId = businessId;
+  let businessInfo: { id: string; name: string; slug: string } | null = null;
 
   if (!resolvedBusinessId && slug) {
-    const business = (await resolveBusinessSlug(slug))?.business;
+    const resolved = await resolvePublicBusinessSlug(slug);
 
-    if (!business) {
+    if (!resolved) {
       return NextResponse.json({ error: 'Negocio no encontrado' }, { status: 404 });
     }
 
-    resolvedBusinessId = business.id;
+    resolvedBusinessId = resolved.id;
+    businessInfo = { id: resolved.id, name: resolved.name, slug: resolved.slug };
   }
 
   if (!resolvedBusinessId) {
@@ -51,26 +53,25 @@ export async function GET(request: Request) {
   // Obtener permisos
   const memberPermissions = await getMemberPermissions(resolvedBusinessId, user.id);
 
-  // Obtener info del negocio
-  const business = await db.query.businesses.findFirst({
-    where: eq(businesses.id, resolvedBusinessId),
-    columns: {
-      id: true,
-      name: true,
-      slug: true,
-    },
-  });
+  // La proyección pública ya trae estos tres campos; solo hay que buscarlos
+  // cuando el llamador pasó un businessId en vez de un slug.
+  if (!businessInfo) {
+    const business = await db.query.businesses.findFirst({
+      where: eq(businesses.id, resolvedBusinessId),
+      columns: {
+        id: true,
+        name: true,
+        slug: true,
+      },
+    });
+
+    businessInfo = business ? { id: business.id, name: business.name, slug: business.slug } : null;
+  }
 
   return NextResponse.json({
     isOwner: memberPermissions.isOwner,
     role: memberPermissions.role,
     permissions: memberPermissions.permissions,
-    business: business
-      ? {
-          id: business.id,
-          name: business.name,
-          slug: business.slug,
-        }
-      : null,
+    business: businessInfo,
   });
 }

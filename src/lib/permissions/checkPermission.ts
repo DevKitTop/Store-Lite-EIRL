@@ -19,6 +19,27 @@ export interface MemberPermissions {
 }
 
 /**
+ * Resuelve si un usuario es dueño del negocio.
+ *
+ * Va contra `public.is_business_owner`, una función SECURITY DEFINER: la tabla
+ * `businesses` no está concedida al rol de runtime porque también guarda
+ * `tax_id`, `verification_data` y datos del representante legal, y RLS filtra
+ * filas, nunca columnas. Cualquier autorización debe salir de acá, nunca de
+ * comparar una columna que el llamador leyó por su cuenta.
+ */
+export async function isBusinessOwner(businessId: string, userId?: string): Promise<boolean> {
+  if (!userId) {
+    return false;
+  }
+
+  const ownerRows = (await db.execute(sql`
+    select public.is_business_owner(${businessId}::uuid, ${userId}::uuid) as is_owner
+  `)) as unknown as { is_owner: boolean }[];
+
+  return ownerRows.at(0)?.is_owner === true;
+}
+
+/**
  * Obtiene los permisos efectivos de un usuario para un negocio.
  * 1. Si es owner → todos los permisos
  * 2. Si es miembro → usa el rol + permisos custom
@@ -34,16 +55,9 @@ export async function getMemberPermissions(
       permissions: [],
     };
   }
-  // 1. Verificar si es owner.
-  // La propiedad se resuelve con una función SECURITY DEFINER: la tabla
-  // `businesses` no está concedida al rol de runtime porque también guarda
-  // `tax_id`, `verification_data` y datos del representante legal, y RLS
-  // filtra filas, nunca columnas.
-  const ownerRows = (await db.execute(sql`
-    select public.is_business_owner(${businessId}::uuid, ${userId}::uuid) as is_owner
-  `)) as unknown as { is_owner: boolean }[];
 
-  if (ownerRows.at(0)?.is_owner === true) {
+  // 1. Verificar si es owner.
+  if (await isBusinessOwner(businessId, userId)) {
     return {
       isOwner: true,
       role: 'owner',

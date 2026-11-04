@@ -1,9 +1,10 @@
 'use server';
 
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businessInvitations, businessTeamMembers, businesses } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
+import { isBusinessOwner } from '@/lib/permissions/checkPermission';
 import type { ActionState } from '@/types/actions';
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
@@ -208,7 +209,7 @@ export async function joinTeam(
   }
 
   // 2. Find business by slug
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     return { success: false, error: 'Negocio no encontrado. Verificá el nombre.' };
@@ -240,7 +241,7 @@ export async function joinTeam(
   }
 
   // 6. Check if user is the owner of this business
-  if (business.ownerId === user.id) {
+  if (await isBusinessOwner(business.id, user.id)) {
     return { success: false, error: 'Ya eres el dueño de este negocio.' };
   }
 

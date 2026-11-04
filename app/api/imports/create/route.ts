@@ -1,8 +1,8 @@
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businessTeamMembers, importJobs, importRows, products } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
-import { checkPermission } from '@/lib/permissions/checkPermission';
+import { checkPermission, isBusinessOwner } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -54,13 +54,13 @@ export async function POST(request: Request) {
     }
 
     // ─── Verify access (owner or team member with products.create) ──
-    const resolved = await resolveBusinessSlug(body.businessSlug);
-    if (!resolved?.business) {
+    const resolved = await resolvePublicBusinessSlug(body.businessSlug);
+    if (!resolved) {
       return NextResponse.json({ error: 'Negocio no encontrado' }, { status: 404 });
     }
 
-    const businessId = resolved.business.id;
-    const isOwner = resolved.business.ownerId === user.id;
+    const businessId = resolved.id;
+    const isOwner = await isBusinessOwner(businessId, user.id);
 
     if (!isOwner) {
       const membership = await db.query.businessTeamMembers.findFirst({
