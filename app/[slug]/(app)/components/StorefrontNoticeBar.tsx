@@ -1,12 +1,12 @@
 'use client';
 
 import { Icon } from '@/shared/components/ui/data-display/Icon';
-import type { Business } from '@/types/business';
+import type { PublicBusiness } from '@/types/business';
 import styles from '../BusinessPageContent.module.css';
 
 interface StorefrontNoticeBarProps {
   isOwner: boolean;
-  business: Business;
+  business: PublicBusiness;
   hasPaymentGateway: boolean;
   isPaymentConfigured: boolean;
 }

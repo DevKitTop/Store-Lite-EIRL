@@ -17,7 +17,7 @@ import type { ProductWithRelations } from '@/features/products/types/productType
 import { StorageProvider, useStorage } from '@/features/storage/context/StorageContext';
 import type { Product as StorageProduct } from '@/features/storage/data';
 import { AlertSnackbar } from '@/shared/components/ui';
-import type { Business } from '@/types/business';
+import type { PublicBusiness } from '@/types/business';
 import type { ProductCategory } from '@/types/product';
 import type { SaveProductMediaItem, SaveProductPayload } from '@/types/storage';
 import { useRouter } from 'next/navigation';
@@ -45,7 +45,7 @@ import { resolveActiveScheme } from './components/schemeResolution';
 import { useStorefrontViewerTheme } from './components/useStorefrontViewerTheme';
 
 interface BusinessPageContentProps {
-  business: Business;
+  business: PublicBusiness;
   isOwner?: boolean;
   isStaff?: boolean;
   isLoggedIn?: boolean;
