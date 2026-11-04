@@ -6,7 +6,7 @@ vi.mock('@/core/database/client', () => ({
   db: { execute: (...args: unknown[]) => execute(...args) },
 }));
 
-import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
+import { resolvePublicBusinessRoute, resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 
 const ROW = {
   id: 'b1',
@@ -118,5 +118,40 @@ describe('resolvePublicBusinessSlug', () => {
       departamento: 'Lima',
       geoRegion: 'PE-LIM',
     });
+  });
+});
+
+describe('resolvePublicBusinessRoute', () => {
+  beforeEach(() => {
+    execute.mockReset();
+  });
+  it('marks a direct hit as not an alias and reports the canonical slug', async () => {
+    execute.mockResolvedValue([ROW]);
+
+    const resolved = await resolvePublicBusinessRoute('demo-store');
+
+    expect(resolved).toMatchObject({
+      canonicalSlug: 'demo-store',
+      requestedSlug: 'demo-store',
+      matchedAlias: false,
+    });
+  });
+
+  it('marks a retired slug as an alias of the canonical one', async () => {
+    execute.mockResolvedValue([ROW]);
+
+    const resolved = await resolvePublicBusinessRoute('demo-store-old');
+
+    expect(resolved).toMatchObject({
+      canonicalSlug: 'demo-store',
+      requestedSlug: 'demo-store-old',
+      matchedAlias: true,
+    });
+  });
+
+  it('returns null when the slug resolves to nothing', async () => {
+    execute.mockResolvedValue([]);
+
+    await expect(resolvePublicBusinessRoute('missing')).resolves.toBeNull();
   });
 });

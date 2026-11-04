@@ -1,4 +1,5 @@
-import { replaceSlugInPath, resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
+import { replaceSlugInPath } from '@/core/business/slug';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { getMemberPermissions } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
@@ -13,7 +14,7 @@ interface Props {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = (await resolvePublicBusinessRoute(slug))?.business;
 
   if (!business) {
     return {
@@ -29,7 +30,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function NotificationsPage({ params }: Props) {
   const { slug } = await params;
-  const resolvedBusiness = await resolveBusinessSlug(slug);
+  const resolvedBusiness = await resolvePublicBusinessRoute(slug);
   const business = resolvedBusiness?.business;
 
   if (!business) {

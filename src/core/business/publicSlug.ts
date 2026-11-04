@@ -93,3 +93,35 @@ export async function resolvePublicBusinessSlug(slug: string): Promise<PublicBus
   const row = rows.at(0);
   return row ? toPublicBusiness(row) : null;
 }
+
+/**
+ * Routing-aware variant of {@link resolvePublicBusinessSlug}.
+ *
+ * Screens that redirect retired aliases to the canonical slug need to know
+ * whether the requested slug was an alias and what the canonical one is. This
+ * keeps that metadata out of the plain resolver, and keeps the same shape the
+ * previous full-row resolver returned, so call sites only swap the function.
+ */
+export interface ResolvedPublicBusiness {
+  business: PublicBusiness;
+  canonicalSlug: string;
+  requestedSlug: string;
+  matchedAlias: boolean;
+}
+
+export async function resolvePublicBusinessRoute(
+  slug: string,
+): Promise<ResolvedPublicBusiness | null> {
+  const business = await resolvePublicBusinessSlug(slug);
+
+  if (!business) {
+    return null;
+  }
+
+  return {
+    business,
+    canonicalSlug: business.slug,
+    requestedSlug: slug,
+    matchedAlias: business.slug !== slug,
+  };
+}

@@ -1,4 +1,4 @@
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { getBusinessPath } from '@/shared/utils/url';
 import ProductModal from '../../../components/ProductModal';
@@ -10,7 +10,7 @@ export default async function ProductInterceptPage({
   params: Promise<{ slug: string; productId: string }>;
 }) {
   const { slug, productId } = await params;
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = (await resolvePublicBusinessRoute(slug))?.business;
 
   let entitlements = null;
   if (business) {

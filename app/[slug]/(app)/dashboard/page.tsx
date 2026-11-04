@@ -1,4 +1,5 @@
-import { replaceSlugInPath, resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
+import { replaceSlugInPath } from '@/core/business/slug';
 import { db } from '@/core/database/client';
 import {
   businessSubscriptions,
@@ -51,7 +52,7 @@ export default async function Dashboard({ params, searchParams }: DashboardProps
   const lastUpdatedAt = new Date().toISOString();
 
   // 1. Fetch business core data
-  const resolvedBusiness = await resolveBusinessSlug(slug);
+  const resolvedBusiness = await resolvePublicBusinessRoute(slug);
   const business = resolvedBusiness?.business;
 
   if (!business) {

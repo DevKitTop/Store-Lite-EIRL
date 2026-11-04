@@ -1,4 +1,5 @@
-import { replaceSlugInPath, resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
+import { replaceSlugInPath } from '@/core/business/slug';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { notFound, redirect } from 'next/navigation';
 import PenaltiesClient from './PenaltiesClient';
@@ -11,7 +12,7 @@ export default async function PenaltiesPage({ params }: PenaltiesPageProps) {
   const { slug } = await params;
 
   // 1. Resolve business from slug
-  const resolvedBusiness = await resolveBusinessSlug(slug);
+  const resolvedBusiness = await resolvePublicBusinessRoute(slug);
   const business = resolvedBusiness?.business;
 
   if (!business) {
