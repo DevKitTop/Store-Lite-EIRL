@@ -1,19 +1,19 @@
 'use server';
 
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businesses } from '@/core/database/schema';
 import { eq } from 'drizzle-orm';
 
 export async function getBusinessBySlug(slug: string) {
   try {
-    const resolvedBusiness = await resolveBusinessSlug(slug);
+    const resolvedBusiness = await resolvePublicBusinessSlug(slug);
     if (!resolvedBusiness) {
       return null;
     }
 
     const business = await db.query.businesses.findFirst({
-      where: eq(businesses.id, resolvedBusiness.business.id),
+      where: eq(businesses.id, resolvedBusiness.id),
       columns: {
         id: true,
         name: true,

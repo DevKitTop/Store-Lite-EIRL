@@ -1,5 +1,6 @@
 import { env } from '@/config/env';
-import { replaceSlugInPath, resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessRoute, resolvePublicBusinessSlug } from '@/core/business/publicSlug';
+import { replaceSlugInPath } from '@/core/business/slug';
 import { getMemberPermissions } from '@/lib/permissions/checkPermission';
 import { createServerClient } from '@supabase/ssr';
 import type { Metadata } from 'next';
@@ -13,7 +14,7 @@ interface StoragePageProps {
 
 export async function generateMetadata({ params }: StoragePageProps): Promise<Metadata> {
   const { slug } = await params;
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   return {
     title: business ? `Almacén — ${business.name}` : 'Almacén',
@@ -25,7 +26,7 @@ export async function generateMetadata({ params }: StoragePageProps): Promise<Me
 export default async function StoragePage({ params }: StoragePageProps) {
   const { slug } = await params;
 
-  const resolvedBusiness = await resolveBusinessSlug(slug);
+  const resolvedBusiness = await resolvePublicBusinessRoute(slug);
   const business = resolvedBusiness?.business;
 
   if (!business) {

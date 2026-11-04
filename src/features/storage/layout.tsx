@@ -1,4 +1,4 @@
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { notFound } from 'next/navigation';
 import { CurrencyProvider } from './context/CurrencyContext';
 import { getCurrencyByCountry } from './utils/currency';
@@ -10,7 +10,7 @@ interface StorageLayoutProps {
 
 export default async function StorageLayout({ children, params }: StorageLayoutProps) {
   const { slug } = await params;
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     notFound();

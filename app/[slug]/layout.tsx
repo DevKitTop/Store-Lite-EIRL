@@ -1,4 +1,5 @@
-import { replaceSlugInPath, resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
+import { replaceSlugInPath } from '@/core/business/slug';
 import { notFound, redirect } from 'next/navigation';
 
 interface BusinessLayoutProps {
@@ -16,7 +17,7 @@ interface BusinessLayoutProps {
 export default async function BusinessLayout({ children, params }: BusinessLayoutProps) {
   const { slug } = await params;
 
-  const resolved = await resolveBusinessSlug(slug);
+  const resolved = await resolvePublicBusinessRoute(slug);
   const business = resolved?.business;
 
   if (!business) {
