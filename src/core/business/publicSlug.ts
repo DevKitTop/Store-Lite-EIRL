@@ -81,9 +81,9 @@ function toPublicBusiness(row: PublicBusinessRow): PublicBusiness {
 /**
  * Resolve a storefront slug (or a retired alias) to the public projection.
  *
- * Use this from any route that renders for anonymous visitors, including the
- * storefront home and its layout. Authenticated seller screens keep the full
- * resolver until their domain moves to the tenant context.
+ * This is the way application code reads a business. The full row is not
+ * granted to the runtime role and must not come back through a helper: private
+ * fields are served by narrower functions, one per consumer that needs them.
  */
 export async function resolvePublicBusinessSlug(slug: string): Promise<PublicBusiness | null> {
   const rows = (await db.execute(sql`
