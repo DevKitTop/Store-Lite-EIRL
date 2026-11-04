@@ -7,8 +7,8 @@
 // =====================================================
 
 import { db } from '@/core/database/client';
-import { businesses, businessTeamMembers, businessTeamRoles } from '@/core/database/schema';
-import { and, eq } from 'drizzle-orm';
+import { businessTeamMembers, businessTeamRoles } from '@/core/database/schema';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Permission, Role } from './definitions';
 import { DEFAULT_ROLE_PERMISSIONS } from './definitions';
 
@@ -34,13 +34,16 @@ export async function getMemberPermissions(
       permissions: [],
     };
   }
-  // 1. Verificar si es owner
-  const business = await db.query.businesses.findFirst({
-    where: eq(businesses.id, businessId),
-    columns: { ownerId: true },
-  });
+  // 1. Verificar si es owner.
+  // La propiedad se resuelve con una función SECURITY DEFINER: la tabla
+  // `businesses` no está concedida al rol de runtime porque también guarda
+  // `tax_id`, `verification_data` y datos del representante legal, y RLS
+  // filtra filas, nunca columnas.
+  const ownerRows = (await db.execute(sql`
+    select public.is_business_owner(${businessId}::uuid, ${userId}::uuid) as is_owner
+  `)) as unknown as { is_owner: boolean }[];
 
-  if (business?.ownerId === userId) {
+  if (ownerRows.at(0)?.is_owner === true) {
     return {
       isOwner: true,
       role: 'owner',
