@@ -63,6 +63,7 @@ describe('createTenantRunner', () => {
 
     expect(result).toBe('done');
     expect(begin).toHaveBeenCalledTimes(1);
+    expect(unsafe.mock.calls[0][0]).toBe('set local role app_runtime');
     expect(unsafe).toHaveBeenCalledWith(`select set_config('request.jwt.claims', $1, true)`, [
       '{"sub":"user-1"}',
     ]);
@@ -78,7 +79,10 @@ describe('createTenantRunner', () => {
 
     await withTenant(null, async () => 'ok');
 
-    expect(unsafe).not.toHaveBeenCalled();
+    // The role is assumed even without claims: the transaction must never run
+    // with the login role's BYPASSRLS, not even for a query that filters nothing.
+    expect(unsafe).toHaveBeenCalledTimes(1);
+    expect(unsafe).toHaveBeenCalledWith('set local role app_runtime');
   });
 
   it('does not swallow a failure from the caller', async () => {
