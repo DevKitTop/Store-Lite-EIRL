@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { Business } from '@/types/business';
+import type { PublicBusiness } from '@/types/business';
 
 import { compressImageToMaxSize } from '@/shared/utils/image';
 import { addHeroImage, deleteHeroImage, removeBusinessCover } from '@app/actions/business';
 
 interface HeroControllerParams {
-  business: Business | null;
+  business: PublicBusiness | null;
 }
 
 interface MenuElement extends HTMLElement {
@@ -16,7 +16,7 @@ interface MenuElement extends HTMLElement {
   open?: boolean;
 }
 
-export type HeroBusiness = Business;
+export type HeroBusiness = PublicBusiness;
 
 interface SnackbarState {
   open: boolean;

@@ -1,4 +1,4 @@
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { productCategories, products } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
@@ -19,7 +19,7 @@ interface AppLayoutProps {
 export default async function AppGroupLayout({ children, modal, params }: AppLayoutProps) {
   const { slug } = await params;
 
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     return notFound();

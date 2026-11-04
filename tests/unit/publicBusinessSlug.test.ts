@@ -16,6 +16,16 @@ const ROW = {
   cover_image_url: null,
   description: 'A store',
   store_type: 'retail',
+  departamento: 'Lima',
+  provincia: 'Lima',
+  distrito: 'Miraflores',
+  email: 'hola@demo.test',
+  person_type: 'empresa',
+  verification_status: 'verified',
+  geo_region: 'PE-LIM',
+  geo_placename: 'Lima',
+  tax_id: '20123456789',
+  created_at: new Date('2024-01-01T00:00:00Z'),
   whatsapp_number: '+51999999999',
   address: 'Av. Siempre Viva 742',
   city: 'Lima',
@@ -24,7 +34,7 @@ const ROW = {
   hero_images: null,
   seo_title: 'Demo',
   seo_description: null,
-  seo_keywords: null,
+  seo_keywords: ['tienda'],
   payment_flow: ['direct'],
   latitude: null,
   longitude: null,
@@ -74,16 +84,39 @@ describe('resolvePublicBusinessSlug', () => {
 
     expect(business).not.toBeNull();
     for (const forbidden of [
-      'taxId',
       'ownerId',
       'verificationData',
+      'legalRepName',
+      'legalRepRole',
       'legalRepEmail',
+      'legalRepPhone',
       'penaltyDebt',
+      'penaltyCount',
       'blacklisted',
-      'email',
+      'blacklistedAt',
       'culqiBlocked',
+      'deactivationReason',
+      'deactivationDate',
+      'appealStatus',
+      'gracePeriodEndsAt',
     ]) {
       expect(business).not.toHaveProperty(forbidden);
     }
+  });
+
+  it('keeps the fields the storefront publishes on purpose', async () => {
+    execute.mockResolvedValue([ROW]);
+
+    const business = await resolvePublicBusinessSlug('demo-store');
+
+    // The RUC and the store contact email are shown by the storefront today,
+    // so leaving them out would be a regression rather than hardening.
+    expect(business).toMatchObject({
+      taxId: '20123456789',
+      email: 'hola@demo.test',
+      verificationStatus: 'verified',
+      departamento: 'Lima',
+      geoRegion: 'PE-LIM',
+    });
   });
 });

@@ -1,38 +1,15 @@
 import { db } from '@/core/database/client';
+import type { PublicBusiness } from '@/types/business';
 import { sql } from 'drizzle-orm';
 
-/**
- * Shape every anonymous visitor may see. It is a deliberate subset of
- * `businesses`: no tax id, no legal representative, no verification data, no
- * penalty or blacklist state.
- *
- * The projection lives in `public.public_business_by_slug` (migration 0008)
- * because a single runtime role cannot be granted the seller columns while
- * withholding the public ones. Row-level security filters rows, never columns.
- */
-export interface PublicBusiness {
-  id: string;
-  slug: string;
-  name: string;
-  logoUrl: string | null;
-  coverImageUrl: string | null;
-  description: string | null;
-  storeType: string | null;
-  whatsappNumber: string | null;
-  address: string | null;
-  city: string | null;
-  country: string | null;
-  socialLinks: Record<string, unknown> | null;
-  heroImages: string[] | null;
-  seoTitle: string | null;
-  seoDescription: string | null;
-  seoKeywords: string | null;
-  paymentFlow: string[] | null;
-  latitude: string | null;
-  longitude: string | null;
-  isActive: boolean;
-}
+export type { PublicBusiness };
 
+/**
+ * Raw shape returned by `public.public_business_by_slug`.
+ *
+ * `latitude` and `longitude` arrive as strings because the columns are
+ * `numeric`; `hero_images` and `payment_flow` are `text[]`.
+ */
 interface PublicBusinessRow {
   id: string;
   slug: string;
@@ -45,14 +22,24 @@ interface PublicBusinessRow {
   address: string | null;
   city: string | null;
   country: string | null;
-  social_links: Record<string, unknown> | null;
+  social_links: Record<string, string> | null;
   hero_images: string[] | null;
   seo_title: string | null;
   seo_description: string | null;
-  seo_keywords: string | null;
+  seo_keywords: string[] | null;
   payment_flow: string[] | null;
+  geo_region: string | null;
+  geo_placename: string | null;
+  departamento: string | null;
+  provincia: string | null;
+  distrito: string | null;
+  email: string | null;
+  person_type: string | null;
+  verification_status: 'unverified' | 'pending' | 'verified' | 'rejected';
+  created_at: Date;
   latitude: string | null;
   longitude: string | null;
+  tax_id: string | null;
   is_active: boolean;
 }
 
@@ -75,8 +62,18 @@ function toPublicBusiness(row: PublicBusinessRow): PublicBusiness {
     seoDescription: row.seo_description,
     seoKeywords: row.seo_keywords,
     paymentFlow: row.payment_flow,
+    geoRegion: row.geo_region,
+    geoPlacename: row.geo_placename,
+    departamento: row.departamento,
+    provincia: row.provincia,
+    distrito: row.distrito,
+    email: row.email,
+    personType: row.person_type,
+    verificationStatus: row.verification_status,
+    createdAt: row.created_at,
     latitude: row.latitude,
     longitude: row.longitude,
+    taxId: row.tax_id,
     isActive: row.is_active,
   };
 }
@@ -84,9 +81,9 @@ function toPublicBusiness(row: PublicBusinessRow): PublicBusiness {
 /**
  * Resolve a storefront slug (or a retired alias) to the public projection.
  *
- * Use this from routes that serve anonymous visitors. Authenticated seller
- * surfaces keep the full resolver until their domain moves to the tenant
- * context.
+ * Use this from any route that renders for anonymous visitors, including the
+ * storefront home and its layout. Authenticated seller screens keep the full
+ * resolver until their domain moves to the tenant context.
  */
 export async function resolvePublicBusinessSlug(slug: string): Promise<PublicBusiness | null> {
   const rows = (await db.execute(sql`

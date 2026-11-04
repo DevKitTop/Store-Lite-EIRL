@@ -4,7 +4,7 @@ import type { ProductWithRelations } from '@/features/products/types/productType
 import { useCart } from '@/features/storage/context/CartContext';
 import type { Product } from '@/features/storage/data';
 import { Button } from '@/shared/components/ui/buttons/Button';
-import type { Business } from '@/types/business';
+import type { PublicBusiness } from '@/types/business';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { BasicContactDialog } from '../../../components/BasicContactDialog';
@@ -15,7 +15,7 @@ import styles from './ProductDetail.module.css';
 
 interface PurchaseActionsProps {
   product: Product;
-  business: Business;
+  business: PublicBusiness;
   hasPaymentGateway: boolean;
   culqiPublicKey?: string;
   isOwner: boolean;

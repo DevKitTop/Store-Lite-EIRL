@@ -7,7 +7,7 @@ import {
   SocialLinksRow,
 } from '@/shared/components/business/BusinessPreviewCard';
 import { Icon } from '@/shared/components/ui/data-display/Icon';
-import type { Business } from '@/types/business';
+import type { PublicBusiness } from '@/types/business';
 import styles from './storefrontAbout.module.css';
 
 // ─── Pure business-logic helpers (unit-tested) ────────────────────────────
@@ -165,7 +165,7 @@ function MapLinkRow({ url }: { url: string }) {
 // ─── Section ──────────────────────────────────────────────────────────────
 
 interface StorefrontAboutSectionProps {
-  business: Business;
+  business: PublicBusiness;
   storefrontTheme: StorefrontTheme | null | undefined;
   previewCardTheme: StorefrontTheme | null | undefined;
   storefrontColorScheme?: StorefrontColorScheme;
@@ -181,7 +181,9 @@ export function StorefrontAboutSection({
   isOwner,
 }: StorefrontAboutSectionProps) {
   const verification = getVerificationConfig(business.verificationStatus);
-  const phoneNumber = business.whatsappNumber ?? business.legalRepPhone ?? '';
+  // Only the store's own contact number. The legal representative's phone is
+  // personal data and is no longer part of the public projection.
+  const phoneNumber = business.whatsappNumber ?? '';
   const phoneDigits = phoneNumber.replace(/\D/g, '');
   const personTypeLabel = business.personType ? getPersonTypeLabel(business.personType) : '';
   const typeValue = [personTypeLabel, business.storeType].filter(Boolean).join(' • ');
@@ -236,7 +238,6 @@ export function StorefrontAboutSection({
             showDownloadButton={isOwner}
             socialLinks={business.socialLinks ?? {}}
             whatsappNumber={business.whatsappNumber ?? undefined}
-            legalRepPhone={business.legalRepPhone ?? undefined}
             verificationStatus={business.verificationStatus ?? undefined}
             coverImageUrl={business.coverImageUrl ?? null}
             storeType={business.storeType ?? undefined}
