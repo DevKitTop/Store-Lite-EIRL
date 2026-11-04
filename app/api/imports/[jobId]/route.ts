@@ -1,6 +1,7 @@
 import { db } from '@/core/database/client';
-import { businesses, importJobs, importRows } from '@/core/database/schema';
+import { importJobs, importRows } from '@/core/database/schema';
 import { logError } from '@/lib/errorHandling';
+import { isBusinessOwner } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -32,12 +33,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
     }
 
     // ─── Verify business ownership ──────────────────────────
-    const biz = await db.query.businesses.findFirst({
-      where: eq(businesses.id, job.businessId),
-      columns: { ownerId: true },
-    });
-
-    if (!biz || biz.ownerId !== user.id) {
+    // Ownership comes from the definer function: the business row is no longer
+    // readable through a helper, and this route must not be the exception.
+    if (!(await isBusinessOwner(job.businessId, user.id))) {
       return NextResponse.json({ error: 'No tienes acceso a este trabajo' }, { status: 403 });
     }
 
