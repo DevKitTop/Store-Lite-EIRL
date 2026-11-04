@@ -1,4 +1,4 @@
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businessSettings } from '@/core/database/schema';
 import { Card } from '@/shared/components/ui';
@@ -13,7 +13,7 @@ interface ComplaintPageProps {
 
 export async function generateMetadata({ params }: ComplaintPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) return { title: 'Libro de Reclamaciones' };
 
@@ -26,7 +26,7 @@ export async function generateMetadata({ params }: ComplaintPageProps): Promise<
 
 export default async function ComplaintBookPage({ params }: ComplaintPageProps) {
   const { slug } = await params;
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     return notFound();

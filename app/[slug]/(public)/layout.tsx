@@ -1,5 +1,5 @@
 import { getBusinessTrustScore } from '@/actions/business/getBusinessTrustScore';
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import ComplaintBanner from '@/features/business/components/ComplaintBanner';
 import { notFound } from 'next/navigation';
 
@@ -11,8 +11,7 @@ export default async function PublicLayout({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const resolved = await resolveBusinessSlug(slug);
-  const business = resolved?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business || !business.isActive) {
     return notFound();
