@@ -15,4 +15,5 @@ export {
   updateRolePermissions,
 } from './roles';
 
-export type { InvitationInfo, TeamMember } from './_helpers';
+export type { TeamMember } from '@/core/team/directory';
+export type { InvitationInfo } from './_helpers';
