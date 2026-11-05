@@ -32,19 +32,20 @@ export async function createUserAuthClient() {
 }
 
 /**
- * Generate a random invitation code (XXXX-XXXX format)
+ * Generate a random invitation code (XXXX-XXXX format).
+ *
+ * The code is a capability: whoever holds it can join the team. That is why the
+ * randomness comes from `crypto`, not `Math.random`, which is predictable by
+ * design and unfit for anything an attacker must not guess.
+ *
+ * The alphabet has exactly 32 characters, so `byte % 32` is uniform over a byte
+ * and needs no rejection sampling.
  */
 export function generateCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No O, 0, 1, I to avoid confusion
-  let result = '';
-  for (let i = 0; i < 4; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  result += '-';
-  for (let i = 0; i < 4; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  const chars8 = Array.from(bytes, (byte) => chars.charAt(byte % chars.length));
+  return `${chars8.slice(0, 4).join('')}-${chars8.slice(4).join('')}`;
 }
 
 /**
