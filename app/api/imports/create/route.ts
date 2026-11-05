@@ -1,6 +1,7 @@
 import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businessTeamMembers, importJobs, importRows, products } from '@/core/database/schema';
+import { withTenantContext } from '@/core/database/tenant';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { checkPermission, isBusinessOwner } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
@@ -109,46 +110,50 @@ export async function POST(request: Request) {
     }
 
     // ─── Create job ─────────────────────────────────────────
-    const [job] = await db
-      .insert(importJobs)
-      .values({
-        businessId,
-        status: 'pending',
-        totalRows: body.rows.length,
-        fileName: body.rows.length > 0 ? `import-${Date.now()}` : null,
-      })
-      .returning({ id: importJobs.id });
+    const job = await withTenantContext({ sub: user.id }, async (tenant) => {
+      const [created] = await tenant
+        .insert(importJobs)
+        .values({
+          businessId,
+          status: 'pending',
+          totalRows: body.rows.length,
+          fileName: body.rows.length > 0 ? `import-${Date.now()}` : null,
+        })
+        .returning({ id: importJobs.id });
 
-    // ─── Insert rows ─────────────────────────────────────────
-    const rowValues = body.rows.map((row, idx) => ({
-      jobId: job.id,
-      rowNumber: idx + 1,
-      status: 'pending' as const,
-      rawData: {
-        name: row.name.trim(),
-        description: row.description?.trim() || '',
-        category: row.category.trim(),
-        stock: Math.max(0, Math.trunc(Number.isFinite(row.stock) ? row.stock : 0)),
-        price: Math.max(0, Number.isFinite(row.price) ? row.price : 0),
-        status: row.status,
-        imageUrl: row.imageUrl?.trim() || null,
-        brand: row.brand?.trim() || null,
-        externalCode: row.externalCode?.trim() || null,
-        tags: row.tags || null,
-        secondPrice: row.secondPrice !== null ? Number(row.secondPrice) : null,
-        saleStatus: row.saleStatus || null,
-        shippingInfo: row.shippingInfo?.trim() || null,
-        seoTitle: row.seoTitle?.trim() || null,
-        seoDescription: row.seoDescription?.trim() || null,
-        metadata: row.metadata || {},
-      },
-    }));
+      // ─── Insert rows ─────────────────────────────────────────
+      const rowValues = body.rows.map((row, idx) => ({
+        jobId: created.id,
+        rowNumber: idx + 1,
+        status: 'pending' as const,
+        rawData: {
+          name: row.name.trim(),
+          description: row.description?.trim() || '',
+          category: row.category.trim(),
+          stock: Math.max(0, Math.trunc(Number.isFinite(row.stock) ? row.stock : 0)),
+          price: Math.max(0, Number.isFinite(row.price) ? row.price : 0),
+          status: row.status,
+          imageUrl: row.imageUrl?.trim() || null,
+          brand: row.brand?.trim() || null,
+          externalCode: row.externalCode?.trim() || null,
+          tags: row.tags || null,
+          secondPrice: row.secondPrice !== null ? Number(row.secondPrice) : null,
+          saleStatus: row.saleStatus || null,
+          shippingInfo: row.shippingInfo?.trim() || null,
+          seoTitle: row.seoTitle?.trim() || null,
+          seoDescription: row.seoDescription?.trim() || null,
+          metadata: row.metadata || {},
+        },
+      }));
 
-    // Insert in batches of 500 to avoid payload limits
-    const BATCH_SIZE = 500;
-    for (let i = 0; i < rowValues.length; i += BATCH_SIZE) {
-      await db.insert(importRows).values(rowValues.slice(i, i + BATCH_SIZE));
-    }
+      // Insert in batches of 500 to avoid payload limits
+      const BATCH_SIZE = 500;
+      for (let i = 0; i < rowValues.length; i += BATCH_SIZE) {
+        await tenant.insert(importRows).values(rowValues.slice(i, i + BATCH_SIZE));
+      }
+
+      return created;
+    });
 
     // ─── Process ALL rows synchronously ───────────────────────
     const pendingRows = await db.query.importRows.findMany({
@@ -161,16 +166,18 @@ export async function POST(request: Request) {
     const errorCount = results.filter((r) => r.error).length;
 
     // ─── Mark job as completed ────────────────────────────────
-    await db
-      .update(importJobs)
-      .set({
-        status: 'completed',
-        processedRows: processedCount,
-        errorRows: errorCount,
-        completedAt: sql`now()`,
-        updatedAt: sql`now()`,
-      })
-      .where(eq(importJobs.id, job.id));
+    await withTenantContext({ sub: user.id }, async (tenant) =>
+      tenant
+        .update(importJobs)
+        .set({
+          status: 'completed',
+          processedRows: processedCount,
+          errorRows: errorCount,
+          completedAt: sql`now()`,
+          updatedAt: sql`now()`,
+        })
+        .where(eq(importJobs.id, job.id)),
+    );
 
     const errors = results
       .filter((r) => r.error)
