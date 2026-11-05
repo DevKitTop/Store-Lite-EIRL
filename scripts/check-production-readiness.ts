@@ -1,10 +1,10 @@
-/**
+﻿/**
  * Production readiness check for the tenancy rollout.
  *
  * Read-only. Answers one question: is this database ready for the code on
- * `develop`? The code assumes things the migrations create — the `app_runtime`
+ * `develop`? The code assumes things the migrations create â€” the `app_runtime`
  * role, RLS on the tables the runner touches, the governed functions, the
- * grants — and fails at request time if any of them is missing. Checking before
+ * grants â€” and fails at request time if any of them is missing. Checking before
  * deploying turns a 500 in front of a customer into a line in a report.
  *
  * It also inspects the stored Culqi keys, because a key that is really plain
@@ -42,18 +42,36 @@ const GOVERNED_TABLES = [
 const REQUIRED_GRANTS = GOVERNED_TABLES;
 const FORBIDDEN_GRANTS = ['businesses'] as const;
 
-/** Every governed function, with the definer flag it must carry. */
+/**
+ * Every governed function, by exact signature.
+ *
+ * By signature and not by name: `is_business_member` has two overloads, and the
+ * single-argument one exists since the baseline. Matching on the name alone
+ * would let the two-argument version be missing while the check passed — the
+ * one the policies call.
+ */
 const GOVERNED_FUNCTIONS = [
-  'accept_business_invitation',
-  'business_private_settings',
-  'business_team_directory',
-  'businesses_for_user',
-  'is_business_member',
-  'is_business_owner',
-  'is_product_member',
-  'is_storage_path_owner',
-  'public_business_by_slug',
+  'accept_business_invitation(uuid, text, uuid)',
+  'business_private_settings(text, uuid)',
+  'business_team_directory(uuid, uuid)',
+  'businesses_for_user(uuid)',
+  'is_business_member(uuid)',
+  'is_business_member(uuid, uuid)',
+  'is_business_owner(uuid, uuid)',
+  'is_product_member(uuid)',
+  'is_storage_path_owner(text)',
+  'public_business_by_slug(text)',
 ] as const;
+
+/**
+ * Signature without whitespace, because `oid::regprocedure::text` renders
+ * arguments as `(uuid,text,uuid)` - no space after the comma. Comparing against
+ * a hand-written `(uuid, text, uuid)` matched nothing, which made every function
+ * look missing and turned the gate into a false negative.
+ */
+export function signatureKey(signature: string): string {
+  return signature.replace(/\s+/g, '');
+}
 
 export interface ObservedState {
   /** null when the role does not exist. */
@@ -109,9 +127,11 @@ export function evaluateReadiness(observed: ObservedState): ReadinessResult {
   }
 
   for (const fn of GOVERNED_FUNCTIONS) {
-    if (observed.functionIsDefiner[fn] === undefined) {
+    const definer = observed.functionIsDefiner[signatureKey(fn)];
+
+    if (definer === undefined) {
       failures.push(`${fn}: function does not exist`);
-    } else if (!observed.functionIsDefiner[fn]) {
+    } else if (!definer) {
       failures.push(`${fn}: is not SECURITY DEFINER`);
     }
   }
@@ -154,10 +174,11 @@ async function observe(sql: postgres.Sql): Promise<ObservedState> {
     select distinct table_name from information_schema.role_table_grants
     where grantee = 'app_runtime'
   `;
-  const functionRows = await sql<{ proname: string; prosecdef: boolean }[]>`
-    select proname, prosecdef from pg_proc
+  const functionNames = GOVERNED_FUNCTIONS.map((fn) => fn.slice(0, fn.indexOf('(')));
+  const functionRows = await sql<{ signature: string; prosecdef: boolean }[]>`
+    select oid::regprocedure::text as signature, prosecdef from pg_proc
     where pronamespace = 'public'::regnamespace
-      and proname = any(${sql.array(GOVERNED_FUNCTIONS as unknown as string[])})
+      and proname = any(${sql.array(functionNames)})
   `;
 
   const keyRows = await sql<{ culqi_secret_key: string }[]>`
@@ -178,7 +199,9 @@ async function observe(sql: postgres.Sql): Promise<ObservedState> {
     rlsByTable: Object.fromEntries(rlsRows.map((row) => [row.relname, row.relrowsecurity])),
     policyCountByTable: Object.fromEntries(policyRows.map((row) => [row.tablename, row.n])),
     grantedTables: grantRows.map((row) => row.table_name),
-    functionIsDefiner: Object.fromEntries(functionRows.map((row) => [row.proname, row.prosecdef])),
+    functionIsDefiner: Object.fromEntries(
+      functionRows.map((row) => [signatureKey(row.signature), row.prosecdef]),
+    ),
     encryptionKeyPresent: Boolean(process.env.ENCRYPTION_KEY?.trim()),
     culqi,
   };
@@ -198,7 +221,7 @@ async function main() {
     const result = evaluateReadiness(observed);
 
     console.log(
-      `Governed tables: ${GOVERNED_TABLES.length} · functions: ${GOVERNED_FUNCTIONS.length} · ` +
+      `Governed tables: ${GOVERNED_TABLES.length} Â· functions: ${GOVERNED_FUNCTIONS.length} Â· ` +
         `granted tables: ${observed.grantedTables.length}`,
     );
 
