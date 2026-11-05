@@ -65,3 +65,42 @@ export async function resolveTeamDirectory(
 
   return rows.map(toTeamMember);
 }
+
+/** A team the signed-in user belongs to, as the list screen needs it. */
+export interface UserTeam {
+  businessId: string;
+  name: string;
+  slug: string;
+  role: string;
+}
+
+interface UserTeamRow {
+  business_id: string;
+  name: string;
+  slug: string;
+  role: string;
+}
+
+/**
+ * Every team this user belongs to.
+ *
+ * `businesses` is not granted to the runtime role, so the join lives in the
+ * function. The scope is the user id: there is no parameter through which a
+ * caller could ask about someone else's teams.
+ *
+ * Ownership is not a team here, matching what this list has always shown: a
+ * business you own appears under your own businesses, not under the teams you
+ * joined.
+ */
+export async function resolveUserTeams(userId: string): Promise<UserTeam[]> {
+  const rows = (await db.execute(sql`
+    select * from public.businesses_for_user(${userId}::uuid)
+  `)) as unknown as UserTeamRow[];
+
+  return rows.map((row) => ({
+    businessId: row.business_id,
+    name: row.name,
+    slug: row.slug,
+    role: row.role,
+  }));
+}
