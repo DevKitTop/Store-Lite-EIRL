@@ -1,11 +1,12 @@
 'use server';
 
 import { db } from '@/core/database/client';
-import { businessTeamMembers, businesses } from '@/core/database/schema';
+import { businessTeamMembers } from '@/core/database/schema';
+import type { TeamMember } from '@/core/team/directory';
+import { resolveTeamDirectory } from '@/core/team/directory';
 import type { ActionState } from '@/types/actions';
 import { and, eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
-import type { TeamMember } from './_helpers';
 import { assertOwnership, createUserAuthClient } from './_helpers';
 
 /**
@@ -21,7 +22,6 @@ export async function getTeamMembers(
     return { success: false, error: validation.error.issues[0]?.message };
   }
 
-  // 1. Verify ownership or membership
   const supabase = await createUserAuthClient();
   const {
     data: { user },
@@ -31,76 +31,13 @@ export async function getTeamMembers(
     return { success: false, error: 'No autenticado.' };
   }
 
-  // Check if user is owner or team member
-  const business = await db.query.businesses.findFirst({
-    where: eq(businesses.id, businessId),
-    columns: { ownerId: true },
-  });
+  // The roster, the membership check and the profile join happen inside one
+  // governed function: a caller who does not belong to the business gets
+  // nothing, and no query here can reach another tenant's team.
+  const members = await resolveTeamDirectory(businessId, user.id);
 
-  if (!business) {
-    return { success: false, error: 'Negocio no encontrado.' };
-  }
-
-  const isOwner = business.ownerId === user.id;
-  const isMember = await db.query.businessTeamMembers.findFirst({
-    where: and(
-      eq(businessTeamMembers.businessId, businessId),
-      eq(businessTeamMembers.userId, user.id),
-    ),
-  });
-
-  if (!isOwner && !isMember) {
+  if (!members) {
     return { success: false, error: 'No tienes acceso a este equipo.' };
-  }
-
-  // 2. Get owner info with relation
-  const ownerInfo = await db.query.businesses.findFirst({
-    where: eq(businesses.id, businessId),
-    columns: { ownerId: true },
-    with: {
-      owner: {
-        columns: { id: true, email: true, fullName: true, avatarUrl: true },
-      },
-    },
-  });
-
-  const members: TeamMember[] = [];
-
-  // Add owner as first member
-  if (ownerInfo?.owner) {
-    members.push({
-      id: 'owner',
-      userId: ownerInfo.owner.id,
-      email: ownerInfo.owner.email,
-      fullName: ownerInfo.owner.fullName,
-      avatarUrl: ownerInfo.owner.avatarUrl,
-      role: 'owner',
-      joinedAt: new Date(), // Owner has no join date in this table
-    });
-  }
-
-  // 3. Get team members
-  const teamMembers = await db.query.businessTeamMembers.findMany({
-    where: eq(businessTeamMembers.businessId, businessId),
-    with: {
-      user: {
-        columns: { id: true, email: true, fullName: true, avatarUrl: true },
-      },
-    },
-  });
-
-  for (const member of teamMembers) {
-    if (member.user) {
-      members.push({
-        id: member.id,
-        userId: member.user.id,
-        email: member.user.email,
-        fullName: member.user.fullName,
-        avatarUrl: member.user.avatarUrl,
-        role: member.role,
-        joinedAt: member.joinedAt,
-      });
-    }
   }
 
   return { success: true, members };

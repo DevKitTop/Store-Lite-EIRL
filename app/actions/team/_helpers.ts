@@ -5,16 +5,6 @@ import { createServerClient } from '@supabase/ssr';
 import { eq } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 
-export interface TeamMember {
-  id: string;
-  userId: string;
-  email: string | null;
-  fullName: string | null;
-  avatarUrl: string | null;
-  role: string;
-  joinedAt: Date;
-}
-
 export interface InvitationInfo {
   code: string;
   maxUses: number | null;
