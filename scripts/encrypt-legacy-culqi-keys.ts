@@ -20,7 +20,7 @@
  * Usage: pnpm tsx scripts/encrypt-legacy-culqi-keys.ts [--apply]
  */
 import 'dotenv/config';
-import { createCipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 
 const ALGORITHM = 'aes-256-gcm';
@@ -28,6 +28,15 @@ const IV_LENGTH = 16;
 
 /** `iv:payload:authTag`, all hex — the only shape this script leaves alone. */
 const ENCRYPTED_PATTERN = /^[0-9a-f]{32}:[0-9a-f]+:[0-9a-f]{32}$/;
+
+/**
+ * The key `encrypt()` falls back to when `ENCRYPTION_KEY` is unset outside
+ * production. It is 32 zero bytes: a constant anyone can read from the source.
+ *
+ * A value encrypted with it is not protected at all, and the real environment
+ * cannot decrypt it, so it has to be rewritten exactly like plain text.
+ */
+const DEV_FALLBACK_KEY = Buffer.alloc(32, 0);
 
 /**
  * True for a value the application has already encrypted.
@@ -40,15 +49,56 @@ export function isEncryptedCulqiKey(value: string): boolean {
   return ENCRYPTED_PATTERN.test(value);
 }
 
+function decryptWithKey(value: string, key: Buffer): string {
+  const [ivHex, payload, tagHex] = value.split(':');
+  const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(ivHex, 'hex'));
+  decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+  return decipher.update(payload, 'hex', 'utf8') + decipher.final('utf8');
+}
+
+/**
+ * True when the value is ciphertext produced with the development fallback.
+ *
+ * It looks encrypted, so the plain-text check misses it, but it is readable by
+ * anyone holding the database and undecryptable by the real environment.
+ */
+export function isDevFallbackCiphertext(value: string): boolean {
+  if (!isEncryptedCulqiKey(value)) {
+    return false;
+  }
+
+  try {
+    decryptWithKey(value, DEV_FALLBACK_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Rows that must be rewritten: plain text, or ciphertext under a known-public key. */
+export function needsRewrite(value: string): boolean {
+  return !isEncryptedCulqiKey(value) || isDevFallbackCiphertext(value);
+}
+
 /**
  * The rows this script has to rewrite.
  *
  * Exported and pure so a test can prove the split both ways: a plain-text key
- * must be selected, and a ciphertext must never be (encrypting it again would
- * make the stored credential undecryptable).
+ * must be selected, and a properly encrypted value must never be (encrypting
+ * it again would make the stored credential undecryptable).
  */
 export function selectLegacyKeys<T extends { culqi_secret_key: string }>(rows: T[]): T[] {
-  return rows.filter((row) => !isEncryptedCulqiKey(row.culqi_secret_key));
+  return rows.filter((row) => needsRewrite(row.culqi_secret_key));
+}
+
+/** The plain-text value behind any row, whichever shape it is in today. */
+export function revealCulqiKey(value: string, key: Buffer): string {
+  if (!isEncryptedCulqiKey(value)) {
+    return value;
+  }
+
+  const decryptionKey = isDevFallbackCiphertext(value) ? DEV_FALLBACK_KEY : key;
+  return decryptWithKey(value, decryptionKey);
 }
 
 function encryptWithKey(text: string, key: Buffer): string {
@@ -89,7 +139,8 @@ async function main() {
 
     console.log(
       `Scanned ${rows.length} configured business(es): ` +
-        `${rows.length - legacy.length} encrypted, ${legacy.length} in plain text.`,
+        `${rows.length - legacy.length} encrypted, ${legacy.length} to rewrite ` +
+        `(${legacy.filter((row) => isDevFallbackCiphertext(row.culqi_secret_key)).length} under the dev fallback key).`,
     );
 
     if (legacy.length === 0) {
@@ -106,7 +157,8 @@ async function main() {
       if (!key) {
         throw new Error('ENCRYPTION_KEY is required to encrypt stored keys.');
       }
-      const encrypted = encryptWithKey(row.culqi_secret_key, key);
+      const plain = revealCulqiKey(row.culqi_secret_key, key);
+      const encrypted = encryptWithKey(plain, key);
       await sql`
         update public.business_settings
         set culqi_secret_key = ${encrypted}, updated_at = now()

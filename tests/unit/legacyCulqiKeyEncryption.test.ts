@@ -12,8 +12,15 @@
 // the database rather than invented ones.
 // =====================================================
 
+import { createCipheriv, randomBytes, scryptSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { isEncryptedCulqiKey, selectLegacyKeys } from '../../scripts/encrypt-legacy-culqi-keys';
+import {
+  isDevFallbackCiphertext,
+  isEncryptedCulqiKey,
+  needsRewrite,
+  revealCulqiKey,
+  selectLegacyKeys,
+} from '../../scripts/encrypt-legacy-culqi-keys';
 
 // 32 hex iv, payload, 32 hex auth tag - the format `encrypt()` writes.
 const CIPHERTEXT = `${'a'.repeat(32)}:${'b'.repeat(48)}:${'c'.repeat(32)}`;
@@ -56,5 +63,59 @@ describe('selectLegacyKeys', () => {
     ];
 
     expect(selectLegacyKeys(rows)).toEqual([]);
+  });
+});
+
+// =====================================================
+// The development fallback key
+//
+// `encrypt()` uses 32 zero bytes when ENCRYPTION_KEY is unset outside
+// production. A row written that way looks encrypted but is readable by
+// anyone with the database, and the real environment cannot decrypt it -
+// staging had exactly one such row.
+// =====================================================
+
+function cipherWith(key: Buffer, text: string): string {
+  const iv = randomBytes(16);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const payload = cipher.update(text, 'utf8', 'hex') + cipher.final('hex');
+  return `${iv.toString('hex')}:${payload}:${cipher.getAuthTag().toString('hex')}`;
+}
+
+const DEV_FALLBACK = Buffer.alloc(32, 0);
+const REAL_KEY = scryptSync('a-real-encryption-key', 'salt', 32);
+
+describe('the development fallback key', () => {
+  it('recognises a value encrypted with it', () => {
+    const value = cipherWith(DEV_FALLBACK, PLAIN_TEXT);
+
+    expect(isEncryptedCulqiKey(value)).toBe(true);
+    expect(isDevFallbackCiphertext(value)).toBe(true);
+  });
+
+  it('does not flag a value encrypted with the real key', () => {
+    const value = cipherWith(REAL_KEY, PLAIN_TEXT);
+
+    expect(isDevFallbackCiphertext(value)).toBe(false);
+    expect(needsRewrite(value)).toBe(false);
+  });
+
+  it('selects fallback values for rewrite and leaves real ones alone', () => {
+    const rows = [
+      { business_id: 'biz-real', culqi_secret_key: cipherWith(REAL_KEY, PLAIN_TEXT) },
+      { business_id: 'biz-fallback', culqi_secret_key: cipherWith(DEV_FALLBACK, PLAIN_TEXT) },
+      { business_id: 'biz-plain', culqi_secret_key: PLAIN_TEXT },
+    ];
+
+    expect(selectLegacyKeys(rows).map((row) => row.business_id)).toEqual([
+      'biz-fallback',
+      'biz-plain',
+    ]);
+  });
+
+  it('recovers the original value so it can be re-encrypted with the real key', () => {
+    expect(revealCulqiKey(PLAIN_TEXT, REAL_KEY)).toBe(PLAIN_TEXT);
+    expect(revealCulqiKey(cipherWith(DEV_FALLBACK, PLAIN_TEXT), REAL_KEY)).toBe(PLAIN_TEXT);
+    expect(revealCulqiKey(cipherWith(REAL_KEY, PLAIN_TEXT), REAL_KEY)).toBe(PLAIN_TEXT);
   });
 });
