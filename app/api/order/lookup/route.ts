@@ -1,9 +1,9 @@
 import { db } from '@/core/database/client';
-import { businesses, businessTeamMembers, payments } from '@/core/database/schema';
+import { businesses, payments } from '@/core/database/schema';
+import { isBusinessSeller } from '@/core/orders/sellerAccess';
 import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
 import { ORDER_ACCESS_DENIED_ERROR } from '@/lib/orderAccessGate';
 import { checkOrderAccessRateLimit } from '@/lib/orderAccessRateLimit';
-import { isBusinessOwner } from '@/lib/permissions/checkPermission';
 import { checkRateLimit } from '@/lib/rateLimit';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
@@ -203,24 +203,14 @@ export async function POST(request: NextRequest) {
       data: { user },
     } = await supabase.auth.getUser();
 
-    if (user) {
-      const membership = await db.query.businessTeamMembers.findFirst({
-        where: and(
-          eq(businessTeamMembers.businessId, business.id),
-          eq(businessTeamMembers.userId, user.id),
-        ),
-        columns: { id: true },
-      });
-
-      if (membership || (await isBusinessOwner(business.id, user.id))) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Acceso denegado: usa el panel de vendedor para gestionar pedidos',
-          },
-          { status: 403 },
-        );
-      }
+    if (user && (await isBusinessSeller(business.id, user.id))) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Acceso denegado: usa el panel de vendedor para gestionar pedidos',
+        },
+        { status: 403 },
+      );
     }
 
     const payment = await db.query.payments.findFirst({
