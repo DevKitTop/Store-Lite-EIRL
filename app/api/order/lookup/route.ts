@@ -3,6 +3,7 @@ import { businesses, businessTeamMembers, payments } from '@/core/database/schem
 import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
 import { ORDER_ACCESS_DENIED_ERROR } from '@/lib/orderAccessGate';
 import { checkOrderAccessRateLimit } from '@/lib/orderAccessRateLimit';
+import { isBusinessOwner } from '@/lib/permissions/checkPermission';
 import { checkRateLimit } from '@/lib/rateLimit';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
@@ -179,53 +180,6 @@ export async function POST(request: NextRequest) {
 
     const { dni, orderNumber: cleanOrderNumber, businessSlug } = validationResult.data;
 
-    // 🔒 SECURITY: Check if the requester is a seller/team member of this business.
-    // Sellers should NOT be able to lookup trackingTokens for their own orders.
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (user) {
-      // Find businesses owned by this user that match the slug
-      const ownedBusiness = await db.query.businesses.findFirst({
-        where: and(eq(businesses.ownerId, user.id)),
-        columns: { id: true, slug: true },
-      });
-
-      // Check if owned business matches the requested slug
-      if (ownedBusiness && ownedBusiness.slug.toLowerCase() === businessSlug.toLowerCase()) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Acceso denegado: usa el panel de vendedor para gestionar pedidos',
-          },
-          { status: 403 },
-        );
-      }
-
-      // Also check team membership
-      if (ownedBusiness) {
-        const teamMembership = await db.query.businessTeamMembers.findFirst({
-          where: and(eq(businessTeamMembers.userId, user.id)),
-          with: { business: { columns: { slug: true } } },
-        });
-
-        if (
-          teamMembership &&
-          teamMembership.business?.slug?.toLowerCase() === businessSlug.toLowerCase()
-        ) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: 'Acceso denegado: usa el panel de vendedor para gestionar pedidos',
-            },
-            { status: 403 },
-          );
-        }
-      }
-    }
-
     // R21 (legacy path): resolve the tenant from the slug FIRST, then scope the
     // payment lookup by `businessId`. A `(dni, orderNumber)` pair owned by
     // another tenant must not be usable to mint that order's tracking token.
@@ -235,6 +189,38 @@ export async function POST(request: NextRequest) {
     });
     if (!business) {
       return neutralOrderNotFound();
+    }
+
+    // 🛡️ SECURITY: a seller must not be able to confirm their own orders here.
+    //
+    // The check asks "is this user a seller of THIS business", which is the only
+    // question that matters. Asking "does this user own some business, and does
+    // its slug happen to match" skipped every team member who owns no business
+    // of their own, and matched an arbitrary business when the user owned more
+    // than one.
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (user) {
+      const membership = await db.query.businessTeamMembers.findFirst({
+        where: and(
+          eq(businessTeamMembers.businessId, business.id),
+          eq(businessTeamMembers.userId, user.id),
+        ),
+        columns: { id: true },
+      });
+
+      if (membership || (await isBusinessOwner(business.id, user.id))) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Acceso denegado: usa el panel de vendedor para gestionar pedidos',
+          },
+          { status: 403 },
+        );
+      }
     }
 
     const payment = await db.query.payments.findFirst({
