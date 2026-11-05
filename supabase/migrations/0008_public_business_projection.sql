@@ -15,7 +15,13 @@
 -- alias resolution the public routes rely on, and leaves the table ungranted.
 -- `app_runtime` receives EXECUTE and nothing else.
 
-create or replace function public.public_business_by_slug(target_slug text)
+-- Dropped first so this file can be re-applied. 0009 changes the OUT
+-- parameters, and `create or replace` cannot change a return type, so on a
+-- database that already ran 0009 the replace below fails with 42P13. The grant
+-- is re-applied afterwards, in the same transaction.
+drop function if exists public.public_business_by_slug(text);
+
+create function public.public_business_by_slug(target_slug text)
 returns table (
   id uuid,
   slug text,
