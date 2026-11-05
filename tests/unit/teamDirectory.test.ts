@@ -6,7 +6,7 @@ vi.mock('@/core/database/client', () => ({
   db: { execute: (...args: unknown[]) => execute(...args) },
 }));
 
-import { resolveTeamDirectory } from '@/core/team/directory';
+import { resolveTeamDirectory, resolveUserTeams } from '@/core/team/directory';
 
 const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
 const OWNER_ID = '22222222-2222-4222-8222-222222222222';
@@ -95,5 +95,50 @@ describe('resolveTeamDirectory', () => {
     const result = await resolveTeamDirectory(BUSINESS_ID, MEMBER_ID);
 
     expect(result![0]!.id).toBe(MEMBER_ID);
+  });
+});
+
+// =====================================================
+// resolveUserTeams - the teams a user belongs to
+// =====================================================
+// `businesses` is revoked from the runtime role, so this read cannot join it
+// under the tenant. The list is served by a definer function scoped by user id;
+// these tests pin the mapping and, more importantly, that the id passed is the
+// signed-in user's and nothing else.
+
+describe('resolveUserTeams', () => {
+  beforeEach(() => {
+    execute.mockReset();
+  });
+
+  it('maps rows to the shape the list screen consumes', async () => {
+    execute.mockResolvedValue([
+      { business_id: BUSINESS_ID, name: 'Tienda A', slug: 'tienda-a', role: 'admin' },
+    ]);
+
+    const result = await resolveUserTeams(MEMBER_ID);
+
+    expect(result).toEqual([
+      { businessId: BUSINESS_ID, name: 'Tienda A', slug: 'tienda-a', role: 'admin' },
+    ]);
+  });
+
+  it('returns an empty list for a user with no teams', async () => {
+    execute.mockResolvedValue([]);
+
+    await expect(resolveUserTeams(MEMBER_ID)).resolves.toEqual([]);
+  });
+
+  it('queries by the user id and never by a business id', async () => {
+    execute.mockResolvedValue([]);
+
+    await resolveUserTeams(MEMBER_ID);
+
+    const { PgDialect } = await import('drizzle-orm/pg-core');
+    const { sql, params } = new PgDialect().sqlToQuery(execute.mock.calls[0][0] as never);
+
+    expect(sql).toContain('public.businesses_for_user');
+    expect(params).toContain(MEMBER_ID);
+    expect(params).not.toContain(BUSINESS_ID);
   });
 });

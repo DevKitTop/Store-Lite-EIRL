@@ -1,10 +1,9 @@
 'use server';
 
-import { db } from '@/core/database/client';
 import { businessTeamMembers } from '@/core/database/schema';
 import { withTenantContext } from '@/core/database/tenant';
 import type { TeamMember } from '@/core/team/directory';
-import { resolveTeamDirectory } from '@/core/team/directory';
+import { resolveTeamDirectory, resolveUserTeams } from '@/core/team/directory';
 import type { ActionState } from '@/types/actions';
 import { and, eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
@@ -146,21 +145,7 @@ export async function getUserTeams(): Promise<
   }
 
   try {
-    const memberships = await db.query.businessTeamMembers.findMany({
-      where: eq(businessTeamMembers.userId, user.id),
-      with: {
-        business: {
-          columns: { id: true, name: true, slug: true },
-        },
-      },
-    });
-
-    const teams = memberships.map((m) => ({
-      businessId: m.business.id,
-      name: m.business.name,
-      slug: m.business.slug,
-      role: m.role,
-    }));
+    const teams = await resolveUserTeams(user.id);
 
     return { success: true, teams };
   } catch (err) {
