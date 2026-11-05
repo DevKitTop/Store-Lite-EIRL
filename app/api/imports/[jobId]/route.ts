@@ -101,7 +101,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
     }
 
     // ─── Process chunk ──────────────────────────────────────
-    const results = await processRows(pendingRows, job.businessId);
+    const results = await withTenantContext({ sub: user.id }, (tenant) =>
+      processRows(pendingRows, job.businessId, tenant),
+    );
     const processedCount = results.filter((r) => !r.error).length;
     const errorCount = results.filter((r) => r.error).length;
 

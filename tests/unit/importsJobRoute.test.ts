@@ -190,7 +190,7 @@ describe('GET /api/imports/[jobId]', () => {
 
     const response = await callRoute();
 
-    expect(mocks.processRows).toHaveBeenCalledWith(rows, BUSINESS_ID);
+    expect(mocks.processRows).toHaveBeenCalledWith(rows, BUSINESS_ID, expect.anything());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(
       expect.objectContaining({
