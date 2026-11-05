@@ -13,16 +13,26 @@
  * between requests. Everything set here dies with the transaction instead of
  * leaking into the next request served by the same backend — the role included.
  *
+ * The transaction is opened by Drizzle itself (`db.transaction`). That detail
+ * is not style: the previous version wrapped the raw postgres.js transaction
+ * with `drizzle(tx)`, and Drizzle reads `client.options.parsers` when it
+ * builds a database, which a `TransactionSql` does not have. It compiled and
+ * every unit test passed because they mocked the transaction, but at runtime
+ * it threw before the first query reached the database.
+ *
+ * Nested calls (`tx.transaction` inside the callback) become SAVEPOINTs, so a
+ * caller can isolate one row of a batch without leaving the governed context.
+ *
  * The consequence worth knowing: a query inside this runner can only reach
  * tables granted to `app_runtime`. Tables the application still reads as the
  * owning role (public projections, system writes) must stay on the system
  * client; mixing them here fails closed with 42501.
  */
 
+import { sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import type { Sql, TransactionSql } from 'postgres';
-import { client, schema } from './client';
+import type { schema } from './client';
+import { db } from './client';
 
 export type TenantDb = PostgresJsDatabase<typeof schema>;
 
@@ -45,65 +55,35 @@ export function claimsPayload(claims?: TenantClaims | null): string | null {
   return JSON.stringify({ sub });
 }
 
-interface RunnerDeps<TTx extends TransactionSql> {
-  begin: (fn: (tx: TTx) => Promise<unknown>) => Promise<unknown>;
-  bind: (tx: TTx) => TenantDb;
-}
-
-/** Applies the claims as a transaction-local setting, before any query runs. */
-async function applyClaims(tx: TransactionSql, payload: string): Promise<void> {
-  await tx.unsafe(`select set_config('request.jwt.claims', $1, true)`, [payload]);
-}
-
 /**
- * Downgrades the transaction to the runtime role.
+ * Builds a tenant runner over a database whose `transaction` opens the scope.
  *
- * Without this the claims are recorded but nothing acts on them: the pooled
- * connection is an owner role with BYPASSRLS, so every policy is bypassed and
- * the isolation is decorative. `set local role` lives as long as the
- * transaction, so the connection returns to its login role when it ends and no
- * request inherits another one's authority.
- *
- * This runs first, before the claims: a role that is not the runtime role has
- * no reason to receive them.
+ * Taking the database as an argument is what makes the ordering testable: the
+ * suite injects a fake whose `transaction` records the statements, and asserts
+ * that the role is assumed before the claims are written.
  */
-async function assumeRuntimeRole(tx: TransactionSql): Promise<void> {
-  await tx.unsafe('set local role app_runtime');
-}
-
-/**
- * Builds a tenant runner over an injected transaction source, so the ordering
- * and the claims handling can be tested without a database.
- *
- * One cast: `postgres.js` types a transaction's return as `UnwrapPromiseArray`,
- * which is the same value for the scalar returns this runner allows.
- */
-export function createTenantRunner<TTx extends TransactionSql>(deps: RunnerDeps<TTx>) {
+export function createTenantRunner(database: TenantDb) {
   return function withTenant<R>(
     claims: TenantClaims | null | undefined,
-    fn: (db: TenantDb) => Promise<R>,
+    fn: (tenant: TenantDb) => Promise<R>,
   ): Promise<R> {
-    const run = deps.begin(async (tx) => {
-      await assumeRuntimeRole(tx);
+    return database.transaction(async (tx) => {
+      // Role first: a transaction that is not the runtime role has no reason
+      // to receive the claims.
+      await tx.execute(sql`set local role app_runtime`);
+
       const payload = claimsPayload(claims);
-      if (payload) await applyClaims(tx, payload);
-      return fn(deps.bind(tx));
-    });
-    return run as Promise<R>;
+      if (payload) {
+        await tx.execute(sql`select set_config('request.jwt.claims', ${payload}, true)`);
+      }
+
+      // A Drizzle transaction exposes the same query surface the runner
+      // promises; the cast keeps the narrower public type instead of widening
+      // it to the transaction's full generics.
+      return fn(tx as unknown as TenantDb);
+    }) as Promise<R>;
   };
 }
 
-/**
- * Drizzle is typed against `Sql`, while a transaction carries the same
- * query surface without the pool methods it must not expose. The cast keeps
- * that difference explicit instead of widening the type everywhere.
- */
-function asSql(tx: TransactionSql): Sql {
-  return tx as unknown as Sql;
-}
-
 /** Runs `fn` with the request claims applied to a dedicated transaction. */
-export const withTenantContext = createTenantRunner<TransactionSql>({
-  begin: (fn) => client.begin((tx) => fn(tx)),
-  bind: (tx) => drizzle(asSql(tx), { schema }),
-});
+export const withTenantContext = createTenantRunner(db);

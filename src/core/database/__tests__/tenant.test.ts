@@ -1,19 +1,46 @@
-import type { TransactionSql } from 'postgres';
 import { describe, expect, it, vi } from 'vitest';
 
 // `../client` builds a real pool at import time and throws without DATABASE_URL.
-// The runner is exercised through injected dependencies, so the module-level
+// The runner is exercised through an injected database, so the module-level
 // client is only needed to exist.
 vi.mock('../client', () => ({
-  client: { begin: vi.fn() },
+  client: { begin: vi.fn(), options: { parsers: {}, serializers: {} } },
+  db: { transaction: vi.fn() },
   schema: {},
 }));
 
 const { claimsPayload, createTenantRunner } = await import('../tenant');
 
-const fakeTx = (unsafe: ReturnType<typeof vi.fn>) => ({ unsafe }) as unknown as TransactionSql;
+/**
+ * Records what the runner asks of the transaction, in order.
+ *
+ * The runner used to wrap the raw postgres.js transaction with `drizzle(tx)`,
+ * which throws at runtime because a `TransactionSql` has no `options.parsers`.
+ * Every test here passed anyway, because they injected the dependencies and
+ * never exercised that call. The regression test at the bottom pins the shape
+ * that makes the failure impossible: the runner must take the transaction from
+ * the database, not build one from a raw client.
+ */
+function fakeDatabase() {
+  const order: string[] = [];
+  const execute = vi.fn(async (query: unknown) => {
+    const chunks = (query as { queryChunks?: unknown[] }).queryChunks ?? [];
+    const text = chunks
+      .map((chunk) => (chunk as { value?: string[] }).value?.join('') ?? '')
+      .join('');
+    order.push(text.includes('set local role') ? 'role' : 'claims');
+    return [];
+  });
+  const tx = { execute, transaction: vi.fn() };
+  const database = {
+    transaction: vi.fn(async (fn: (t: unknown) => Promise<unknown>) => {
+      order.push('begin');
+      return fn(tx);
+    }),
+  };
 
-const tenantDb = { tag: 'tenant-db' };
+  return { database, tx, execute, order };
+}
 
 describe('claimsPayload', () => {
   it('serialises the subject as request claims', () => {
@@ -42,59 +69,60 @@ describe('claimsPayload', () => {
 });
 
 describe('createTenantRunner', () => {
-  it('sets the claims transaction-locally before running the caller queries', async () => {
-    const unsafe = vi.fn().mockResolvedValue([]);
-    const order: string[] = [];
-    const begin = vi.fn(async (fn: (tx: TransactionSql) => Promise<unknown>) => {
-      order.push('begin');
-      return fn(fakeTx(unsafe));
-    });
+  it('assumes the runtime role before writing the claims', async () => {
+    const { database, execute, order } = fakeDatabase();
+    const withTenant = createTenantRunner(database as never);
 
-    const withTenant = createTenantRunner({
-      begin,
-      bind: () => tenantDb as never,
-    });
+    await withTenant({ sub: 'user-1' }, async () => 'done');
 
-    const result = await withTenant({ sub: 'user-1' }, async (db) => {
-      order.push('query');
-      expect(db).toBe(tenantDb);
+    expect(order).toEqual(['begin', 'role', 'claims']);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands the caller the same transaction it governs', async () => {
+    const { database, tx } = fakeDatabase();
+    const withTenant = createTenantRunner(database as never);
+
+    const result = await withTenant({ sub: 'user-1' }, async (tenant) => {
+      expect(tenant).toBe(tx);
       return 'done';
     });
 
     expect(result).toBe('done');
-    expect(begin).toHaveBeenCalledTimes(1);
-    expect(unsafe.mock.calls[0][0]).toBe('set local role app_runtime');
-    expect(unsafe).toHaveBeenCalledWith(`select set_config('request.jwt.claims', $1, true)`, [
-      '{"sub":"user-1"}',
-    ]);
-    expect(order).toEqual(['begin', 'query']);
+    expect(database.transaction).toHaveBeenCalledTimes(1);
   });
 
   it('runs without touching the settings when there is no subject', async () => {
-    const unsafe = vi.fn().mockResolvedValue([]);
-    const withTenant = createTenantRunner({
-      begin: async (fn) => fn(fakeTx(unsafe)),
-      bind: () => tenantDb as never,
-    });
+    const { database, order } = fakeDatabase();
+    const withTenant = createTenantRunner(database as never);
 
     await withTenant(null, async () => 'ok');
 
     // The role is assumed even without claims: the transaction must never run
     // with the login role's BYPASSRLS, not even for a query that filters nothing.
-    expect(unsafe).toHaveBeenCalledTimes(1);
-    expect(unsafe).toHaveBeenCalledWith('set local role app_runtime');
+    expect(order).toEqual(['begin', 'role']);
   });
 
   it('does not swallow a failure from the caller', async () => {
-    const withTenant = createTenantRunner({
-      begin: async (fn) => fn(fakeTx(vi.fn().mockResolvedValue([]))),
-      bind: () => tenantDb as never,
-    });
+    const { database } = fakeDatabase();
+    const withTenant = createTenantRunner(database as never);
 
     await expect(
       withTenant({ sub: 'user-1' }, async () => {
         throw new Error('query failed');
       }),
     ).rejects.toThrow('query failed');
+  });
+
+  it('takes the transaction from the database instead of wrapping a raw client', async () => {
+    // The regression guard. `createTenantRunner` receives a Drizzle database;
+    // it must never need a raw postgres.js transaction, because the Drizzle
+    // driver reads `client.options.parsers` and a `TransactionSql` has no such
+    // property. An argument that only exposes `transaction` is enough.
+    const { database } = fakeDatabase();
+    const withTenant = createTenantRunner(database as never);
+
+    await expect(withTenant({ sub: 'user-1' }, async () => 'ok')).resolves.toBe('ok');
+    expect(Object.keys(database)).toEqual(['transaction']);
   });
 });
