@@ -476,6 +476,55 @@ describe('settings actions — plan enforcement', () => {
       expect(result.success).toBe(true);
       expect(mockGetEntitlements).toHaveBeenCalledWith(BUSINESS_ID);
     });
+
+    // ============================================================
+    // The settings screen no longer receives the stored secret, so
+    // "empty" has to mean "keep the one already saved" instead of
+    // wiping it or failing.
+    // ============================================================
+
+    test('keeps the stored secret when the new one is empty', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+      mockDbQueryBusinessSettingsFindFirst.mockResolvedValue({
+        id: 'settings-1',
+        culqiSecretKey: 'iv:stored:tag',
+      });
+
+      const result = await updateCulqiCredentials(BUSINESS_ID, publicKey, '');
+
+      expect(result.success).toBe(true);
+      expect(mockDbUpdateSet).toHaveBeenCalledTimes(1);
+      const written = mockDbUpdateSet.mock.calls[0][0] as Record<string, unknown>;
+      expect(written.culqiPublicKey).toBe(publicKey);
+      expect(written).not.toHaveProperty('culqiSecretKey');
+    });
+
+    test('encrypts and stores a secret that was actually typed', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+      mockDbQueryBusinessSettingsFindFirst.mockResolvedValue({
+        id: 'settings-1',
+        culqiSecretKey: 'iv:stored:tag',
+      });
+
+      await updateCulqiCredentials(BUSINESS_ID, publicKey, secretKey);
+
+      const written = mockDbUpdateSet.mock.calls[0][0] as Record<string, unknown>;
+      expect(written.culqiSecretKey).toBe(`encrypted:${secretKey}`);
+    });
+
+    test('refuses an empty secret when nothing is stored yet', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+      mockDbQueryBusinessSettingsFindFirst.mockResolvedValue(null);
+
+      const result = await updateCulqiCredentials(BUSINESS_ID, publicKey, '');
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Configurá la secret key de Culqi para habilitar los pagos.',
+      });
+      expect(mockDbUpdateSet).not.toHaveBeenCalled();
+      expect(mockDbInsertValues).not.toHaveBeenCalled();
+    });
   });
 
   // ============================================================
