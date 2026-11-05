@@ -114,7 +114,7 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
           legalRepPhone: privateSettings.legalRepPhone,
           legalRepEmail: privateSettings.legalRepEmail,
           culqiPublicKey: privateSettings.culqiPublicKey,
-          culqiSecretKey: privateSettings.culqiSecretKey,
+          hasCulqiSecretKey: Boolean(privateSettings.culqiSecretKey),
           preferences: privateSettings.preferences,
         } satisfies SettingsBusiness
       }

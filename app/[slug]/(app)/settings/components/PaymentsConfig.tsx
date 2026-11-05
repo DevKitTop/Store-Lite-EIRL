@@ -11,6 +11,27 @@ import { useSnackbarFeedback } from '../hooks/useSettingsState';
 import styles from '../settings.module.css';
 import CulqiReadinessCheck from './CulqiReadinessCheck';
 
+const CREDENTIALS_ERROR = 'Las llaves deben tener el formato correcto (pk_... y sk_...)';
+
+/**
+ * An empty secret keeps the stored one: the screen never receives it, so
+ * retyping it just to change the public key would be theatre.
+ */
+function credentialValidationError(
+  publicKey: string,
+  secretKey: string,
+  hasStoredSecret: boolean,
+): string | null {
+  const secretIsValid = secretKey === '' || secretKey.startsWith('sk_');
+  const secretIsAvailable = secretKey !== '' || hasStoredSecret;
+
+  if (!publicKey.startsWith('pk_') || !secretIsValid || !secretIsAvailable) {
+    return CREDENTIALS_ERROR;
+  }
+
+  return null;
+}
+
 export function PaymentsConfig({
   business,
   entitlements,
@@ -25,12 +46,11 @@ export function PaymentsConfig({
   const [isPending, startTransition] = useTransition();
   const [showConfigDialog, setShowConfigDialog] = useState(false);
   const [publicKey, setPublicKey] = useState(business.culqiPublicKey || '');
-  const [secretKey, setSecretKey] = useState(business.culqiSecretKey || '');
+  const [secretKey, setSecretKey] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   // Estados para visibilidad de llaves
   const [showPublicKeyPreview, setShowPublicKeyPreview] = useState(false);
-  const [showSecretKeyPreview, setShowSecretKeyPreview] = useState(false);
   const [showSecretKeyInput, setShowSecretKeyInput] = useState(false);
 
   const router = useRouter();
@@ -43,8 +63,13 @@ export function PaymentsConfig({
   } = useSnackbarFeedback();
 
   const handleSave = () => {
-    if (!publicKey.startsWith('pk_') || !secretKey.startsWith('sk_')) {
-      setError('Las llaves deben tener el formato correcto (pk_... y sk_...)');
+    const validationError = credentialValidationError(
+      publicKey,
+      secretKey,
+      business.hasCulqiSecretKey,
+    );
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
@@ -68,7 +93,7 @@ export function PaymentsConfig({
     return `${prefix}••••••••${suffix}`;
   };
 
-  const isConfigured = business.culqiPublicKey && business.culqiSecretKey;
+  const isConfigured = Boolean(business.culqiPublicKey) && business.hasCulqiSecretKey;
   const isTestKeys = business.culqiPublicKey?.startsWith('pk_test_');
 
   const isPremiumPlan = ['lite_pago', 'lite_plus'].includes(entitlements.plan);
@@ -202,20 +227,10 @@ export function PaymentsConfig({
                   <div>
                     <div className={styles.paymentKeyLabel}>Secret Key</div>
                     <div className={styles.paymentKeyValue}>
-                      {showSecretKeyPreview
-                        ? business.culqiSecretKey
-                        : maskKey(business.culqiSecretKey)}
+                      {business.hasCulqiSecretKey
+                        ? 'Configurada · no se muestra'
+                        : 'Sin configurar'}
                     </div>
-                  </div>
-                  <div className={styles.paymentKeyActions}>
-                    <IconButton
-                      aria-label={showSecretKeyPreview ? 'Ocultar' : 'Mostrar'}
-                      onClick={() => setShowSecretKeyPreview(!showSecretKeyPreview)}
-                    >
-                      <Icon size={20}>
-                        {showSecretKeyPreview ? 'visibility_off' : 'visibility'}
-                      </Icon>
-                    </IconButton>
                   </div>
                 </div>
               </div>
@@ -451,9 +466,11 @@ export function PaymentsConfig({
               label="Secret Key"
               value={secretKey}
               onInput={(e: any) => setSecretKey(e.target.value)}
-              placeholder="sk_live_..."
+              placeholder={
+                business.hasCulqiSecretKey ? 'Dejala vacía para mantener la actual' : 'sk_live_...'
+              }
               type={showSecretKeyInput ? 'text' : 'password'}
-              error={!!error && !secretKey.startsWith('sk_')}
+              error={!!error && secretKey !== '' && !secretKey.startsWith('sk_')}
               disabled={isPending}
             >
               <Icon slot="leading-icon">lock</Icon>
