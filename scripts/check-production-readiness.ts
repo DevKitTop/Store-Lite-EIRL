@@ -76,6 +76,14 @@ export function signatureKey(signature: string): string {
 export interface ObservedState {
   /** null when the role does not exist. */
   role: { bypassRls: boolean } | null;
+  /**
+   * Whether the login role this check runs as can `set role app_runtime`.
+   *
+   * Migrations create the role; they do not, by themselves, let the
+   * application assume it. Without membership every governed request fails
+   * with `permission denied to set role` before any policy is evaluated.
+   */
+  canAssumeRuntimeRole: boolean;
   rlsByTable: Record<string, boolean>;
   policyCountByTable: Record<string, number>;
   grantedTables: string[];
@@ -103,6 +111,12 @@ export function evaluateReadiness(observed: ObservedState): ReadinessResult {
     failures.push('role app_runtime does not exist (migration 0005 not applied)');
   } else if (observed.role.bypassRls) {
     failures.push('role app_runtime can bypass RLS; every policy would be decorative');
+  }
+
+  if (observed.role && !observed.canAssumeRuntimeRole) {
+    failures.push(
+      'the login role cannot set role app_runtime; every governed request would fail (migration 0017)',
+    );
   }
 
   for (const table of GOVERNED_TABLES) {
@@ -158,7 +172,10 @@ export function evaluateReadiness(observed: ObservedState): ReadinessResult {
 
 async function observe(sql: postgres.Sql): Promise<ObservedState> {
   const [role] = await sql<{ rolbypassrls: boolean }[]>`
-    select rolbypassrls from pg_roles where rolname = 'app_runtime'
+    select rolbypassrls from pg_roles where rolname = 'app_runtime'  `;
+
+  const [assume] = await sql<{ ok: boolean }[]>`
+    select pg_has_role(current_user, 'app_runtime', 'member') as ok
   `;
 
   const rlsRows = await sql<{ relname: string; relrowsecurity: boolean }[]>`
@@ -196,6 +213,7 @@ async function observe(sql: postgres.Sql): Promise<ObservedState> {
 
   return {
     role: role ? { bypassRls: role.rolbypassrls } : null,
+    canAssumeRuntimeRole: assume?.ok === true,
     rlsByTable: Object.fromEntries(rlsRows.map((row) => [row.relname, row.relrowsecurity])),
     policyCountByTable: Object.fromEntries(policyRows.map((row) => [row.tablename, row.n])),
     grantedTables: grantRows.map((row) => row.table_name),

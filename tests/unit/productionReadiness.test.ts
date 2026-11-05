@@ -46,6 +46,7 @@ const FUNCTIONS = [
 function readyState(overrides: Partial<ObservedState> = {}): ObservedState {
   return {
     role: { bypassRls: false },
+    canAssumeRuntimeRole: true,
     rlsByTable: Object.fromEntries(GOVERNED_TABLES.map((table) => [table, true])),
     policyCountByTable: Object.fromEntries(GOVERNED_TABLES.map((table) => [table, 1])),
     grantedTables: [...GOVERNED_TABLES],
@@ -142,6 +143,16 @@ describe('evaluateReadiness', () => {
 
     expect(result.ok).toBe(false);
     expect(result.failures).toContain('is_business_member(uuid, uuid): function does not exist');
+  });
+
+  it('fails when the login role cannot assume app_runtime', () => {
+    // Creating the role is not the same as letting the application use it.
+    // Production failed exactly here: every governed request was denied before
+    // any policy ran.
+    const result = evaluateReadiness(readyState({ canAssumeRuntimeRole: false }));
+
+    expect(result.ok).toBe(false);
+    expect(result.failures.join(' ')).toMatch(/cannot set role app_runtime/);
   });
 
   it('fails when ENCRYPTION_KEY is missing, because the first encrypt would throw', () => {
