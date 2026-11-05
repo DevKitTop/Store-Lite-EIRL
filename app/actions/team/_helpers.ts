@@ -1,6 +1,7 @@
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
-import { businessTeamMembers, businesses } from '@/core/database/schema';
+import { businessTeamMembers } from '@/core/database/schema';
+import { isBusinessOwner } from '@/lib/permissions/checkPermission';
 import { createServerClient } from '@supabase/ssr';
 import { eq } from 'drizzle-orm';
 import { cookies } from 'next/headers';
@@ -73,12 +74,9 @@ export async function assertOwnership(
     return { userId: null, error: 'No autenticado.' };
   }
 
-  const business = await db.query.businesses.findFirst({
-    where: eq(businesses.id, businessId),
-    columns: { ownerId: true },
-  });
-
-  if (!business || business.ownerId !== user.id) {
+  // Ownership comes from the definer function: the business row is not readable
+  // through a helper any more, and this check must not be the exception.
+  if (!(await isBusinessOwner(businessId, user.id))) {
     return { userId: user.id, error: 'No tienes permiso para realizar esta acción.' };
   }
 

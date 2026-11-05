@@ -2,6 +2,7 @@
 
 import { db } from '@/core/database/client';
 import { businessTeamMembers } from '@/core/database/schema';
+import { withTenantContext } from '@/core/database/tenant';
 import type { TeamMember } from '@/core/team/directory';
 import { resolveTeamDirectory } from '@/core/team/directory';
 import type { ActionState } from '@/types/actions';
@@ -68,14 +69,16 @@ export async function removeTeamMember(
   }
 
   try {
-    await db
-      .delete(businessTeamMembers)
-      .where(
-        and(
-          eq(businessTeamMembers.businessId, businessId),
-          eq(businessTeamMembers.userId, memberUserId),
+    await withTenantContext({ sub: ownership.userId }, async (tenant) =>
+      tenant
+        .delete(businessTeamMembers)
+        .where(
+          and(
+            eq(businessTeamMembers.businessId, businessId),
+            eq(businessTeamMembers.userId, memberUserId),
+          ),
         ),
-      );
+    );
 
     revalidatePath(`/${businessId}/settings`, 'page');
 
@@ -107,14 +110,16 @@ export async function leaveTeam(businessId: string): Promise<ActionState> {
   }
 
   try {
-    await db
-      .delete(businessTeamMembers)
-      .where(
-        and(
-          eq(businessTeamMembers.businessId, businessId),
-          eq(businessTeamMembers.userId, user.id),
+    await withTenantContext({ sub: user.id }, async (tenant) =>
+      tenant
+        .delete(businessTeamMembers)
+        .where(
+          and(
+            eq(businessTeamMembers.businessId, businessId),
+            eq(businessTeamMembers.userId, user.id),
+          ),
         ),
-      );
+    );
 
     revalidatePath('/', 'page');
 
