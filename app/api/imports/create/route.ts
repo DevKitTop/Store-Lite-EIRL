@@ -161,7 +161,9 @@ export async function POST(request: Request) {
       orderBy: (rows, { asc }) => [asc(rows.rowNumber)],
     });
 
-    const results = await processRows(pendingRows, businessId);
+    const results = await withTenantContext({ sub: user.id }, (tenant) =>
+      processRows(pendingRows, businessId, tenant),
+    );
     const processedCount = results.filter((r) => !r.error).length;
     const errorCount = results.filter((r) => r.error).length;
 
