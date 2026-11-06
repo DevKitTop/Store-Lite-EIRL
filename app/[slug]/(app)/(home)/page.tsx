@@ -112,22 +112,28 @@ export default async function BusinessPage({ params }: Props) {
     redirect(replaceSlugInPath(`/${slug}`, slug, business.slug));
   }
 
-  const categories = await db.query.productCategories.findMany({
-    where: eq(productCategories.businessId, business.id),
-    orderBy: (categories, { asc }) => [asc(categories.displayOrder)],
-  });
-  const settings = await db.query.businessSettings.findFirst({
-    where: eq(businessSettings.businessId, business.id),
-    columns: {
-      preferences: true,
-      themeMode: true,
-    },
-  });
-
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Everything below depends only on the business id, so it runs as one wave
+  // instead of one round trip after another. The session read joins the wave
+  // because `auth.getUser` is already a network call for signed-in visitors.
+  const [categories, settings, entitlements, trustSignal, user] = await Promise.all([
+    db.query.productCategories.findMany({
+      where: eq(productCategories.businessId, business.id),
+      orderBy: (categories, { asc }) => [asc(categories.displayOrder)],
+    }),
+    db.query.businessSettings.findFirst({
+      where: eq(businessSettings.businessId, business.id),
+      columns: {
+        preferences: true,
+        themeMode: true,
+      },
+    }),
+    getBusinessEntitlements(business.id),
+    getBusinessTrustScore(business.id),
+    createClient().then(async (supabase) => {
+      const { data } = await supabase.auth.getUser();
+      return data.user;
+    }),
+  ]);
 
   const isLoggedIn = !!user;
 
@@ -137,7 +143,6 @@ export default async function BusinessPage({ params }: Props) {
   // Consideramos staff a quien tenga acceso de gestión (Dueño o Miembro con algún permiso)
   const isStaff = isOwner || permissions.length > 0;
 
-  const entitlements = await getBusinessEntitlements(business.id);
   const { hasPaymentGateway, chatEnabled } = entitlements;
 
   const jsonLd = buildBusinessJsonLd(business);
@@ -168,8 +173,8 @@ export default async function BusinessPage({ params }: Props) {
 
   // DS 011 customer-facing trust signal: same data source as the complaint
   // banner (getBusinessTrustScore). Returns null when ENABLE_AUTO_DEACTIVATION
-  // is off, which ALSO gates the badge — mirroring the banner's gating.
-  const trustSignal = await getBusinessTrustScore(business.id);
+  // is off, which ALSO gates the badge — mirroring the banner's gating. It is
+  // part of the parallel wave above so it costs no extra round trip.
 
   return (
     <>
