@@ -12,9 +12,10 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 // ── Mocks ────────────────────────────────────────────
 // Must be before module imports (vi.mock is hoisted)
 
-const { mockBusinessFindFirst, mockSendEmail } = vi.hoisted(() => ({
+const { mockBusinessFindFirst, mockSendEmail, mockGetSignedTicketUrl } = vi.hoisted(() => ({
   mockBusinessFindFirst: vi.fn(),
   mockSendEmail: vi.fn(),
+  mockGetSignedTicketUrl: vi.fn(),
 }));
 
 vi.mock('@/core/database/client', () => ({
@@ -27,6 +28,12 @@ vi.mock('@/core/database/client', () => ({
 
 vi.mock('@/lib/email/resend', () => ({
   sendEmail: mockSendEmail,
+}));
+
+// The receipt lives in a private bucket, so the link inside the email has to be
+// signed at send time; the raw stored value would answer 400 from Storage.
+vi.mock('@/lib/storage/signedTicket', () => ({
+  getSignedTicketUrl: mockGetSignedTicketUrl,
 }));
 
 import { sendPlanPurchaseConfirmationEmail } from '@/lib/email/planEmails';
@@ -45,7 +52,7 @@ function makePlanPayment(overrides: Record<string, unknown> = {}) {
     amountTotal: '79.00',
     ticketSeries: 'B001',
     ticketCorrelative: 42,
-    ticketUrl: 'https://example.com/tickets/boleta.png',
+    ticketUrl: 'https://proj.supabase.co/storage/v1/object/public/tickets/boleta.png',
     planEndDate: new Date('2026-09-16T23:59:59Z'),
     ...overrides,
   };
@@ -53,9 +60,16 @@ function makePlanPayment(overrides: Record<string, unknown> = {}) {
 
 // ── Suite ────────────────────────────────────────────
 
+const STORED_TICKET_URL = 'https://proj.supabase.co/storage/v1/object/public/tickets/boleta.png';
+const OTHER_BUCKET_TICKET_URL =
+  'https://proj.supabase.co/storage/v1/object/public/tickets_plans/boleta.png';
+const SIGNED_TICKET_URL =
+  'https://cdn.example.test/storage/v1/object/sign/tickets/boleta.png?token=abc';
+
 describe('sendPlanPurchaseConfirmationEmail', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetSignedTicketUrl.mockResolvedValue(SIGNED_TICKET_URL);
     mockBusinessFindFirst.mockResolvedValue({ slug: 'mi-tienda', name: 'Mi Tienda' });
   });
 
@@ -76,6 +90,26 @@ describe('sendPlanPurchaseConfirmationEmail', () => {
     expect(html).toContain('B001-00000042');
     expect(html).toContain('S/ 79.00');
     expect(html).toContain('Lite Plus');
+  });
+
+  test('links the receipt through a signed URL, never the stored public one', async () => {
+    await sendPlanPurchaseConfirmationEmail(makePlanPayment(), 'biz_123');
+
+    const html = mockSendEmail.mock.calls[0][0].html;
+    expect(mockGetSignedTicketUrl).toHaveBeenCalledWith(STORED_TICKET_URL);
+    expect(html).toContain(SIGNED_TICKET_URL);
+    expect(html).not.toContain(STORED_TICKET_URL);
+  });
+
+  test('links a receipt from another bucket as stored, without signing it', async () => {
+    await sendPlanPurchaseConfirmationEmail(
+      makePlanPayment({ ticketUrl: OTHER_BUCKET_TICKET_URL }),
+      'biz_123',
+    );
+
+    const html = mockSendEmail.mock.calls[0][0].html;
+    expect(mockGetSignedTicketUrl).not.toHaveBeenCalled();
+    expect(html).toContain(OTHER_BUCKET_TICKET_URL);
   });
 
   test('renders the plan end date line prominently', async () => {
