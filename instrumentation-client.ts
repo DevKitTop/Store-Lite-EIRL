@@ -34,6 +34,7 @@ Sentry.init({
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
 
 // ─── PostHog ───────────────────────────────────────────────────────────────
+import { buildPostHogInitOptions } from '@/shared/analytics/posthogInitOptions';
 import posthog from 'posthog-js';
 
 const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
@@ -47,13 +48,5 @@ if (!POSTHOG_KEY) {
     );
   }
 } else {
-  posthog.init(POSTHOG_KEY, {
-    // In dev: use direct URL to avoid proxy/rewrite issues causing JSON parse errors.
-    // In prod: use the /ingest proxy so ad-blockers don't block posthog.com domains.
-    api_host: isDev ? POSTHOG_HOST || 'https://us.i.posthog.com' : '/ingest',
-    ui_host: POSTHOG_HOST || 'https://us.posthog.com',
-    defaults: '2026-01-30',
-    capture_exceptions: true,
-    debug: isDev,
-  });
+  posthog.init(POSTHOG_KEY, buildPostHogInitOptions({ isDev, host: POSTHOG_HOST }));
 }
