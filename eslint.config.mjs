@@ -43,6 +43,8 @@ const eslintConfig = defineConfig([
     'public/**',
     'coverage/**',
     'scripts/**',
+    // k6 scenarios run in the k6 runtime (goja), not in Node or the browser.
+    'tests/performance/**',
   ]),
 
   // Test files — relaxed rules

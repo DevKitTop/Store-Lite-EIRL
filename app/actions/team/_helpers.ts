@@ -1,19 +1,10 @@
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
-import { businessTeamMembers, businesses } from '@/core/database/schema';
+import { businessTeamMembers } from '@/core/database/schema';
+import { isBusinessOwner } from '@/lib/permissions/checkPermission';
 import { createServerClient } from '@supabase/ssr';
 import { eq } from 'drizzle-orm';
 import { cookies } from 'next/headers';
-
-export interface TeamMember {
-  id: string;
-  userId: string;
-  email: string | null;
-  fullName: string | null;
-  avatarUrl: string | null;
-  role: string;
-  joinedAt: Date;
-}
 
 export interface InvitationInfo {
   code: string;
@@ -41,19 +32,20 @@ export async function createUserAuthClient() {
 }
 
 /**
- * Generate a random invitation code (XXXX-XXXX format)
+ * Generate a random invitation code (XXXX-XXXX format).
+ *
+ * The code is a capability: whoever holds it can join the team. That is why the
+ * randomness comes from `crypto`, not `Math.random`, which is predictable by
+ * design and unfit for anything an attacker must not guess.
+ *
+ * The alphabet has exactly 32 characters, so `byte % 32` is uniform over a byte
+ * and needs no rejection sampling.
  */
 export function generateCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No O, 0, 1, I to avoid confusion
-  let result = '';
-  for (let i = 0; i < 4; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  result += '-';
-  for (let i = 0; i < 4; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  const chars8 = Array.from(bytes, (byte) => chars.charAt(byte % chars.length));
+  return `${chars8.slice(0, 4).join('')}-${chars8.slice(4).join('')}`;
 }
 
 /**
@@ -83,12 +75,9 @@ export async function assertOwnership(
     return { userId: null, error: 'No autenticado.' };
   }
 
-  const business = await db.query.businesses.findFirst({
-    where: eq(businesses.id, businessId),
-    columns: { ownerId: true },
-  });
-
-  if (!business || business.ownerId !== user.id) {
+  // Ownership comes from the definer function: the business row is not readable
+  // through a helper any more, and this check must not be the exception.
+  if (!(await isBusinessOwner(businessId, user.id))) {
     return { userId: user.id, error: 'No tienes permiso para realizar esta acción.' };
   }
 

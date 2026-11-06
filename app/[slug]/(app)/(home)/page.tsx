@@ -1,5 +1,6 @@
 import { getBusinessTrustScore } from '@/actions/business/getBusinessTrustScore';
-import { replaceSlugInPath, resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
+import { replaceSlugInPath } from '@/core/business/slug';
 import { db } from '@/core/database/client';
 import { businessSettings, productCategories } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
@@ -16,7 +17,7 @@ import { buildHomeBreadcrumbs } from '@/shared/seo/buildStorefrontBreadcrumbs';
 import { buildStoreDescription, buildStoreTitle } from '@/shared/seo/buildStorefrontMeta';
 import { toSafeJsonLd } from '@/shared/utils/safeJsonLd';
 import { getCanonicalBusinessUrl } from '@/shared/utils/url';
-import type { Business } from '@/types/business';
+import type { PublicBusiness } from '@/types/business';
 import { eq } from 'drizzle-orm';
 import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
@@ -26,7 +27,7 @@ interface Props {
   params: Promise<{ slug: string }>;
 }
 
-function buildBusinessJsonLd(business: Business) {
+function buildBusinessJsonLd(business: PublicBusiness) {
   return {
     '@context': 'https://schema.org',
     '@type': 'LocalBusiness',
@@ -53,7 +54,7 @@ function buildBusinessJsonLd(business: Business) {
   };
 }
 
-function buildBusinessGeoMeta(business: Business) {
+function buildBusinessGeoMeta(business: PublicBusiness) {
   return {
     ...(business.geoRegion && { 'geo.region': business.geoRegion }),
     ...(business.geoPlacename && { 'geo.placename': business.geoPlacename }),
@@ -68,7 +69,7 @@ function buildBusinessGeoMeta(business: Business) {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     return {
@@ -101,15 +102,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function BusinessPage({ params }: Props) {
   const { slug } = await params;
-  const resolvedBusiness = await resolveBusinessSlug(slug);
-  const business = resolvedBusiness?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     return notFound();
   }
 
-  if (resolvedBusiness.matchedAlias) {
-    redirect(replaceSlugInPath(`/${slug}`, slug, resolvedBusiness.canonicalSlug));
+  if (business.slug !== slug) {
+    redirect(replaceSlugInPath(`/${slug}`, slug, business.slug));
   }
 
   const categories = await db.query.productCategories.findMany({

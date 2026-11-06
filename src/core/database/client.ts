@@ -43,6 +43,14 @@ export const client =
 if (process.env.NODE_ENV !== 'production') globalForDb.client = client;
 
 // Initialize Drizzle with schema
+//
+// ⚠️ This is the SYSTEM client: the connection role carries BYPASSRLS, so
+// row-level security is never evaluated on these queries. It is the right
+// client for work that legitimately spans tenants (webhooks, cron,
+// reconciliation) and the wrong one for anything acting on behalf of a single
+// business or customer. Tenant-scoped work goes through
+// `withTenantContext` in `./tenant`, which sets the request claims inside a
+// transaction so the policies apply once the connection is switched.
 export const db = drizzle(client, { schema });
 
 // Export schema for use in queries

@@ -1,7 +1,7 @@
 'use server';
 
-import { db } from '@/core/database/client';
 import { businessTeamMembers, businessTeamRoles } from '@/core/database/schema';
+import { withTenantContext } from '@/core/database/tenant';
 import type { ActionState } from '@/types/actions';
 import { and, eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
@@ -33,15 +33,17 @@ export async function updateMemberRole(
   }
 
   try {
-    await db
-      .update(businessTeamMembers)
-      .set({ role: newRole })
-      .where(
-        and(
-          eq(businessTeamMembers.businessId, businessId),
-          eq(businessTeamMembers.userId, memberUserId),
+    await withTenantContext({ sub: ownership.userId }, async (tenant) =>
+      tenant
+        .update(businessTeamMembers)
+        .set({ role: newRole })
+        .where(
+          and(
+            eq(businessTeamMembers.businessId, businessId),
+            eq(businessTeamMembers.userId, memberUserId),
+          ),
         ),
-      );
+    );
 
     revalidatePath(`/${businessId}/settings`, 'page');
 
@@ -97,15 +99,17 @@ export async function updateMemberPermissions(
   }
 
   try {
-    await db
-      .update(businessTeamMembers)
-      .set({ customPermissions: permissions })
-      .where(
-        and(
-          eq(businessTeamMembers.businessId, businessId),
-          eq(businessTeamMembers.userId, memberUserId),
+    await withTenantContext({ sub: ownership.userId }, async (tenant) =>
+      tenant
+        .update(businessTeamMembers)
+        .set({ customPermissions: permissions })
+        .where(
+          and(
+            eq(businessTeamMembers.businessId, businessId),
+            eq(businessTeamMembers.userId, memberUserId),
+          ),
         ),
-      );
+    );
 
     revalidatePath(`/${businessId}/settings`, 'page');
 
@@ -142,27 +146,30 @@ export async function updateRolePermissions(
   }
 
   try {
-    // Upsert the role permissions
-    const existingRole = await db.query.businessTeamRoles.findFirst({
-      where: and(eq(businessTeamRoles.businessId, businessId), eq(businessTeamRoles.role, role)),
-    });
-
-    if (existingRole) {
-      await db
-        .update(businessTeamRoles)
-        .set({
-          permissions: permissions,
-          updatedAt: new Date(),
-        })
-        .where(eq(businessTeamRoles.id, existingRole.id));
-    } else {
-      await db.insert(businessTeamRoles).values({
-        businessId,
-        role,
-        permissions: permissions,
-        isDefault: true,
+    // Read and write in one tenant transaction: the role row is resolved and
+    // written under the same policy that guards the write itself.
+    await withTenantContext({ sub: ownership.userId }, async (tenant) => {
+      const existingRole = await tenant.query.businessTeamRoles.findFirst({
+        where: and(eq(businessTeamRoles.businessId, businessId), eq(businessTeamRoles.role, role)),
       });
-    }
+
+      if (existingRole) {
+        await tenant
+          .update(businessTeamRoles)
+          .set({
+            permissions: permissions,
+            updatedAt: new Date(),
+          })
+          .where(eq(businessTeamRoles.id, existingRole.id));
+      } else {
+        await tenant.insert(businessTeamRoles).values({
+          businessId,
+          role,
+          permissions: permissions,
+          isDefault: true,
+        });
+      }
+    });
 
     revalidatePath(`/${businessId}/settings`, 'page');
 
@@ -193,15 +200,17 @@ export async function removeMemberPermissionsOverride(
   }
 
   try {
-    await db
-      .update(businessTeamMembers)
-      .set({ customPermissions: null })
-      .where(
-        and(
-          eq(businessTeamMembers.businessId, businessId),
-          eq(businessTeamMembers.userId, memberUserId),
+    await withTenantContext({ sub: ownership.userId }, async (tenant) =>
+      tenant
+        .update(businessTeamMembers)
+        .set({ customPermissions: null })
+        .where(
+          and(
+            eq(businessTeamMembers.businessId, businessId),
+            eq(businessTeamMembers.userId, memberUserId),
+          ),
         ),
-      );
+    );
 
     revalidatePath(`/${businessId}/settings`, 'page');
 

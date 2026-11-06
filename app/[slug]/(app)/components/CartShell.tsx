@@ -1,6 +1,6 @@
 'use client';
 
-import type { Business } from '@/types/business';
+import type { PublicBusiness } from '@/types/business';
 import { useState } from 'react';
 import { BasicContactDialog } from './BasicContactDialog';
 import { CartDrawer } from './CartDrawer';
@@ -14,7 +14,7 @@ interface CartShellProps {
   businessAddress?: string;
   businessCity?: string;
   businessLogoUrl?: string;
-  business: Business;
+  business: PublicBusiness;
 }
 
 export function CartShell({

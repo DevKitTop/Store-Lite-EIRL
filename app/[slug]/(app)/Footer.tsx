@@ -1,13 +1,13 @@
 'use client';
 
 import { Icon } from '@/shared/components/ui/data-display/Icon';
-import type { Business } from '@/types/business';
+import type { PublicBusiness } from '@/types/business';
 import Image from 'next/image';
 import Link from 'next/link';
 import styles from './Footer.module.css';
 
 interface FooterProps {
-  business: Business;
+  business: PublicBusiness;
 }
 
 const STORE_TYPE_LABELS: Record<string, string> = {
@@ -146,7 +146,7 @@ export function Footer({ business }: FooterProps) {
   );
 }
 
-function buildAddress(business: Business): string | null {
+function buildAddress(business: PublicBusiness): string | null {
   const parts: string[] = [];
   if (business.address) parts.push(business.address);
   if (business.distrito) parts.push(business.distrito);

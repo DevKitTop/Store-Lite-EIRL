@@ -23,8 +23,11 @@ const { mockRedirect, mockNotFound } = vi.hoisted(() => {
 vi.mock('next/navigation', () => ({ notFound: mockNotFound, redirect: mockRedirect }));
 
 const mockResolveBusinessSlug = vi.hoisted(() => vi.fn());
+vi.mock('@/core/business/publicSlug', () => ({
+  resolvePublicBusinessRoute: mockResolveBusinessSlug,
+}));
 vi.mock('@/core/business/slug', () => ({
-  resolveBusinessSlug: mockResolveBusinessSlug,
+  replaceSlugInPath: (path: string) => path,
 }));
 
 const mockGetBusinessEntitlements = vi.hoisted(() => vi.fn());

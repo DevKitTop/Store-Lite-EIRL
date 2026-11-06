@@ -1,4 +1,5 @@
-import { replaceSlugInPath, resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
+import { replaceSlugInPath } from '@/core/business/slug';
 import { db } from '@/core/database/client';
 import {
   businessSubscriptions,
@@ -15,6 +16,7 @@ import { isValidPaymentStatus } from '@/core/orders/isValidPaymentStatus';
 import type { OrderStatusValue } from '@/core/orders/orderStatus';
 import { ORDER_STATUS } from '@/core/orders/orderStatus';
 import { hasLockingPayments } from '@/core/orders/paymentGuards';
+import { getSignedTicketUrls } from '@/lib/storage/signedTicket';
 import { and, count, desc, eq, gt, gte, inArray, lt, lte, sql, sum } from 'drizzle-orm';
 import { notFound, redirect } from 'next/navigation';
 
@@ -50,7 +52,7 @@ export default async function Dashboard({ params, searchParams }: DashboardProps
   const lastUpdatedAt = new Date().toISOString();
 
   // 1. Fetch business core data
-  const resolvedBusiness = await resolveBusinessSlug(slug);
+  const resolvedBusiness = await resolvePublicBusinessRoute(slug);
   const business = resolvedBusiness?.business;
 
   if (!business) {
@@ -437,7 +439,13 @@ export default async function Dashboard({ params, searchParams }: DashboardProps
   // NOTE: trackingToken is NOT exposed to the seller dashboard.
   // It is only used internally by server actions (fetched directly from DB).
   // This prevents sellers from accessing the customer order portal.
-  const formattedOrders = recentOrdersData.map((order) => {
+  // The `tickets` bucket is private: sign every receipt in a single storage call
+  // instead of one request per order.
+  const signedTicketUrls = await getSignedTicketUrls(
+    recentOrdersData.map((order) => order.ticketImageUrl),
+  );
+
+  const formattedOrders = recentOrdersData.map((order, orderIndex) => {
     const formatDeadline = order.finalizationDeadline
       ? order.finalizationDeadline instanceof Date
         ? order.finalizationDeadline.toISOString()
@@ -472,7 +480,7 @@ export default async function Dashboard({ params, searchParams }: DashboardProps
       // ⚠️ trackingToken NO se envía al cliente — se obtiene directo de la DB en server actions
       // ⚠️ buyerDni se enmascara para evitar que el seller acceda al portal del customer
       maskedDni: maskDni(order.buyerDni),
-      ticketImageUrl: order.ticketImageUrl,
+      ticketImageUrl: signedTicketUrls.at(orderIndex) ?? null,
       finalizationDeadline: formatDeadline,
       completedAt: formatCompleted,
       // ⚠️ metadata NO incluye buyerDni — se sanitiza para seguridad

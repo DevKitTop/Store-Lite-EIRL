@@ -1,7 +1,7 @@
 'use client';
 
 import type { StorefrontColorScheme } from '@/core/storefront';
-import type { Business } from '@/types/business';
+import type { PublicBusiness } from '@/types/business';
 import { Footer } from '../Footer';
 import { CartDrawer } from './CartDrawer';
 import { FloatingCartButton } from './FloatingCartButton';
@@ -9,7 +9,7 @@ import { FloatingChatFab } from './FloatingChatFab';
 import { ThemeToggle } from './ThemeToggle';
 
 interface CustomerFloatingUiProps {
-  business: Business;
+  business: PublicBusiness;
   paymentsEnabled: boolean;
   culqiPublicKey?: string;
   chatEnabled: boolean;

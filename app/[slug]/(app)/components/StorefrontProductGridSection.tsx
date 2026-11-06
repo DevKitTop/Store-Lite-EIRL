@@ -3,7 +3,7 @@
 import type { ProductGridSection, StorefrontTheme } from '@/core/storefront';
 import type { BrandFilterOption } from '@/features/products/hooks/useProductFilters';
 import type { ProductWithRelations } from '@/features/products/types/productTypes';
-import type { Business } from '@/types/business';
+import type { PublicBusiness } from '@/types/business';
 import type { ProductCategory } from '@/types/product';
 import type { Dispatch, SetStateAction } from 'react';
 import Feed from '../../../(main)/home/Feed';
@@ -19,7 +19,7 @@ const PAGE_SIZE = 12;
 
 export interface StorefrontProductGridSectionProps {
   section: ProductGridSection;
-  business: Business;
+  business: PublicBusiness;
   categories: ProductCategory[];
   activeTab: string;
   onTabChange: (tab: string) => void;

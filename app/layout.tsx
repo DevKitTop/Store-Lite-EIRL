@@ -3,6 +3,7 @@ import MetaPixelProvider from '@/components/meta/MetaPixelProvider';
 import { env } from '@/config/env';
 import { AuthProvider } from '@/features/auth';
 import { MaterialWebInit } from '@/lib/material-design/MaterialWebInit';
+import { InlineScript } from '@/shared/components/InlineScript';
 import { ThemeBoot } from '@/shared/components/ThemeBoot';
 import { WebVitalsReporter } from '@/shared/components/WebVitalsReporter';
 import { ThemeProvider } from '@/shared/context/ThemeContext';
@@ -98,6 +99,27 @@ export const metadata: Metadata = {
 
 import { headers } from 'next/headers';
 
+/**
+ * Runs while the browser parses `<head>`, before the first paint, so the stored
+ * theme is applied without a flash of the wrong one.
+ *
+ * Kept as a string, not JSX, because it must reach the page verbatim: React
+ * must never try to reconcile its contents.
+ */
+const THEME_BOOT_SCRIPT = `
+  (function() {
+    try {
+      var storedTheme = localStorage.getItem('app-theme') || 'system';
+      var storedScheme = localStorage.getItem('app-color-scheme') || 'default';
+      var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var resolvedTheme = storedTheme === 'system' ? (prefersDark ? 'dark' : 'light') : storedTheme;
+      var suffix = storedScheme === 'medium' ? '-medium-contrast' : storedScheme === 'high' ? '-high-contrast' : '';
+      document.documentElement.setAttribute('data-theme', resolvedTheme);
+      document.documentElement.style.colorScheme = resolvedTheme;
+    } catch (e) {}
+  })();
+`;
+
 export default async function RootLayout({
   children,
 }: Readonly<{
@@ -114,24 +136,7 @@ export default async function RootLayout({
     >
       <head>
         {/* FOUC prevention - runs before any styles */}
-        <script
-          nonce={nonce}
-          dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                try {
-                  var storedTheme = localStorage.getItem('app-theme') || 'system';
-                  var storedScheme = localStorage.getItem('app-color-scheme') || 'default';
-                  var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                  var resolvedTheme = storedTheme === 'system' ? (prefersDark ? 'dark' : 'light') : storedTheme;
-                  var suffix = storedScheme === 'medium' ? '-medium-contrast' : storedScheme === 'high' ? '-high-contrast' : '';
-                  document.documentElement.setAttribute('data-theme', resolvedTheme);
-                  document.documentElement.style.colorScheme = resolvedTheme;
-                } catch (e) {}
-              })();
-            `,
-          }}
-        />
+        <InlineScript nonce={nonce} html={THEME_BOOT_SCRIPT} />
         {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link
           rel="stylesheet"

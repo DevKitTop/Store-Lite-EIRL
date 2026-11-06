@@ -8,9 +8,18 @@ import { NextResponse } from 'next/server';
 /**
  * API: /api/payment/update-ticket
  * Description: Updates a payment record with the generated ticket image URL.
+ *
+ * The response is `{ success: true }` and nothing else. The only caller
+ * (`ticketGenerator.ts`) reads `response.ok`; returning the updated row meant
+ * shipping the buyer's email, phone, address and payment metadata to a browser
+ * that discards them.
+ *
+ * "Not found" and "found, but you do not own it" both answer 404 on purpose.
+ * Distinguishing them turns this endpoint into an order-number oracle for any
+ * signed-in user who owns some business.
  */
 export async function POST(req: Request) {
-  // ── Auth check ──────────────────────────────────────────
+  // ---- Auth check ----
   const supabase = await createClient();
   const {
     data: { user },
@@ -26,7 +35,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Falta orderNumber o ticketUrl' }, { status: 400 });
     }
 
-    // ── Auth: lookup businessId from payment ────────────────
+    // ---- Auth: lookup businessId from payment ----
     const [payment] = await db
       .select({ businessId: payments.businessId })
       .from(payments)
@@ -42,24 +51,28 @@ export async function POST(req: Request) {
 
     try {
       await requireOwnedBusinessById(payment.businessId);
-    } catch (err) {
+    } catch {
+      // Same answer as "no such order": never confirm that an order number
+      // exists in a business the caller does not own.
       return NextResponse.json(
-        { success: false, error: err instanceof Error ? err.message : 'No autorizado' },
-        { status: 401 },
+        { error: 'Pago no encontrado con ese número de orden' },
+        { status: 404 },
       );
     }
 
-    // ── Validate ticketUrl ──────────────────────────────────
+    // ---- Validate ticketUrl ----
     if (typeof ticketUrl !== 'string' || ticketUrl.trim().length === 0) {
       return NextResponse.json({ error: 'ticketUrl debe ser un texto válido' }, { status: 400 });
     }
 
-    // Update payment where orderNumber matches
+    // Update payment where orderNumber matches. `order_number` is globally
+    // unique, so this touches at most one row; `returning({ id })` is only
+    // used to know whether it did.
     const result = await db
       .update(payments)
       .set({ ticketUrl: ticketUrl.trim(), updatedAt: new Date() })
       .where(eq(payments.orderNumber, orderNumber))
-      .returning();
+      .returning({ id: payments.id });
 
     if (!result || result.length === 0) {
       return NextResponse.json(
@@ -68,10 +81,7 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      data: result[0],
-    });
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error updating payment ticket:', error);
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });

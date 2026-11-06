@@ -1,4 +1,5 @@
-import { replaceSlugInPath, resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
+import { replaceSlugInPath } from '@/core/business/slug';
 import { db } from '@/core/database/client';
 import { whatsappChannels } from '@/core/database/schema';
 import { eq } from 'drizzle-orm';
@@ -18,7 +19,7 @@ export default async function WhatsAppPage({ params }: WhatsAppPageProps) {
   const { slug } = await params;
 
   // 1. Fetch business core data
-  const resolvedBusiness = await resolveBusinessSlug(slug);
+  const resolvedBusiness = await resolvePublicBusinessRoute(slug);
   const business = resolvedBusiness?.business;
 
   if (!business) {

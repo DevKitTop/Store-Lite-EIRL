@@ -1,10 +1,12 @@
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
-import { businesses, businessTeamMembers, payments } from '@/core/database/schema';
+import { payments } from '@/core/database/schema';
+import { isBusinessSeller } from '@/core/orders/sellerAccess';
 import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
+import { getSignedTicketUrl } from '@/lib/storage/signedTicket';
 import { createClient } from '@/lib/supabase/server';
 import { Icon } from '@/shared/components/ui';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import ActionModals from './ActionModals';
@@ -141,95 +143,84 @@ export default async function OrderTrackingPage({ params }: OrderTrackingPagePro
 
   // 🔒 SECURITY: Block sellers and team members from accessing customer order pages.
   // Even if they somehow obtain the trackingToken, they cannot self-confirm.
+  //
+  // The question is "does this user sell for THIS business". Asking whether the
+  // user owns *some* business skipped the membership test entirely for anyone
+  // who owned one, which let a member of this business through.
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (user) {
-    // Check if user is the owner
-    const sellerBusiness = await db.query.businesses.findFirst({
-      where: eq(businesses.ownerId, user.id),
-      columns: { id: true },
-    });
-
-    // Check if user is a team member of this business
-    const teamMembership = sellerBusiness
-      ? null // Already found as owner, skip team check
-      : await db.query.businessTeamMembers.findFirst({
-          where: and(
-            eq(businessTeamMembers.userId, user.id),
-            eq(businessTeamMembers.businessId, order.businessId),
-          ),
-          columns: { id: true },
-        });
-
-    if ((sellerBusiness && sellerBusiness.id === order.businessId) || teamMembership) {
-      return (
+  if (user && (await isBusinessSeller(order.businessId, user.id))) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--md-sys-color-surface)',
+          padding: '2rem',
+        }}
+      >
         <div
           style={{
-            minHeight: '100vh',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'var(--md-sys-color-surface)',
-            padding: '2rem',
+            maxWidth: '440px',
+            width: '100%',
+            background: 'var(--md-sys-color-error-container)',
+            borderRadius: '32px',
+            padding: '3rem 2rem',
+            textAlign: 'center',
+            border: '1px solid var(--md-sys-color-outline-variant)',
           }}
         >
           <div
             style={{
-              maxWidth: '440px',
-              width: '100%',
-              background: 'var(--md-sys-color-error-container)',
-              borderRadius: '32px',
-              padding: '3rem 2rem',
-              textAlign: 'center',
-              border: '1px solid var(--md-sys-color-outline-variant)',
+              width: 64,
+              height: 64,
+              borderRadius: '20px',
+              background: 'var(--md-sys-color-error)',
+              color: 'white',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 1.5rem',
+              fontSize: 32,
             }}
           >
-            <div
-              style={{
-                width: 64,
-                height: 64,
-                borderRadius: '20px',
-                background: 'var(--md-sys-color-error)',
-                color: 'white',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 1.5rem',
-                fontSize: 32,
-              }}
-            >
-              🚫
-            </div>
-            <h2
-              style={{
-                margin: '0 0 1rem',
-                fontSize: '1.5rem',
-                fontWeight: 950,
-                color: 'var(--md-sys-color-on-error-container)',
-              }}
-            >
-              Acceso No Permitido
-            </h2>
-            <p
-              style={{
-                margin: 0,
-                fontSize: '0.95rem',
-                lineHeight: 1.5,
-                color: 'var(--md-sys-color-on-error-container)',
-                opacity: 0.8,
-              }}
-            >
-              Esta página es exclusiva para el <b>comprador</b>. Como vendedor, no puedes acceder al
-              portal de seguimiento de tu propia orden.
-            </p>
+            🚫
           </div>
+          <h2
+            style={{
+              margin: '0 0 1rem',
+              fontSize: '1.5rem',
+              fontWeight: 950,
+              color: 'var(--md-sys-color-on-error-container)',
+            }}
+          >
+            Acceso No Permitido
+          </h2>
+          <p
+            style={{
+              margin: 0,
+              fontSize: '0.95rem',
+              lineHeight: 1.5,
+              color: 'var(--md-sys-color-on-error-container)',
+              opacity: 0.8,
+            }}
+          >
+            Esta página es exclusiva para el <b>comprador</b>. Como vendedor, no puedes acceder al
+            portal de seguimiento de tu propia orden.
+          </p>
         </div>
-      );
-    }
+      </div>
+    );
   }
+  // The `tickets` bucket is private, so the stored value (a path, or a legacy
+  // public URL) is exchanged for a short-lived signed URL before rendering.
+  // Signed after the access checks: a blocked viewer never triggers signing.
+  order.ticketImageUrl = await getSignedTicketUrl(order.ticketImageUrl);
 
   // 🔒 SECURITY: Server-side Google customer pre-auth.
   // If the logged-in user's Supabase ID matches the order's stored

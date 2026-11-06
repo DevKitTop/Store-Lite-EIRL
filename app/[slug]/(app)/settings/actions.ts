@@ -439,6 +439,20 @@ export async function clearStorefrontTheme(businessId: string, slug: string): Pr
   }
 }
 
+/**
+ * The settings screen no longer receives the stored secret, so an empty input
+ * means "keep it". It is only an error when there is nothing stored to keep.
+ */
+function isSecretKeyMissing(secretKey: string, storedSecretKey?: string | null): boolean {
+  return secretKey === '' && !storedSecretKey;
+}
+
+/** Only overwrite the stored secret when a new one was actually typed. */
+function culqiSettingsValues(publicKey: string, encryptedSecretKey: string | null) {
+  const base = { culqiPublicKey: publicKey, updatedAt: new Date() };
+  return encryptedSecretKey ? { ...base, culqiSecretKey: encryptedSecretKey } : base;
+}
+
 export async function updateCulqiCredentials(
   businessId: string,
   publicKey: string,
@@ -468,7 +482,8 @@ export async function updateCulqiCredentials(
   const { z } = await import('zod');
   const keySchema = z.object({
     publicKey: z.string().startsWith('pk_'),
-    secretKey: z.string().startsWith('sk_'),
+    // Empty is allowed: it means "keep the stored secret".
+    secretKey: z.string().refine((value) => value === '' || value.startsWith('sk_')),
   });
 
   const validation = keySchema.safeParse({ publicKey, secretKey });
@@ -484,7 +499,7 @@ export async function updateCulqiCredentials(
   //     false/omit → se acepta cualquier key pk_/sk_ (desarrollo).
   if (env.enforceLiveCulqiKeys) {
     const isPublicKeyLive = publicKey.startsWith('pk_live_');
-    const isSecretKeyLive = secretKey.startsWith('sk_live_');
+    const isSecretKeyLive = secretKey === '' || secretKey.startsWith('sk_live_');
     if (!isPublicKeyLive || !isSecretKeyLive) {
       return {
         success: false,
@@ -495,30 +510,38 @@ export async function updateCulqiCredentials(
     }
   }
 
-  // 🔥 SECURITY: Encrypt the secret key before DB storage
+  // 🔥 SECURITY: Encrypt the secret key before DB storage.
+  //
+  // An empty secret means "keep the one already stored". The settings screen no
+  // longer receives that value, so requiring the seller to retype it just to
+  // change the public key would only push them to paste it into the browser
+  // again — which is exactly what this change removes.
+  const existingSettings = await db.query.businessSettings.findFirst({
+    where: eq(businessSettings.businessId, businessId),
+    columns: { id: true, culqiSecretKey: true },
+  });
+
+  if (isSecretKeyMissing(secretKey, existingSettings?.culqiSecretKey)) {
+    return {
+      success: false,
+      error: 'Configurá la secret key de Culqi para habilitar los pagos.',
+    };
+  }
+
   const { encrypt } = await import('@/utils/crypto');
-  const encryptedSecretKey = encrypt(secretKey);
+  const encryptedSecretKey = secretKey ? encrypt(secretKey) : null;
 
   try {
-    const existingSettings = await db.query.businessSettings.findFirst({
-      where: eq(businessSettings.businessId, businessId),
-      columns: { id: true },
-    });
-
     if (existingSettings) {
       await db
         .update(businessSettings)
-        .set({
-          culqiPublicKey: publicKey,
-          culqiSecretKey: encryptedSecretKey,
-          updatedAt: new Date(),
-        })
+        .set(culqiSettingsValues(publicKey, encryptedSecretKey))
         .where(eq(businessSettings.businessId, businessId));
     } else {
       await db.insert(businessSettings).values({
         businessId,
         culqiPublicKey: publicKey,
-        culqiSecretKey: encryptedSecretKey,
+        culqiSecretKey: encryptedSecretKey as string,
       });
     }
 

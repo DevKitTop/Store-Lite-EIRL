@@ -1,12 +1,9 @@
 import { env } from '@/config/env';
-import { replaceSlugInPath, resolveBusinessSlug } from '@/core/business/slug';
+import { resolveSettingsBusiness } from '@/core/business/privateSettings';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
+import { replaceSlugInPath } from '@/core/business/slug';
 import { db } from '@/core/database/client';
-import {
-  businessSettings,
-  businessSubscriptions,
-  businessTeamMembers,
-  products,
-} from '@/core/database/schema';
+import { businessSubscriptions, businessTeamMembers, products } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { hasLockingPayments } from '@/core/orders/paymentGuards';
 import {
@@ -28,7 +25,7 @@ interface SettingsPageProps {
 
 export async function generateMetadata({ params }: SettingsPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   return {
     title: business ? `Ajustes — ${business.name}` : 'Ajustes',
@@ -39,17 +36,6 @@ export async function generateMetadata({ params }: SettingsPageProps): Promise<M
 
 export default async function SettingsPage({ params }: SettingsPageProps) {
   const { slug } = await params;
-
-  const resolvedBusiness = await resolveBusinessSlug(slug);
-  const business = resolvedBusiness?.business;
-
-  if (!business) {
-    return notFound();
-  }
-
-  if (resolvedBusiness.matchedAlias) {
-    redirect(replaceSlugInPath(`/${slug}/settings`, slug, resolvedBusiness.canonicalSlug));
-  }
 
   // --- Auth & Permission Guard ---
   const cookieStore = await cookies();
@@ -69,6 +55,22 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
     return notFound();
   }
 
+  // Resolve only for a signed-in user. The function returns nothing unless the
+  // user belongs to the business, so an outsider cannot tell a missing business
+  // from one they are not allowed to see.
+  const resolved = await resolveSettingsBusiness(slug, user.id);
+
+  if (!resolved) {
+    return notFound();
+  }
+
+  if (resolved.matchedAlias) {
+    redirect(replaceSlugInPath(`/${slug}/settings`, slug, resolved.canonicalSlug));
+  }
+
+  const business = resolved.business;
+  const { privateSettings } = resolved;
+
   // Obtener permisos y rol efectivos
   const { isOwner, role, permissions } = await getMemberPermissions(business.id, user.id);
 
@@ -80,15 +82,6 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
 
   const entitlements = await getBusinessEntitlements(business.id);
   const businessLocked = await hasLockingPayments({ businessId: business.id });
-  const settings = await db.query.businessSettings.findFirst({
-    where: eq(businessSettings.businessId, business.id),
-    columns: {
-      themeMode: true,
-      culqiPublicKey: true,
-      culqiSecretKey: true,
-      preferences: true,
-    },
-  });
 
   // Fecha de vencimiento del plan activo
   const subscription = await db.query.businessSubscriptions.findFirst({
@@ -116,10 +109,14 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
         {
           ...business,
           socialLinks: business.socialLinks ?? null,
-          culqiPublicKey: settings?.culqiPublicKey ?? null,
-          culqiSecretKey: settings?.culqiSecretKey ?? null,
-          preferences: settings?.preferences ?? null,
-        } as SettingsBusiness
+          legalRepName: privateSettings.legalRepName,
+          legalRepRole: privateSettings.legalRepRole,
+          legalRepPhone: privateSettings.legalRepPhone,
+          legalRepEmail: privateSettings.legalRepEmail,
+          culqiPublicKey: privateSettings.culqiPublicKey,
+          hasCulqiSecretKey: Boolean(privateSettings.culqiSecretKey),
+          preferences: privateSettings.preferences,
+        } satisfies SettingsBusiness
       }
       entitlements={{
         ...entitlements,
@@ -127,10 +124,10 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
         productCount,
         memberCount,
       }}
-      initialStorefrontLayout={getStorefrontLayoutFromPreferences(settings?.preferences)}
-      initialStorefrontTheme={getStorefrontThemeFromPreferences(settings?.preferences)}
-      initialHasCustomTheme={hasCustomStorefrontTheme(settings?.preferences)}
-      initialScheme={settings?.themeMode ?? 'light'}
+      initialStorefrontLayout={getStorefrontLayoutFromPreferences(privateSettings.preferences)}
+      initialStorefrontTheme={getStorefrontThemeFromPreferences(privateSettings.preferences)}
+      initialHasCustomTheme={hasCustomStorefrontTheme(privateSettings.preferences)}
+      initialScheme={privateSettings.themeMode}
       businessLocked={businessLocked}
       role={role}
       permissions={permissions}

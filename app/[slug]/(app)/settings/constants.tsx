@@ -48,7 +48,12 @@ export interface SettingsBusiness {
   seoKeywords: string[] | null;
   isActive: boolean;
   culqiPublicKey: string | null;
-  culqiSecretKey: string | null;
+  /**
+   * Whether a secret key is stored. The value itself never leaves the server:
+   * `business_settings.culqi_secret_key` is the seller's live credential, and
+   * older rows still hold it in plain text.
+   */
+  hasCulqiSecretKey: boolean;
   preferences: Record<string, unknown> | null;
   createdAt: Date;
 }

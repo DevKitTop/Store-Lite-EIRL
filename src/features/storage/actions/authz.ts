@@ -1,9 +1,10 @@
 'use server';
 
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businesses, businessTeamMembers } from '@/core/database/schema';
 import { checkPermission, type Permission } from '@/lib/permissions';
+import { isBusinessOwner } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
 
@@ -30,13 +31,13 @@ export async function requireAccess(
 ): Promise<{ businessId: string; userId: string; isOwner: boolean }> {
   const userId = await requireAuthenticatedUserId();
 
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     throw new Error('Negocio no encontrado');
   }
 
-  const isOwner = business.ownerId === userId;
+  const isOwner = await isBusinessOwner(business.id, userId);
 
   // Si es owner, tiene acceso total
   if (isOwner) {
@@ -76,14 +77,14 @@ export async function requireAccessOnId(
 
   const business = await db.query.businesses.findFirst({
     where: eq(businesses.id, businessId),
-    columns: { id: true, ownerId: true },
+    columns: { id: true },
   });
 
   if (!business) {
     throw new Error('Negocio no encontrado');
   }
 
-  const isOwner = business.ownerId === userId;
+  const isOwner = await isBusinessOwner(business.id, userId);
 
   if (isOwner) {
     return { businessId: business.id, userId, isOwner: true };
@@ -104,17 +105,17 @@ export async function requireAccessOnId(
 export async function requireOwnedBusinessBySlug(slug: string) {
   const userId = await requireAuthenticatedUserId();
 
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     throw new Error('Negocio no encontrado');
   }
 
-  if (business.ownerId !== userId) {
+  if (!(await isBusinessOwner(business.id, userId))) {
     throw new Error('No autorizado');
   }
 
-  return { businessId: business.id, ownerId: business.ownerId, slug: business.slug };
+  return { businessId: business.id, ownerId: userId, slug: business.slug };
 }
 
 /**
@@ -125,16 +126,16 @@ export async function requireOwnedBusinessById(businessId: string) {
 
   const business = await db.query.businesses.findFirst({
     where: eq(businesses.id, businessId),
-    columns: { id: true, ownerId: true, slug: true },
+    columns: { id: true, slug: true },
   });
 
   if (!business) {
     throw new Error('Negocio no encontrado');
   }
 
-  if (business.ownerId !== userId) {
+  if (!(await isBusinessOwner(business.id, userId))) {
     throw new Error('No autorizado');
   }
 
-  return { businessId: business.id, ownerId: business.ownerId, slug: business.slug };
+  return { businessId: business.id, ownerId: userId, slug: business.slug };
 }

@@ -1,7 +1,7 @@
 /* eslint-disable unicorn/filename-case -- kebab-case is mandated by the Next.js metadata file convention */
 import { ImageResponse } from 'next/og';
 
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businessSettings, products as productsTable } from '@/core/database/schema';
 import {
@@ -36,7 +36,7 @@ export default async function OpengraphImage({
   params: Promise<{ slug: string; productId: string }>;
 }) {
   const { slug, productId } = await params;
-  const resolved = await resolveBusinessSlug(slug);
+  const resolved = await resolvePublicBusinessRoute(slug);
   const business = resolved?.business;
 
   if (!business) {

@@ -1,4 +1,4 @@
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businessSettings } from '@/core/database/schema';
 import { eq } from 'drizzle-orm';
@@ -11,7 +11,7 @@ interface ReturnsPageProps {
 
 export async function generateMetadata({ params }: ReturnsPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) return { title: 'Política de Devoluciones' };
 
@@ -24,7 +24,7 @@ export async function generateMetadata({ params }: ReturnsPageProps): Promise<Me
 
 export default async function ReturnsPage({ params }: ReturnsPageProps) {
   const { slug } = await params;
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     return notFound();

@@ -1,9 +1,11 @@
 'use server';
 
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businessInvitations, businessTeamMembers, businesses } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
+import { type AcceptInvitationResult, acceptBusinessInvitation } from '@/core/team/invitations';
+import { isBusinessOwner } from '@/lib/permissions/checkPermission';
 import type { ActionState } from '@/types/actions';
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
@@ -208,7 +210,7 @@ export async function joinTeam(
   }
 
   // 2. Find business by slug
-  const business = (await resolveBusinessSlug(slug))?.business;
+  const business = await resolvePublicBusinessSlug(slug);
 
   if (!business) {
     return { success: false, error: 'Negocio no encontrado. Verificá el nombre.' };
@@ -220,6 +222,10 @@ export async function joinTeam(
       eq(businessInvitations.businessId, business.id),
       eq(businessInvitations.code, code.toUpperCase()),
       or(isNull(businessInvitations.expiresAt), sql`${businessInvitations.expiresAt} > now()`),
+      or(
+        isNull(businessInvitations.maxUses),
+        sql`${businessInvitations.usedCount} < ${businessInvitations.maxUses}`,
+      ),
     ),
   });
 
@@ -240,7 +246,7 @@ export async function joinTeam(
   }
 
   // 6. Check if user is the owner of this business
-  if (business.ownerId === user.id) {
+  if (await isBusinessOwner(business.id, user.id)) {
     return { success: false, error: 'Ya eres el dueño de este negocio.' };
   }
 
@@ -281,34 +287,61 @@ export async function joinTeam(
   }
 
   // 11. User has no own business - proceed to join directly
+  return completeJoin({
+    business,
+    code,
+    userId: user.id,
+    successMessage: `¡Bienvenido al equipo de ${business.name}!`,
+  });
+}
+
+interface JoinRequest {
+  business: { id: string; name: string; slug: string };
+  code: string;
+  userId: string;
+  successMessage: string;
+}
+
+/**
+ * Redeem the code and translate what the database decided into a message.
+ * Shared by both entry points so a code behaves the same way whichever path
+ * the user took to reach it.
+ */
+async function completeJoin({ business, code, userId, successMessage }: JoinRequest): Promise<
+  ActionState & {
+    business?: { id: string; name: string; slug: string };
+    hasOwnBusiness?: boolean;
+    ownBusinessId?: string;
+  }
+> {
+  let result: AcceptInvitationResult;
+
   try {
-    await db.insert(businessTeamMembers).values({
-      businessId: business.id,
-      userId: user.id,
-      role: 'member',
-      invitationId: invitation.id,
-    });
-
-    // Update used count
-    await db
-      .update(businessInvitations)
-      .set({ usedCount: invitation.usedCount + 1 })
-      .where(eq(businessInvitations.id, invitation.id));
-
-    revalidatePath('/', 'page');
-
-    return {
-      success: true,
-      message: `¡Bienvenido al equipo de ${business.name}!`,
-      business: {
-        id: business.id,
-        name: business.name,
-        slug: business.slug,
-      },
-    };
+    result = await acceptBusinessInvitation(business.id, code.toUpperCase(), userId);
   } catch (err) {
     console.error('[joinTeam] Error:', err);
     return { success: false, error: 'Error al unirte al equipo.' };
+  }
+
+  switch (result.status) {
+    case 'joined':
+      revalidatePath('/', 'page');
+      return {
+        success: true,
+        message: successMessage,
+        business: { id: business.id, name: business.name, slug: business.slug },
+      };
+    case 'already_member':
+      return { success: false, error: 'Ya eres miembro de este equipo.' };
+    case 'owner':
+      return { success: false, error: 'Ya eres el dueño de este negocio.' };
+    case 'unauthenticated':
+      return { success: false, error: 'Debes iniciar sesión para unirte a un equipo.' };
+    default:
+      return {
+        success: false,
+        error: 'Código de invitación inválido o expirado para este negocio.',
+      };
   }
 }
 
@@ -334,12 +367,7 @@ export async function confirmJoinTeam(code: string, ownBusinessId: string): Prom
   }
 
   // 2. Verify user owns the specified business
-  const business = await db.query.businesses.findFirst({
-    where: and(eq(businesses.id, ownBusinessId), eq(businesses.ownerId, user.id)),
-    columns: { id: true, name: true },
-  });
-
-  if (!business) {
+  if (!(await isBusinessOwner(ownBusinessId, user.id))) {
     return { success: false, error: 'Negocio no encontrado o no te pertenece.' };
   }
 
@@ -348,7 +376,7 @@ export async function confirmJoinTeam(code: string, ownBusinessId: string): Prom
     where: eq(businessInvitations.code, code.toUpperCase()),
     with: {
       business: {
-        columns: { id: true, name: true },
+        columns: { id: true, name: true, slug: true },
       },
     },
   });
@@ -369,28 +397,10 @@ export async function confirmJoinTeam(code: string, ownBusinessId: string): Prom
   }
 
   // 5. Join the team (but keep ownership of own business)
-  try {
-    await db.insert(businessTeamMembers).values({
-      businessId: invitation.businessId,
-      userId: user.id,
-      role: 'member',
-      invitationId: invitation.id,
-    });
-
-    // Update used count
-    await db
-      .update(businessInvitations)
-      .set({ usedCount: invitation.usedCount + 1 })
-      .where(eq(businessInvitations.id, invitation.id));
-
-    revalidatePath('/', 'page');
-
-    return {
-      success: true,
-      message: `Te has unido al equipo de ${invitation.business.name}. Puedes volver a tu negocio en cualquier momento.`,
-    };
-  } catch (err) {
-    console.error('[confirmJoinTeam] Error:', err);
-    return { success: false, error: 'Error al confirmar la unión al equipo.' };
-  }
+  return completeJoin({
+    business: invitation.business,
+    code,
+    userId: user.id,
+    successMessage: `Te has unido al equipo de ${invitation.business.name}. Puedes volver a tu negocio en cualquier momento.`,
+  });
 }

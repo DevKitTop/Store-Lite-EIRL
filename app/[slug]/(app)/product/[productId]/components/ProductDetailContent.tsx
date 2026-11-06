@@ -1,5 +1,5 @@
 import { env } from '@/config/env';
-import { resolveBusinessSlug } from '@/core/business/slug';
+import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import {
   businessTeamMembers,
@@ -8,6 +8,7 @@ import {
   profiles,
 } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
+import { getMemberPermissions } from '@/lib/permissions/checkPermission';
 import { createServerClient } from '@supabase/ssr';
 import { and, eq, inArray, ne, notInArray, or } from 'drizzle-orm';
 import { cookies, headers } from 'next/headers';
@@ -58,7 +59,7 @@ export default async function ProductDetailContent({
     data: { user },
   } = await supabase.auth.getUser();
 
-  const businessDetail = (await resolveBusinessSlug(slug))?.business;
+  const businessDetail = (await resolvePublicBusinessRoute(slug))?.business;
 
   if (!businessDetail) {
     return notFound();
@@ -93,7 +94,9 @@ export default async function ProductDetailContent({
   const entitlements = await getBusinessEntitlements(businessDetail.id);
   const { hasPaymentGateway } = entitlements;
 
-  const isOwner = Boolean(user?.id && businessDetail?.ownerId === user.id);
+  // Ownership comes from the membership check, not from a column: the business
+  // row is now a public projection and no longer carries the owner linkage.
+  const { isOwner } = await getMemberPermissions(businessDetail.id, user?.id);
 
   const product = {
     id: rawProduct.id,
