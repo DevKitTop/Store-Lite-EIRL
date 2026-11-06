@@ -1,6 +1,7 @@
 import { db } from '@/core/database/client';
 import type { PublicBusiness } from '@/types/business';
 import { sql } from 'drizzle-orm';
+import { cache } from 'react';
 
 export type { PublicBusiness };
 
@@ -84,15 +85,22 @@ function toPublicBusiness(row: PublicBusinessRow): PublicBusiness {
  * This is the way application code reads a business. The full row is not
  * granted to the runtime role and must not come back through a helper: private
  * fields are served by narrower functions, one per consumer that needs them.
+ *
+ * Wrapped in React `cache` on purpose: one request resolves the same slug from
+ * the layout, the group layout, `generateMetadata` and the page. Without it the
+ * storefront paid for four identical calls to `public_business_by_slug` before
+ * rendering anything. The cache is per request, never across requests.
  */
-export async function resolvePublicBusinessSlug(slug: string): Promise<PublicBusiness | null> {
-  const rows = (await db.execute(sql`
+export const resolvePublicBusinessSlug = cache(
+  async (slug: string): Promise<PublicBusiness | null> => {
+    const rows = (await db.execute(sql`
     select * from public.public_business_by_slug(${slug})
   `)) as unknown as PublicBusinessRow[];
 
-  const row = rows.at(0);
-  return row ? toPublicBusiness(row) : null;
-}
+    const row = rows.at(0);
+    return row ? toPublicBusiness(row) : null;
+  },
+);
 
 /**
  * Routing-aware variant of {@link resolvePublicBusinessSlug}.
