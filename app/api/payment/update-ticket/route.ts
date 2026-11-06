@@ -9,10 +9,9 @@ import { NextResponse } from 'next/server';
  * API: /api/payment/update-ticket
  * Description: Updates a payment record with the generated ticket image URL.
  *
- * The response is `{ success: true }` and nothing else. The only caller
- * (`ticketGenerator.ts`) reads `response.ok`; returning the updated row meant
- * shipping the buyer's email, phone, address and payment metadata to a browser
- * that discards them.
+ * The response is `{ success: true }` and nothing else. A caller only needs
+ * `response.ok`; returning the updated row meant shipping the buyer's email,
+ * phone, address and payment metadata to a browser that discards them.
  *
  * "Not found" and "found, but you do not own it" both answer 404 on purpose.
  * Distinguishing them turns this endpoint into an order-number oracle for any

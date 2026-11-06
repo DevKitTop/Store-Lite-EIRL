@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createSignedUrl = vi.fn();
 const createSignedUrls = vi.fn();
-const from = vi.fn(() => ({ createSignedUrl, createSignedUrls }));
+const from = vi.fn((_bucket: string) => ({ createSignedUrl, createSignedUrls }));
 
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({ storage: { from } }),
@@ -54,6 +54,21 @@ describe('getSignedTicketUrl', () => {
 
     await expect(getSignedTicketUrl('ORD-A.png')).resolves.toBeNull();
   });
+
+  it('signs a plan receipt in the plan bucket', async () => {
+    createSignedUrl.mockResolvedValue({
+      data: { signedUrl: 'https://signed/plan' },
+      error: null,
+    });
+
+    await expect(
+      getSignedTicketUrl(
+        'https://example.supabase.co/storage/v1/object/public/tickets_plans/B001-00000001.png',
+      ),
+    ).resolves.toBe('https://signed/plan');
+    expect(from).toHaveBeenCalledWith('tickets_plans');
+    expect(createSignedUrl).toHaveBeenCalledWith('B001-00000001.png', 3600);
+  });
 });
 
 describe('getSignedTicketUrls', () => {
@@ -98,5 +113,21 @@ describe('getSignedTicketUrls', () => {
     createSignedUrls.mockResolvedValue({ data: null, error: { message: 'boom' } });
 
     await expect(getSignedTicketUrls(['a.png'])).resolves.toEqual([null]);
+  });
+
+  it('signs each bucket in its own call and keeps positions', async () => {
+    createSignedUrls.mockImplementation(async (paths: string[]) => ({
+      data: paths.map((path) => ({ path, signedUrl: `https://signed/${path}` })),
+      error: null,
+    }));
+
+    const result = await getSignedTicketUrls([
+      'https://example.supabase.co/storage/v1/object/public/tickets/a.png',
+      null,
+      'https://example.supabase.co/storage/v1/object/public/tickets_plans/b.png',
+    ]);
+
+    expect(result).toEqual(['https://signed/a.png', null, 'https://signed/b.png']);
+    expect(from.mock.calls.map(([bucket]) => bucket).sort()).toEqual(['tickets', 'tickets_plans']);
   });
 });
