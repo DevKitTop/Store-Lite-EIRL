@@ -1,15 +1,15 @@
 'use client';
 
-import { generateAndUploadTicket } from '@/shared/payments/ticketGenerator';
+import { captureTicketPng } from '@/shared/payments/ticketCapture';
 import { useCallback, useRef, useState } from 'react';
 
 /**
  * usePurchasePlan
  * Hook que orquesta el flujo completo de compra de un plan SaaS:
  *  1. POST /api/billing/purchase-plan → cobra, guarda en BD, activa suscripción
- *  2. Captura PlanTicketTemplate como PNG (html-to-image, igual que en Checkout)
- *  3. Upload a Supabase bucket 'tickets_plans'
- *  4. POST /api/billing/update-plan-ticket → guarda ticket_url en plan_payments
+ *  2. Captura PlanTicketTemplate como PNG (html-to-image)
+ *  3. POST /api/billing/update-plan-ticket → el API sube a `tickets_plans`
+ *     (bucket privado, service role) y devuelve un link firmado
  */
 
 export interface PurchasePlanData {
@@ -92,25 +92,27 @@ export function usePurchasePlan() {
 
         let ticketUrl: string | undefined;
 
-        // ── 3. Generar PNG del ticket y subir a Supabase ────────────────────────
-        // Usa el módulo compartido ticketGenerator para captura + upload.
-        // La notificación al backend se hace manualmente porque el endpoint
-        // de billing espera { planPaymentId, ticketUrl } (no { orderNumber, ticketUrl }).
+        // ── 3. Generar el PNG y enviarlo al API ─────────────────────────────────
+        // El navegador nunca escribe en Storage: el API sube a `tickets_plans`
+        // con service role y devuelve un link firmado de corta duración.
         if (ticketRef.current) {
           try {
-            const result = await generateAndUploadTicket(
-              ticketRef,
-              `${purchaseResult.ticketNumber}_${purchaseResult.planPaymentId}`,
-              { bucket: 'tickets_plans' },
-            );
-            ticketUrl = result.publicUrl;
+            const png = await captureTicketPng(ticketRef);
+            const form = new FormData();
+            form.append('planPaymentId', purchaseResult.planPaymentId);
+            form.append('file', png, 'ticket.png');
 
-            // ── 4. Actualizar ticket_url en plan_payments ────────────────────
-            await fetch('/api/billing/update-plan-ticket', {
+            const ticketResponse = await fetch('/api/billing/update-plan-ticket', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ planPaymentId: purchaseResult.planPaymentId, ticketUrl }),
+              body: form,
             });
+            const ticketJson = await ticketResponse.json();
+
+            if (ticketResponse.ok && ticketJson.success) {
+              ticketUrl = ticketJson.signedUrl;
+            } else {
+              console.error('[usePurchasePlan] Error guardando ticket:', ticketJson.error);
+            }
           } catch (ticketError) {
             console.error('[usePurchasePlan] Error generando ticket PNG:', ticketError);
           }

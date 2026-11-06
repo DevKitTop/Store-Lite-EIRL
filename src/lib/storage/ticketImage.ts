@@ -11,8 +11,16 @@
  * caller that can sign it (see `signedTicket.ts`).
  */
 
-const PUBLIC_PREFIX = '/storage/v1/object/public/tickets/';
-const SIGNED_PREFIX = '/storage/v1/object/sign/tickets/';
+/** Buckets that hold receipts we are allowed to sign. */
+const SIGNABLE_BUCKETS = ['tickets', 'tickets_plans'] as const;
+export type TicketBucket = (typeof SIGNABLE_BUCKETS)[number];
+
+export interface TicketLocation {
+  bucket: TicketBucket;
+  path: string;
+}
+
+const OBJECT_MARKER = '/storage/v1/object/';
 
 function stripQuery(value: string): string {
   const index = value.search(/[?#]/);
@@ -36,28 +44,45 @@ function normalize(path: string): string | null {
   return path;
 }
 
-export function extractTicketPath(value: string | null | undefined): string | null {
+function isSignableBucket(value: string): value is TicketBucket {
+  return (SIGNABLE_BUCKETS as readonly string[]).includes(value);
+}
+
+function withBucket(bucket: TicketBucket, path: string | null): TicketLocation | null {
+  return path === null ? null : { bucket, path };
+}
+
+/**
+ * Resolves the bucket and object path of a stored receipt, whatever shape the
+ * row holds: an absolute public URL, a previously signed URL, or a bare path.
+ * Returns null for anything that is not a receipt in one of our buckets.
+ */
+export function extractTicketLocation(value: string | null | undefined): TicketLocation | null {
   if (typeof value !== 'string') return null;
 
   const raw = value.trim();
   if (!raw) return null;
 
-  const publicIndex = raw.indexOf(PUBLIC_PREFIX);
-  if (publicIndex !== -1) {
-    const decoded = decode(stripQuery(raw.slice(publicIndex + PUBLIC_PREFIX.length)));
-    return decoded === null ? null : normalize(decoded);
+  const marker = raw.indexOf(OBJECT_MARKER);
+  if (marker !== -1) {
+    const [access, bucket, ...rest] = stripQuery(raw.slice(marker + OBJECT_MARKER.length)).split(
+      '/',
+    );
+    if (access !== 'public' && access !== 'sign') return null;
+    if (!isSignableBucket(bucket)) return null;
+    const decoded = decode(rest.join('/'));
+    return withBucket(bucket, decoded === null ? null : normalize(decoded));
   }
 
-  const signedIndex = raw.indexOf(SIGNED_PREFIX);
-  if (signedIndex !== -1) {
-    const decoded = decode(stripQuery(raw.slice(signedIndex + SIGNED_PREFIX.length)));
-    return decoded === null ? null : normalize(decoded);
-  }
-
-  // Any absolute URL that is not one of the shapes above belongs to another
-  // bucket, another host, or no storage at all.
+  // Any other absolute URL belongs to another host or another storage.
   if (raw.includes('://')) return null;
 
+  // A bare relative path predates the bucket split, so it is a `tickets` object.
   const decoded = decode(stripQuery(raw));
-  return decoded === null ? null : normalize(decoded);
+  return withBucket('tickets', decoded === null ? null : normalize(decoded));
+}
+
+/** Object path alone, for callers that already know which bucket it is in. */
+export function extractTicketPath(value: string | null | undefined): string | null {
+  return extractTicketLocation(value)?.path ?? null;
 }

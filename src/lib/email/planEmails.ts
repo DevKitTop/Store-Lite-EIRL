@@ -46,9 +46,10 @@ export async function sendPlanPurchaseConfirmationEmail(
 
   const planName = PLAN_PRICES[planPayment.planType]?.label ?? planPayment.planType;
 
-  // The receipt may live in the private `tickets` bucket, so a stored URL there
-  // would not open: it is signed at send time. Anything else - another bucket or
-  // an external host - is linked as stored, because signing cannot reach it.
+  // The receipt lives in a private bucket (`tickets` or `tickets_plans`), so a
+  // stored URL there would not open: it is signed at send time. Anything else -
+  // another bucket or an external host - is linked as stored, because signing
+  // cannot reach it.
   const ticketPath = extractTicketPath(planPayment.ticketUrl);
   const ticketUrl = ticketPath
     ? await getSignedTicketUrl(planPayment.ticketUrl)

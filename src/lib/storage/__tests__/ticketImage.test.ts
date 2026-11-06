@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractTicketPath } from '../ticketImage';
+import { extractTicketLocation, extractTicketPath } from '../ticketImage';
 
 describe('extractTicketPath', () => {
   it('extracts the object path from a legacy public URL', () => {
@@ -59,6 +59,55 @@ describe('extractTicketPath', () => {
   it('rejects a bucket URL with no object path', () => {
     expect(
       extractTicketPath('https://example.supabase.co/storage/v1/object/public/tickets/'),
+    ).toBeNull();
+  });
+});
+
+describe('extractTicketLocation', () => {
+  it('keeps the bucket of an order receipt', () => {
+    expect(
+      extractTicketLocation(
+        'https://example.supabase.co/storage/v1/object/public/tickets/order-1/4DFCWBNV.jpg',
+      ),
+    ).toEqual({ bucket: 'tickets', path: 'order-1/4DFCWBNV.jpg' });
+  });
+
+  it('keeps the bucket of a plan receipt', () => {
+    expect(
+      extractTicketLocation(
+        'https://example.supabase.co/storage/v1/object/public/tickets_plans/B001-00000001.png',
+      ),
+    ).toEqual({ bucket: 'tickets_plans', path: 'B001-00000001.png' });
+  });
+
+  it('reads the bucket from an already signed plan receipt', () => {
+    expect(
+      extractTicketLocation(
+        'https://example.supabase.co/storage/v1/object/sign/tickets_plans/B001-00000001.png?token=abc',
+      ),
+    ).toEqual({ bucket: 'tickets_plans', path: 'B001-00000001.png' });
+  });
+
+  it('assigns a bare path to the order bucket', () => {
+    expect(extractTicketLocation('ORD-MTRGMQJ6.png')).toEqual({
+      bucket: 'tickets',
+      path: 'ORD-MTRGMQJ6.png',
+    });
+  });
+
+  it('refuses a bucket that is not a receipt bucket', () => {
+    expect(
+      extractTicketLocation(
+        'https://example.supabase.co/storage/v1/object/public/products/categories/pic.jpg',
+      ),
+    ).toBeNull();
+  });
+
+  it('refuses an unknown access mode', () => {
+    expect(
+      extractTicketLocation(
+        'https://example.supabase.co/storage/v1/object/private/tickets/ORD-1.png',
+      ),
     ).toBeNull();
   });
 });
