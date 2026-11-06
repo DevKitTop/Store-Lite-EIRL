@@ -104,6 +104,30 @@ describe('extractTenantSlugFromHost', () => {
       expect(extractTenantSlugFromHost('')).toBeNull();
     });
   });
+
+  describe('hosting platform hosts', () => {
+    test('returns null for a Vercel preview deployment host', () => {
+      expect(
+        extractTenantSlugFromHost('store-lite-eirl-q7qs7z5m0-store-lite-eirl.vercel.app'),
+      ).toBeNull();
+    });
+
+    test('returns null for the project Vercel host', () => {
+      expect(extractTenantSlugFromHost('store-lite-eirl.vercel.app')).toBeNull();
+    });
+
+    test('returns null for a Vercel branch alias with a port', () => {
+      expect(extractTenantSlugFromHost('store-lite-eirl-git-develop.vercel.app:443')).toBeNull();
+    });
+
+    test('stays case-insensitive about the platform suffix', () => {
+      expect(extractTenantSlugFromHost('store-lite-eirl.Vercel.App')).toBeNull();
+    });
+
+    test('still resolves a real tenant subdomain next to a platform host', () => {
+      expect(extractTenantSlugFromHost('mi-tienda.store-lite.com')).toBe('mi-tienda');
+    });
+  });
 });
 
 // --- isReservedSubdomain ---
@@ -161,6 +185,11 @@ describe('isTenantHost', () => {
   test('returns false for bare localhost', () => {
     expect(isTenantHost('localhost')).toBe(false);
     expect(isTenantHost('localhost:3000')).toBe(false);
+  });
+
+  test('returns false for a Vercel deployment host', () => {
+    expect(isTenantHost('store-lite-eirl.vercel.app')).toBe(false);
+    expect(isTenantHost('store-lite-eirl-q7qs7z5m0-store-lite-eirl.vercel.app')).toBe(false);
   });
 });
 
