@@ -32,6 +32,16 @@ export const RESERVED_SUBDOMAINS = [
 export type ReservedSubdomain = (typeof RESERVED_SUBDOMAINS)[number];
 
 /**
+ * Hosting-platform domains that never belong to a business.
+ *
+ * A Vercel host such as `store-lite-eirl.vercel.app` has three labels and its
+ * first label matches the slug grammar, so without this guard the subdomain
+ * rewrite treats a preview deployment as a tenant: "/" is rewritten to
+ * "/<deployment-name>", no business exists, and the deployment answers 404.
+ */
+export const NON_TENANT_HOST_SUFFIXES = ['vercel.app'] as const;
+
+/**
  * Construye un path relativo para un negocio.
  *
  * Cuando NO estamos en modo subdominio (path-based):
@@ -158,6 +168,17 @@ export function isTenantHost(hostname: string): boolean {
 export function extractTenantSlugFromHost(hostname: string): string | null {
   // Remover puerto si existe
   const host = hostname.split(':')[0];
+  const lowerHost = host.toLowerCase();
+
+  // Una plataforma de hosting nunca aloja un negocio: aunque el host tenga tres
+  // etiquetas, su primer segmento es el nombre del proyecto, no un slug.
+  if (
+    NON_TENANT_HOST_SUFFIXES.some(
+      (suffix) => lowerHost === suffix || lowerHost.endsWith(`.${suffix}`),
+    )
+  ) {
+    return null;
+  }
 
   // Extraer subdominios del hostname
   // Para store-lite.com → parts = ['store-lite', 'com'] → sin subdominio
