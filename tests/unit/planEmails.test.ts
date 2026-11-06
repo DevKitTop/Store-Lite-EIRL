@@ -61,8 +61,10 @@ function makePlanPayment(overrides: Record<string, unknown> = {}) {
 // ── Suite ────────────────────────────────────────────
 
 const STORED_TICKET_URL = 'https://proj.supabase.co/storage/v1/object/public/tickets/boleta.png';
-const OTHER_BUCKET_TICKET_URL =
+const PLAN_TICKET_URL =
   'https://proj.supabase.co/storage/v1/object/public/tickets_plans/boleta.png';
+const FOREIGN_BUCKET_TICKET_URL =
+  'https://proj.supabase.co/storage/v1/object/public/products/pic.jpg';
 const SIGNED_TICKET_URL =
   'https://cdn.example.test/storage/v1/object/sign/tickets/boleta.png?token=abc';
 
@@ -101,15 +103,26 @@ describe('sendPlanPurchaseConfirmationEmail', () => {
     expect(html).not.toContain(STORED_TICKET_URL);
   });
 
-  test('links a receipt from another bucket as stored, without signing it', async () => {
+  test('signs a receipt stored in the private plan bucket', async () => {
     await sendPlanPurchaseConfirmationEmail(
-      makePlanPayment({ ticketUrl: OTHER_BUCKET_TICKET_URL }),
+      makePlanPayment({ ticketUrl: PLAN_TICKET_URL }),
+      'biz_123',
+    );
+
+    const html = mockSendEmail.mock.calls[0][0].html;
+    expect(mockGetSignedTicketUrl).toHaveBeenCalledWith(PLAN_TICKET_URL);
+    expect(html).toContain(SIGNED_TICKET_URL);
+  });
+
+  test('links a receipt from a bucket we cannot sign as stored, without signing it', async () => {
+    await sendPlanPurchaseConfirmationEmail(
+      makePlanPayment({ ticketUrl: FOREIGN_BUCKET_TICKET_URL }),
       'biz_123',
     );
 
     const html = mockSendEmail.mock.calls[0][0].html;
     expect(mockGetSignedTicketUrl).not.toHaveBeenCalled();
-    expect(html).toContain(OTHER_BUCKET_TICKET_URL);
+    expect(html).toContain(FOREIGN_BUCKET_TICKET_URL);
   });
 
   test('renders the plan end date line prominently', async () => {
