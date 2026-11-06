@@ -389,11 +389,11 @@ export default function Checkout({
       // server accepts (design D3). Without it the route answers 401.
       const result = await requestServerTicket(orderNumber, true, completedOrder.trackingToken);
 
-      if (!result.success || !result.publicUrl) {
+      if (!result.success || !result.signedUrl) {
         throw new Error(result.error || 'No se pudo generar el ticket');
       }
 
-      await downloadTicketFromUrl(result.publicUrl, orderNumber);
+      await downloadTicketFromUrl(result.signedUrl, orderNumber);
 
       setAlert({
         open: true,

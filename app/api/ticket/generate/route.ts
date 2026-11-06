@@ -2,6 +2,7 @@ import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, payments, products } from '@/core/database/schema';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
+import { getSignedTicketUrl } from '@/lib/storage/signedTicket';
 import { safeTokenEqual } from '@/lib/tokenCompare';
 import type { ServerTicketData, ServerTicketItem } from '@/shared/payments/serverTicketRenderer';
 import { calculateTicketHeight, ServerTicket } from '@/shared/payments/serverTicketRenderer';
@@ -117,9 +118,15 @@ export async function POST(req: Request) {
       effectiveForceRegenerate = false;
     }
 
-    // If ticket already exists and regeneration not forced, return it
+    // If ticket already exists and regeneration not forced, hand back a signed
+    // link to it. The stored value stays the canonical object URL; the bucket is
+    // private, so only a signed URL can be fetched.
     if (payment.ticketUrl && !effectiveForceRegenerate) {
-      return NextResponse.json({ success: true, publicUrl: payment.ticketUrl });
+      const signedUrl = await getSignedTicketUrl(payment.ticketUrl);
+      if (!signedUrl) {
+        return NextResponse.json({ error: 'Ticket unavailable' }, { status: 500 });
+      }
+      return NextResponse.json({ success: true, signedUrl });
     }
 
     // ── 2. Build authoritative cart items from DB products ───────────────
@@ -282,7 +289,14 @@ export async function POST(req: Request) {
       .set({ ticketUrl: publicUrl, updatedAt: new Date() })
       .where(eq(payments.orderNumber, orderNumber));
 
-    return NextResponse.json({ success: true, publicUrl });
+    // The row keeps the stable object URL; what leaves here is a short-lived
+    // signed link, because the bucket is private.
+    const signedUrl = await getSignedTicketUrl(publicUrl);
+    if (!signedUrl) {
+      return NextResponse.json({ error: 'Ticket unavailable' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, signedUrl });
   } catch (error) {
     console.error('[ticket/generate] Internal error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
