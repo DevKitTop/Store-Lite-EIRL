@@ -1,6 +1,8 @@
 import { db } from '@/core/database/client';
 import { businesses, formatTicketNumber, type PlanPayment } from '@/core/database/schema';
 import { PlanPurchaseConfirmationEmail } from '@/emails/PlanPurchaseConfirmationEmail';
+import { getSignedTicketUrl } from '@/lib/storage/signedTicket';
+import { extractTicketPath } from '@/lib/storage/ticketImage';
 import { PLAN_PRICES } from '@/shared/billing/planPrices';
 import { render } from '@react-email/components';
 import { eq } from 'drizzle-orm';
@@ -44,6 +46,14 @@ export async function sendPlanPurchaseConfirmationEmail(
 
   const planName = PLAN_PRICES[planPayment.planType]?.label ?? planPayment.planType;
 
+  // The receipt may live in the private `tickets` bucket, so a stored URL there
+  // would not open: it is signed at send time. Anything else - another bucket or
+  // an external host - is linked as stored, because signing cannot reach it.
+  const ticketPath = extractTicketPath(planPayment.ticketUrl);
+  const ticketUrl = ticketPath
+    ? await getSignedTicketUrl(planPayment.ticketUrl)
+    : planPayment.ticketUrl;
+
   try {
     const html = await render(
       PlanPurchaseConfirmationEmail({
@@ -52,7 +62,7 @@ export async function sendPlanPurchaseConfirmationEmail(
         ticketNumber: formatTicketNumber(planPayment.ticketSeries, planPayment.ticketCorrelative),
         amountTotal: formatAmount(planPayment.amountTotal),
         planEndDate: formatPlanEndDate(planPayment.planEndDate),
-        ticketUrl: planPayment.ticketUrl || undefined,
+        ticketUrl: ticketUrl || undefined,
         customerFullName: planPayment.buyerFullName || undefined,
         customerDocumentType: planPayment.buyerDocumentType || undefined,
         customerDocumentNumber: planPayment.buyerDocumentNumber || undefined,

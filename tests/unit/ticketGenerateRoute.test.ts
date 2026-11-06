@@ -33,6 +33,7 @@ const {
   mockStorageFrom,
   mockUpload,
   mockGetPublicUrl,
+  mockGetSignedTicketUrl,
   mockQrToDataURL,
 } = vi.hoisted(() => {
   const mockRequireOwnedBusinessById = vi.fn();
@@ -43,6 +44,7 @@ const {
   const mockUpload = vi.fn();
   const mockGetPublicUrl = vi.fn();
   const mockStorageFrom = vi.fn();
+  const mockGetSignedTicketUrl = vi.fn();
   const mockQrToDataURL = vi.fn();
 
   return {
@@ -54,12 +56,19 @@ const {
     mockStorageFrom,
     mockUpload,
     mockGetPublicUrl,
+    mockGetSignedTicketUrl,
     mockQrToDataURL,
   };
 });
 
 vi.mock('@/features/storage/actions/authz', () => ({
   requireOwnedBusinessById: mockRequireOwnedBusinessById,
+}));
+
+// The bucket is private, so what leaves this route is a short-lived signed
+// URL, never the canonical object URL. The signing helper has its own suite.
+vi.mock('@/lib/storage/signedTicket', () => ({
+  getSignedTicketUrl: mockGetSignedTicketUrl,
 }));
 
 vi.mock('@/core/database/client', () => ({
@@ -98,6 +107,8 @@ const TRACKING_TOKEN = 'tk_9f2c1b7e4a6d8f0a3b5c7d9e1f3a5b7c';
 const WRONG_TOKEN = 'tk_00000000000000000000000000000000';
 const EXISTING_TICKET_URL = 'https://supabase.co/tickets/ORD-BUYER-0001.png';
 const GENERATED_TICKET_URL = 'https://supabase.co/storage/v1/object/public/tickets/new-ticket.png';
+const SIGNED_TICKET_URL =
+  'https://supabase.co/storage/v1/object/sign/tickets/new-ticket.png?token=signed-abc';
 
 function paymentRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -177,6 +188,7 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
     }));
     mockUpload.mockResolvedValue({ error: null });
     mockGetPublicUrl.mockReturnValue({ data: { publicUrl: GENERATED_TICKET_URL } });
+    mockGetSignedTicketUrl.mockResolvedValue(SIGNED_TICKET_URL);
     mockProductSelect.mockResolvedValue([]);
     mockQrToDataURL.mockResolvedValue('data:image/png;base64,QR');
   });
@@ -218,7 +230,7 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
 
   // ── OWNER branch ─────────────────────────────────────────────────────
 
-  test('owner regenerates: 200 with a fresh publicUrl, upload and update performed', async () => {
+  test('owner regenerates: 200 with a fresh signedUrl, upload and update performed', async () => {
     grantOwnership();
     mockSelect.mockResolvedValueOnce([paymentRow({ ticketUrl: EXISTING_TICKET_URL })]);
 
@@ -231,7 +243,7 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true, publicUrl: GENERATED_TICKET_URL });
+    expect(await res.json()).toEqual({ success: true, signedUrl: SIGNED_TICKET_URL });
     expect(mockRequireOwnedBusinessById).toHaveBeenCalledWith(BUSINESS_ID);
     // An owner's own session is the proof — a stale body token is not consulted.
     expect(mockUpload).toHaveBeenCalledTimes(1);
@@ -245,7 +257,8 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
     const res = await POST(generateRequest({ orderNumber: ORDER_NUMBER }));
 
     expect(res.status).toBe(200);
-    expect((await res.json()).publicUrl).toBe(EXISTING_TICKET_URL);
+    expect((await res.json()).signedUrl).toBe(SIGNED_TICKET_URL);
+    expect(mockGetSignedTicketUrl).toHaveBeenCalledWith(EXISTING_TICKET_URL);
     expectNoWrites();
   });
 
@@ -271,7 +284,8 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
     );
 
     expect(res.status).toBe(200);
-    expect((await res.json()).publicUrl).toBe(EXISTING_TICKET_URL);
+    expect((await res.json()).signedUrl).toBe(SIGNED_TICKET_URL);
+    expect(mockGetSignedTicketUrl).toHaveBeenCalledWith(EXISTING_TICKET_URL);
     expectNoWrites();
   });
 
@@ -288,7 +302,8 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
     );
 
     expect(res.status).toBe(200);
-    expect((await res.json()).publicUrl).toBe(EXISTING_TICKET_URL);
+    expect((await res.json()).signedUrl).toBe(SIGNED_TICKET_URL);
+    expect(mockGetSignedTicketUrl).toHaveBeenCalledWith(EXISTING_TICKET_URL);
     expectNoWrites();
   });
 
@@ -305,7 +320,8 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
     );
 
     expect(res.status).toBe(200);
-    expect((await res.json()).publicUrl).toBe(GENERATED_TICKET_URL);
+    expect((await res.json()).signedUrl).toBe(SIGNED_TICKET_URL);
+    expect(mockGetSignedTicketUrl).toHaveBeenCalledWith(GENERATED_TICKET_URL);
     expect(mockUpload).toHaveBeenCalledTimes(1);
     expect(mockUpdate).toHaveBeenCalledTimes(1);
   });
@@ -392,7 +408,7 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
     const res = await POST(generateRequest({ orderNumber: ORDER_NUMBER, forceRegenerate: true }));
 
     expect(res.status).toBe(401);
-    expect(await res.json()).not.toHaveProperty('publicUrl');
+    expect(await res.json()).not.toHaveProperty('signedUrl');
     expectNoWrites();
   });
 });

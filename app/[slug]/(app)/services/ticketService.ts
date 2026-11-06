@@ -7,14 +7,14 @@
 
 export interface ServerTicketResult {
   success: boolean;
-  publicUrl?: string;
+  signedUrl?: string;
   error?: string;
 }
 
 /**
  * Requests the server to generate a tamper-proof ticket PNG from the database.
  * The server reads the real order data, renders via Satori, uploads to Supabase,
- * and returns the public URL.
+ * and returns a short-lived signed URL (the bucket is private).
  *
  * The server accepts two proofs of access: an owner session, or the buyer's
  * `trackingToken` (design D3). `trackingToken` is optional and omitted from the
@@ -24,7 +24,7 @@ export interface ServerTicketResult {
  * @param orderNumber - The order number to generate the ticket for
  * @param forceRegenerate - Ask the server to rebuild an existing ticket (owner-only)
  * @param trackingToken - The buyer's token, used as proof when there is no session
- * @returns The public URL of the generated ticket
+ * @returns The signed URL of the generated ticket
  */
 export async function requestServerTicket(
   orderNumber: string,
@@ -43,7 +43,7 @@ export async function requestServerTicket(
     return { success: false, error: data.error || 'Error generating ticket' };
   }
 
-  return { success: true, publicUrl: data.publicUrl };
+  return { success: true, signedUrl: data.signedUrl };
 }
 
 /**

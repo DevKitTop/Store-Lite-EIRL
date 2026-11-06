@@ -30,7 +30,7 @@ describe('requestServerTicket', () => {
   beforeEach(() => {
     globalThis.fetch = vi
       .fn()
-      .mockResolvedValue(jsonResponse({ success: true, publicUrl: GENERATED_URL }));
+      .mockResolvedValue(jsonResponse({ success: true, signedUrl: GENERATED_URL }));
   });
 
   afterEach(() => {
@@ -41,7 +41,7 @@ describe('requestServerTicket', () => {
     const result = await requestServerTicket('ORD-1');
 
     expect(sentBody()).toEqual({ orderNumber: 'ORD-1' });
-    expect(result).toEqual({ success: true, publicUrl: GENERATED_URL });
+    expect(result).toEqual({ success: true, signedUrl: GENERATED_URL });
   });
 
   test('still forwards forceRegenerate as the second parameter', async () => {
