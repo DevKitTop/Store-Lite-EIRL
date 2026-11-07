@@ -1,6 +1,6 @@
 # ADR 0004: Observabilidad y Monitoreo (Sentry + PostHog)
 
-**Status**: Accepted
+**Status**: Accepted (parcialmente superado por ADR 0005: las grabaciones de sesión de PostHog y las de Sentry quedaron revisadas y medidos sus costos)
 
 ## Contexto
 

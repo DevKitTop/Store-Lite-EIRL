@@ -580,12 +580,12 @@ Referencia: `docs/PREPRODUCTION_READINESS_2026-10.md` ya clasifica estos hallazg
 
 ### 8.1 Ya disponible
 
-| Fuente   | Uso                                                     |
-| -------- | ------------------------------------------------------- |
-| Sentry   | Errores, stack traces, performance de transacciones     |
-| Vercel   | Invocaciones, cold starts, errores por función          |
-| Supabase | Conexiones activas, CPU, slow queries, logs de Postgres |
-| PostHog  | Comportamiento de producto                              |
+| Fuente   | Uso                                                                      |
+| -------- | ------------------------------------------------------------------------ |
+| Sentry   | Errores, stack traces, performance de transacciones                      |
+| Vercel   | Invocaciones, cold starts, errores por función                           |
+| Supabase | Conexiones activas, CPU, slow queries, logs de Postgres                  |
+| PostHog  | Comportamiento de producto (sin eventos emitidos al 2026-11-07, ver 8.4) |
 
 ### 8.2 Qué falta
 
@@ -597,6 +597,29 @@ Referencia: `docs/PREPRODUCTION_READINESS_2026-10.md` ya clasifica estos hallazg
 - **OpenTelemetry:** diferir. Vercel soporta OTel drains, pero agrega costo y complejidad sin resolver un problema actual.
 - **Grafana Cloud:** opcional y solo para retener resultados de k6 entre versiones. El dashboard web embebido de k6 (`K6_WEB_DASHBOARD=true`) cubre el caso local sin infraestructura.
 - **Stack autogestionado (Loki/Tempo/Mimir/Pyroscope/Alloy):** no instalar.
+
+### 8.4 Estado verificado (2026-11-07)
+
+La fase 4 quedó resuelta con herramientas gratuitas. Decisiones y evidencia en
+`docs/adr/0005-observabilidad-gratuita-y-presupuesto-js-storefront.md`.
+
+| Necesidad                   | Herramienta                                 | Estado                                                                                        |
+| --------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Disponibilidad              | Uptime Kuma autogestionado                  | 3 monitores HTTP, los 3 en Up 100 %                                                           |
+| Errores                     | Sentry 10.58.0                              | Activo                                                                                        |
+| Session replay              | Sentry Replay                               | Activo, con costo medido: +39 KB y ~215 ms de TBT                                             |
+| Analytics de producto       | PostHog                                     | Inicializa pero **no emite eventos**: inutilizable como RUM hasta aislar la causa             |
+| Performance de laboratorio  | Lighthouse 12 (mobile, build de producción) | LCP observado 544–656 ms; el LCP simulado (7–9 s) es artefacto del modelo, no del usuario     |
+| Performance de usuario real | —                                           | **No disponible**: Sentry Performance es trial, Speed Insights es pago, Cloudflare sin acceso |
+
+Notas operativas:
+
+- Uptime Kuma corre en la PC del mantenedor; solo monitorea mientras está encendida. No
+  reemplaza un servicio externo de uptime.
+- PostHog cargaba `recorder.js` (69 KB) y `surveys.js` (48 KB) sin producir eventos. Quedaron
+  desactivados con `disable_session_recording` y `disable_surveys`.
+- Toda mejora de performance se valida con A/B sobre la misma receta de medición. El ahorro que
+  Lighthouse estima para recursos bloqueantes no se materializó al inlinear el CSS.
 
 ---
 
