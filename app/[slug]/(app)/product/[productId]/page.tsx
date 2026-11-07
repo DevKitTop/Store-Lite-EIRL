@@ -1,13 +1,14 @@
 import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
 import { replaceSlugInPath } from '@/core/business/slug';
 import { db } from '@/core/database/client';
+import { productIdentifierWhere } from '@/core/database/productLookup';
 import { products as productsTable } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { buildProductBreadcrumbs } from '@/shared/seo/buildStorefrontBreadcrumbs';
 import { buildProductDescription, buildProductTitle } from '@/shared/seo/buildStorefrontMeta';
 import { toSafeJsonLd } from '@/shared/utils/safeJsonLd';
 import { getCanonicalBusinessUrl } from '@/shared/utils/url';
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
 import { CartShell } from '../../components/CartShell';
@@ -25,10 +26,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!business) return {};
 
   const product = await db.query.products.findFirst({
-    where: and(
-      eq(productsTable.businessId, business.id),
-      or(eq(productsTable.id, productId), eq(productsTable.slug, productId)),
-    ),
+    where: and(eq(productsTable.businessId, business.id), productIdentifierWhere(productId)),
     with: {
       media: {
         orderBy: (m, { asc }) => [asc(m.displayOrder)],
@@ -79,10 +77,7 @@ export default async function ProductDetailPage({ params }: Props) {
   }
 
   const product = await db.query.products.findFirst({
-    where: and(
-      eq(productsTable.businessId, businessDetail.id),
-      or(eq(productsTable.id, productId), eq(productsTable.slug, productId)),
-    ),
+    where: and(eq(productsTable.businessId, businessDetail.id), productIdentifierWhere(productId)),
     with: {
       media: {
         orderBy: (m, { asc }) => [asc(m.displayOrder)],
