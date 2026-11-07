@@ -41,4 +41,13 @@ describe('buildPostHogInitOptions', () => {
     expect(options.capture_exceptions).toBe(true);
     expect(options.defaults).toBe('2026-01-30');
   });
+
+  test('does not download the session recorder or surveys bundle', () => {
+    const options = buildPostHogInitOptions({ isDev: false });
+
+    // posthog-js fetches recorder.js (69 KB) and surveys.js (48 KB) unless
+    // these are disabled, and both sit on the critical path for first paint.
+    expect(options.disable_session_recording).toBe(true);
+    expect(options.disable_surveys).toBe(true);
+  });
 });

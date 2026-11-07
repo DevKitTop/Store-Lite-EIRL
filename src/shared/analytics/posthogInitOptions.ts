@@ -19,6 +19,14 @@ export function buildPostHogInitOptions({ isDev, host }: PostHogInitEnvironment)
     defaults: '2026-01-30' as const,
     capture_exceptions: true,
 
+    // posthog-js downloads two extra bundles on top of the core SDK:
+    // `recorder.js` (69 KB) and `surveys.js` (48 KB). Neither is used here:
+    // the project has no surveys, and session recording is not part of the
+    // analytics contract this app relies on. Keeping them costs ~117 KB of
+    // third-party JavaScript on the first paint of every storefront page.
+    disable_session_recording: true,
+    disable_surveys: true,
+
     // Set explicitly on purpose. The project's remote configuration returns
     // `capturePerformance.web_vitals: false`, and the SDK follows the server
     // whenever this option is undefined. An object here overrides the remote
