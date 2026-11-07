@@ -1,4 +1,4 @@
-import { buildPostHogInitOptions } from '@/shared/analytics/posthogInitOptions';
+import { buildPostHogInitOptions, resolvePostHogKey } from '@/shared/analytics/posthogInitOptions';
 import { describe, expect, test } from 'vitest';
 
 describe('buildPostHogInitOptions', () => {
@@ -49,5 +49,29 @@ describe('buildPostHogInitOptions', () => {
     // these are disabled, and both sit on the critical path for first paint.
     expect(options.disable_session_recording).toBe(true);
     expect(options.disable_surveys).toBe(true);
+  });
+});
+
+describe('resolvePostHogKey', () => {
+  test('prefers NEXT_PUBLIC_POSTHOG_KEY', () => {
+    expect(
+      resolvePostHogKey({
+        NEXT_PUBLIC_POSTHOG_KEY: 'phc_primary',
+        NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: 'phc_wizard',
+      }),
+    ).toBe('phc_primary');
+  });
+
+  test('falls back to NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN', () => {
+    // The PostHog wizard writes the token under the newer name. Reading only
+    // the old one left the SDK without a key, so it never initialised.
+    expect(resolvePostHogKey({ NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: 'phc_wizard' })).toBe(
+      'phc_wizard',
+    );
+  });
+
+  test('returns undefined when neither name is configured', () => {
+    expect(resolvePostHogKey({})).toBeUndefined();
+    expect(resolvePostHogKey({ NEXT_PUBLIC_POSTHOG_KEY: '' })).toBeUndefined();
   });
 });

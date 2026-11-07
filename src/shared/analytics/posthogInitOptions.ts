@@ -10,6 +10,23 @@ export interface PostHogInitEnvironment {
   host?: string;
 }
 
+export interface PostHogKeyEnvironment {
+  NEXT_PUBLIC_POSTHOG_KEY?: string;
+  NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN?: string;
+}
+
+/**
+ * Resolves the PostHog project key from either environment variable name.
+ *
+ * The PostHog wizard started writing `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`,
+ * while the app read only `NEXT_PUBLIC_POSTHOG_KEY`. With only the new name
+ * configured the SDK received no key and was never initialised, which looks
+ * exactly like "analytics is broken": no error in production, no events.
+ */
+export function resolvePostHogKey(env: PostHogKeyEnvironment): string | undefined {
+  return env.NEXT_PUBLIC_POSTHOG_KEY || env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || undefined;
+}
+
 export function buildPostHogInitOptions({ isDev, host }: PostHogInitEnvironment) {
   return {
     // In dev: use direct URL to avoid proxy/rewrite issues causing JSON parse errors.

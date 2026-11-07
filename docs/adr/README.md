@@ -21,3 +21,4 @@ Cada registro tiene un número secuencial y sigue este formato:
 - [ADR 0002: Uso de Material Design 3 (MD3)](0002-use-material-design-3.md)
 - [ADR 0003: Estrategia de Testing (Vitest + Playwright)](0003-strategy-testing.md)
 - [ADR 0004: Observabilidad y Monitoreo (Sentry + PostHog)](0004-observability-strategy.md)
+- [ADR 0005: Observabilidad gratuita y presupuesto de JavaScript del storefront](0005-observabilidad-gratuita-y-presupuesto-js-storefront.md)
