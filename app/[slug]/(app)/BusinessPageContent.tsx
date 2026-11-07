@@ -44,9 +44,10 @@ import { mapToStorageProduct } from './components/mapToStorageProduct';
 import { resolveActiveScheme } from './components/schemeResolution';
 import { useStorefrontViewerTheme } from './components/useStorefrontViewerTheme';
 
-// The staff tools drag in StorefrontEditor and PatternBrowser: one 243 KB
-// chunk that used to ship to every public visitor even though the tools only
-// render for staff. A dynamic import keeps it out of the visitor's bundle.
+// StaffManagementTools reaches StorefrontEditor and PatternBrowser: a chunk
+// that used to be part of every public visitor's bundle even though the tools
+// render only for staff. The dynamic import keeps it out of that bundle; the
+// lazy payload is 159 KB and loads only when isStaff renders the tools.
 const StaffManagementTools = dynamic(
   () => import('./components/StaffManagementTools').then((mod) => mod.StaffManagementTools),
   { ssr: false, loading: () => null },
