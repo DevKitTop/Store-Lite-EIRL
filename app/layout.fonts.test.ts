@@ -63,6 +63,20 @@ describe('app/layout.tsx - Fonts via next/font', () => {
     });
   });
 
+  describe('Material Symbols icon font request', () => {
+    it('should request only the 400 weight instead of every axis', () => {
+      expect(layoutContent).toContain('Material+Symbols+Rounded:wght@400');
+    });
+
+    it('should not request the opsz/FILL/GRAD axes that inflate the font', () => {
+      expect(layoutContent).not.toMatch(/Material\+Symbols\+Rounded:opsz,wght,FILL,GRAD/);
+    });
+
+    it('should keep display=block so ligature names never flash as text', () => {
+      expect(layoutContent).toMatch(/Material\+Symbols\+Rounded[^"']*&display=block/);
+    });
+  });
+
   describe('tokens.css font token references', () => {
     const tokensPath = join(__dirname, '(main)/home/tokens.css');
     let tokensContent: string;
