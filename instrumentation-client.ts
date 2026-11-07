@@ -34,17 +34,20 @@ Sentry.init({
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
 
 // ─── PostHog ───────────────────────────────────────────────────────────────
-import { buildPostHogInitOptions } from '@/shared/analytics/posthogInitOptions';
+import { buildPostHogInitOptions, resolvePostHogKey } from '@/shared/analytics/posthogInitOptions';
 import posthog from 'posthog-js';
 
-const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
+const POSTHOG_KEY = resolvePostHogKey({
+  NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
+  NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
+});
 const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST;
 const isDev = process.env.NODE_ENV === 'development';
 
 if (!POSTHOG_KEY) {
   if (process.env.NODE_ENV !== 'production') {
     console.error(
-      'NEXT_PUBLIC_POSTHOG_KEY variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once NEXT_PUBLIC_POSTHOG_KEY is configured',
+      'NEXT_PUBLIC_POSTHOG_KEY (or NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN) variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once one of them is configured',
     );
   }
 } else {
