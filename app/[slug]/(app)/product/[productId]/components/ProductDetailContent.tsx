@@ -1,6 +1,7 @@
 import { env } from '@/config/env';
 import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
+import { productIdentifierWhere } from '@/core/database/productLookup';
 import {
   businessTeamMembers,
   productLikes,
@@ -10,7 +11,7 @@ import {
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { getMemberPermissions } from '@/lib/permissions/checkPermission';
 import { createServerClient } from '@supabase/ssr';
-import { and, eq, inArray, ne, notInArray, or } from 'drizzle-orm';
+import { and, eq, inArray, ne, notInArray } from 'drizzle-orm';
 import { cookies, headers } from 'next/headers';
 
 import {
@@ -66,10 +67,7 @@ export default async function ProductDetailContent({
   }
 
   const rawProduct = await db.query.products.findFirst({
-    where: and(
-      eq(productsTable.businessId, businessDetail.id),
-      or(eq(productsTable.id, productId), eq(productsTable.slug, productId)),
-    ),
+    where: and(eq(productsTable.businessId, businessDetail.id), productIdentifierWhere(productId)),
     with: {
       category: {
         columns: {
