@@ -12,7 +12,7 @@ import { useParams } from 'next/navigation';
 import posthog from 'posthog-js';
 import { useEffect, useState } from 'react';
 import styles from './CartDrawer.module.css';
-import Checkout from './Checkout';
+import { LazyCheckout } from './lazyCheckout';
 
 interface CartDrawerProps {
   hasPaymentGateway?: boolean;
@@ -300,7 +300,7 @@ export function CartDrawer({
       )}
 
       {isCheckoutOpen && checkoutItems && (
-        <Checkout
+        <LazyCheckout
           totalAmount={totalPrice}
           cartItems={checkoutItems}
           culqiPublicKey={culqiPublicKey}

@@ -8,7 +8,7 @@ import type { PublicBusiness } from '@/types/business';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { BasicContactDialog } from '../../../components/BasicContactDialog';
-import Checkout from '../../../components/Checkout';
+import { LazyCheckout } from '../../../components/lazyCheckout';
 import ProductPreviewSheet from '../../../components/ProductPreviewSheet';
 import LikeSection from './LikeSection';
 import styles from './ProductDetail.module.css';
@@ -184,7 +184,7 @@ export default function PurchaseActions({
       </div>
 
       {isPaymentModalOpen && (
-        <Checkout
+        <LazyCheckout
           totalAmount={Number(product.secondPrice || product.price)}
           cartItems={[{ ...product, quantity: 1 }]}
           culqiPublicKey={culqiPublicKey}

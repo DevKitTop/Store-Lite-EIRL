@@ -3,7 +3,7 @@
 import { Button, IconButton } from '@/shared/components/ui/buttons';
 import { Icon } from '@/shared/components/ui/data-display';
 import type { Product, ProductCategory } from '@/types/product';
-import Checkout from '@app/[slug]/(app)/components/Checkout';
+import { LazyCheckout } from '@app/[slug]/(app)/components/lazyCheckout';
 import Image from 'next/image';
 import { useState } from 'react';
 
@@ -169,7 +169,7 @@ export default function ProductCard({
       </div>
 
       {isCheckoutOpen && (
-        <Checkout
+        <LazyCheckout
           totalAmount={price}
           cartItems={[
             {
