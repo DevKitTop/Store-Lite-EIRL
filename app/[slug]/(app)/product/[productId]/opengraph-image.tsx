@@ -3,6 +3,7 @@ import { ImageResponse } from 'next/og';
 
 import { resolvePublicBusinessRoute } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
+import { productIdentifierWhere } from '@/core/database/productLookup';
 import { businessSettings, products as productsTable } from '@/core/database/schema';
 import {
   createDefaultStorefrontTheme,
@@ -11,7 +12,7 @@ import {
   hasCustomStorefrontTheme,
 } from '@/core/storefront';
 import { loadPoppinsFonts } from '@/shared/seo/ogFonts';
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 export const alt = 'Producto — Tienda online';
 export const size = { width: 1200, height: 630 };
@@ -59,10 +60,7 @@ export default async function OpengraphImage({
   }
 
   const product = await db.query.products.findFirst({
-    where: and(
-      eq(productsTable.businessId, business.id),
-      or(eq(productsTable.id, productId), eq(productsTable.slug, productId)),
-    ),
+    where: and(eq(productsTable.businessId, business.id), productIdentifierWhere(productId)),
     with: {
       media: {
         orderBy: (m, { asc }) => [asc(m.displayOrder)],
