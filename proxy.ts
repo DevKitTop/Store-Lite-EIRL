@@ -28,6 +28,7 @@
 // =====================================
 
 import { env } from '@/config/env';
+import { shouldBypassProxy } from '@/lib/middleware/proxyBypass';
 import { isPlatformOnlyPath, runProxyPipeline } from '@/lib/middleware/proxyPipeline';
 import { buildLoginRedirectPath, isPublicStorefrontPath } from '@/lib/middleware/routeProtection';
 import { applySecurityHeaders, buildCsp, createCspNonce } from '@/lib/middleware/securityHeaders';
@@ -41,7 +42,7 @@ export default async function proxy(request: NextRequest) {
   // NOTE: /api is intentionally NOT skipped here — it must pass through the
   // rate limiter below. It is short-circuited right after, before the CSP and
   // session layers, so API responses stay untouched.
-  if (pathname.startsWith('/_next') || pathname.startsWith('/static') || pathname.includes('.')) {
+  if (shouldBypassProxy(pathname)) {
     return NextResponse.next();
   }
 
@@ -83,15 +84,18 @@ export default async function proxy(request: NextRequest) {
   // ── 3. CSP + nonce ─────────────────────────────────────
   const nonce = createCspNonce();
   const isDev = process.env.NODE_ENV !== 'production';
+  // `nextUrl.protocol` reports https behind the dev server even when the
+  // request arrived over plain http; `request.url` carries the real scheme.
+  const protocol = new URL(request.url).protocol;
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-nonce', nonce);
-  requestHeaders.set('Content-Security-Policy', buildCsp(nonce, isDev));
+  requestHeaders.set('Content-Security-Policy', buildCsp(nonce, isDev, protocol));
 
   // Reading the nonce in the App Router requires forwarding the overridden
   // request headers; mutating `request` alone is not enough.
   const response = NextResponse.next({ request: { headers: requestHeaders } });
-  applySecurityHeaders(response, nonce, isDev);
+  applySecurityHeaders(response, { nonce, isDev, protocol });
 
   // ── 4. Session refresh + platform redirects ────────────
   const supabase = createServerClient(
@@ -155,7 +159,14 @@ export default async function proxy(request: NextRequest) {
       return loginRedirect;
     }
 
-    return finishResponse({ sessionResponse: response, rewriteUrl, requestHeaders, nonce, isDev });
+    return finishResponse({
+      sessionResponse: response,
+      rewriteUrl,
+      requestHeaders,
+      nonce,
+      isDev,
+      protocol,
+    });
   }
 
   // Authenticated: honour the remembered business. On a tenant subdomain the
@@ -175,7 +186,14 @@ export default async function proxy(request: NextRequest) {
   }
 
   // ── 5. Storefront rewrite / normal pass-through ────────
-  return finishResponse({ sessionResponse: response, rewriteUrl, requestHeaders, nonce, isDev });
+  return finishResponse({
+    sessionResponse: response,
+    rewriteUrl,
+    requestHeaders,
+    nonce,
+    isDev,
+    protocol,
+  });
 }
 
 /**
@@ -193,8 +211,9 @@ function finishResponse(context: {
   requestHeaders: Headers;
   nonce: string;
   isDev: boolean;
+  protocol: string;
 }): NextResponse {
-  const { sessionResponse, rewriteUrl, requestHeaders, nonce, isDev } = context;
+  const { sessionResponse, rewriteUrl, requestHeaders, nonce, isDev, protocol } = context;
 
   if (!rewriteUrl || sessionResponse.status !== 200) {
     return sessionResponse;
@@ -204,7 +223,7 @@ function finishResponse(context: {
 
   copySessionCookies(sessionResponse, rewritten);
 
-  applySecurityHeaders(rewritten, nonce, isDev);
+  applySecurityHeaders(rewritten, { nonce, isDev, protocol });
 
   return rewritten;
 }

@@ -20,6 +20,7 @@ import { AlertSnackbar } from '@/shared/components/ui';
 import type { PublicBusiness } from '@/types/business';
 import type { ProductCategory } from '@/types/product';
 import type { SaveProductMediaItem, SaveProductPayload } from '@/types/storage';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { posthog } from 'posthog-js';
 import {
@@ -37,12 +38,20 @@ import { BasicContactDialog } from './components/BasicContactDialog';
 import { CustomerFloatingUi } from './components/CustomerFloatingUi';
 import { LookupOrderModal } from './components/LookupOrderModal';
 import ProductPreviewSheet from './components/ProductPreviewSheet';
-import { StaffManagementTools } from './components/StaffManagementTools';
 import { StorefrontProductGridSection } from './components/StorefrontProductGridSection';
 import StorefrontTrustBadge from './components/StorefrontTrustBadge';
 import { mapToStorageProduct } from './components/mapToStorageProduct';
 import { resolveActiveScheme } from './components/schemeResolution';
 import { useStorefrontViewerTheme } from './components/useStorefrontViewerTheme';
+
+// StaffManagementTools reaches StorefrontEditor and PatternBrowser: a chunk
+// that used to be part of every public visitor's bundle even though the tools
+// render only for staff. The dynamic import keeps it out of that bundle; the
+// lazy payload is 159 KB and loads only when isStaff renders the tools.
+const StaffManagementTools = dynamic(
+  () => import('./components/StaffManagementTools').then((mod) => mod.StaffManagementTools),
+  { ssr: false, loading: () => null },
+);
 
 interface BusinessPageContentProps {
   business: PublicBusiness;

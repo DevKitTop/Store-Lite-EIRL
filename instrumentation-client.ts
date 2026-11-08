@@ -34,26 +34,22 @@ Sentry.init({
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
 
 // ─── PostHog ───────────────────────────────────────────────────────────────
+import { buildPostHogInitOptions, resolvePostHogKey } from '@/shared/analytics/posthogInitOptions';
 import posthog from 'posthog-js';
 
-const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
+const POSTHOG_KEY = resolvePostHogKey({
+  NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
+  NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
+});
 const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST;
 const isDev = process.env.NODE_ENV === 'development';
 
 if (!POSTHOG_KEY) {
   if (process.env.NODE_ENV !== 'production') {
     console.error(
-      'NEXT_PUBLIC_POSTHOG_KEY variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once NEXT_PUBLIC_POSTHOG_KEY is configured',
+      'NEXT_PUBLIC_POSTHOG_KEY (or NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN) variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once one of them is configured',
     );
   }
 } else {
-  posthog.init(POSTHOG_KEY, {
-    // In dev: use direct URL to avoid proxy/rewrite issues causing JSON parse errors.
-    // In prod: use the /ingest proxy so ad-blockers don't block posthog.com domains.
-    api_host: isDev ? POSTHOG_HOST || 'https://us.i.posthog.com' : '/ingest',
-    ui_host: POSTHOG_HOST || 'https://us.posthog.com',
-    defaults: '2026-01-30',
-    capture_exceptions: true,
-    debug: isDev,
-  });
+  posthog.init(POSTHOG_KEY, buildPostHogInitOptions({ isDev, host: POSTHOG_HOST }));
 }

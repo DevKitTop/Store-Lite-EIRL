@@ -57,4 +57,11 @@ describe('buildCsp', () => {
     expect(longCsp).not.toMatch(/; {2,}/);
     expect(longCsp).not.toMatch(/\s{2,}/);
   });
+
+  test('only upgrades insecure requests when the origin is already https', () => {
+    expect(buildCsp(nonce, false, { protocol: 'https:' })).toContain('upgrade-insecure-requests');
+    expect(buildCsp(nonce, false, { protocol: 'http:' })).not.toContain(
+      'upgrade-insecure-requests',
+    );
+  });
 });

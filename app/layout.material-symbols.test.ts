@@ -18,8 +18,12 @@ describe('app/layout.tsx - Material Symbols link', () => {
     );
   });
 
-  it('should have the correct opsz,wght,FILL,GRAD parameters', () => {
-    expect(layoutContent).toMatch(/opsz,wght,FILL,GRAD@20\.\.48,300\.\.600,0\.\.1,-25\.\.0/);
+  it('should request a single weight instead of every variable axis', () => {
+    // Requesting opsz+wght+FILL+GRAD serves the full 5.3 MB variable font.
+    // `wght@400` serves the same glyphs in ~365 KB and nothing in the app sets
+    // those axes, so the rendered icons are unchanged.
+    expect(layoutContent).toMatch(/Material\+Symbols\+Rounded:wght@400&display=block/);
+    expect(layoutContent).not.toMatch(/opsz,wght,FILL,GRAD@/);
   });
 
   it('should be placed in the head section', () => {

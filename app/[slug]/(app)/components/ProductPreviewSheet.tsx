@@ -13,7 +13,7 @@ import Link from 'next/link';
 import { posthog } from 'posthog-js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toCartProduct } from '../product/utils/cartHelpers';
-import Checkout from './Checkout';
+import { LazyCheckout } from './lazyCheckout';
 import styles from './ProductPreviewSheet.module.css';
 
 interface ProductPreviewSheetProps {
@@ -513,7 +513,7 @@ export default function ProductPreviewSheet({
       </Sheet>
 
       {isPaymentModalOpen && product && businessId && (
-        <Checkout
+        <LazyCheckout
           totalAmount={Number(product.secondPrice || product.price)}
           cartItems={[
             {

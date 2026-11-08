@@ -28,7 +28,12 @@ export function createCspNonce(): string {
  * attributes are used across the UI. Tightening it requires moving the
  * theme to a hashed/nonce'd stylesheet first.
  */
-export function buildCsp(nonce: string, isDev: boolean): string {
+export interface CspOptions {
+  /** Request scheme. `upgrade-insecure-requests` is only emitted over https. */
+  protocol?: string;
+}
+
+export function buildCsp(nonce: string, isDev: boolean, options: CspOptions = {}): string {
   const scriptSrc = [
     "'self'",
     `'nonce-${nonce}'`,
@@ -53,7 +58,10 @@ export function buildCsp(nonce: string, isDev: boolean): string {
     "font-src 'self' data: https://fonts.gstatic.com",
     "frame-src 'self' https://checkout.culqi.com https://*.culqi.com",
     "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.culqi.com https://checkout.culqi.com https://*.culqi.com https://*.posthog.com https://graph.facebook.com https://www.facebook.com",
-    'upgrade-insecure-requests',
+    // Only meaningful over https. On a plain-http origin the browser upgrades
+    // every same-origin request (including the /ingest capture POST) to https
+    // and the request dies with ERR_SSL_PROTOCOL_ERROR before it is sent.
+    ...(options.protocol === 'https:' ? ['upgrade-insecure-requests'] : []),
   ]
     .join('; ')
     .replace(/\s{2,}/g, ' ')
@@ -68,7 +76,13 @@ export function buildCsp(nonce: string, isDev: boolean): string {
  * That forwarding is the caller's job (see src/middleware.ts) because it
  * depends on how the response is created (next vs rewrite).
  */
-export function applySecurityHeaders(response: NextResponse, nonce: string, isDev: boolean): void {
-  response.headers.set('x-nonce', nonce);
-  response.headers.set('Content-Security-Policy', buildCsp(nonce, isDev));
+export function applySecurityHeaders(
+  response: NextResponse,
+  options: { nonce: string; isDev: boolean; protocol?: string },
+): void {
+  response.headers.set('x-nonce', options.nonce);
+  response.headers.set(
+    'Content-Security-Policy',
+    buildCsp(options.nonce, options.isDev, { protocol: options.protocol }),
+  );
 }
