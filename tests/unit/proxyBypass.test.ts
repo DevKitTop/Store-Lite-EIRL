@@ -34,6 +34,11 @@ describe('shouldBypassProxy', () => {
     expect(shouldBypassProxy('/api/checkout')).toBe(false);
   });
 
+  test('lets the Sentry tunnel through', () => {
+    expect(shouldBypassProxy('/monitoring')).toBe(true);
+    expect(shouldBypassProxy('/monitoring/tunnel')).toBe(true);
+  });
+
   test('does not bypass lookalike prefixes', () => {
     expect(shouldBypassProxy('/ingestion')).toBe(false);
     expect(shouldBypassProxy('/ingestible')).toBe(false);

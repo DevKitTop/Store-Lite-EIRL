@@ -18,10 +18,14 @@
 const BYPASS_PREFIXES = ['/_next', '/static'] as const;
 
 /**
- * Third-party proxies. Matched exactly or as a parent segment so lookalike
+ * Third-party tunnels. Matched exactly or as a parent segment so lookalike
  * routes such as `/ingestion` keep normal behaviour.
+ *
+ * `/monitoring` is the Sentry tunnel route declared by `tunnelRoute` in
+ * next.config.ts. Tenancy answered it with `302 /auth`, so every Sentry
+ * envelope was redirected to the login page instead of being forwarded.
  */
-const BYPASS_SEGMENTS = ['/ingest'] as const;
+const BYPASS_SEGMENTS = ['/ingest', '/monitoring'] as const;
 
 /**
  * True when the request must skip rate limiting, tenancy, CSP and the
