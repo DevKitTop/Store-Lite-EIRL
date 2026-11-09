@@ -137,3 +137,49 @@ El logging de componentes de UI quedó deliberadamente en `console`: mandarlo a 
 - **Un proyecto de PostHog para todos los entornos** y super property `environment`. Ver ADR 0005.
 - **Feature flags:** no se implementaron. PostHog los soporta de forma nativa cuando haga falta; el proceso quedó documentado en el historial de la feature.
 - **Sentry Performance:** descartado, era trial de 14 días. Se usan Web Vitals reales vía PostHog.
+
+---
+
+## 10. Disponibilidad (uptime)
+
+**Decisión:** UptimeRobot (plan free) para disponibilidad 24/7. Uptime Kuma queda en
+local, sólo como status page presentable cuando haga falta mostrarla.
+
+**Por qué no Kuma en cloud:** los PaaS gratuitos (Render, Koyeb) duermen el servicio por
+inactividad, lo que anula un monitor. Fly.io ya no tiene free tier. La única alternativa
+realmente gratis y encendida es una VM (Oracle/GCP Always Free), que exige mantener un
+servidor para tres pings: no se paga solo.
+
+**Datos de Kuma:** viven en `~/Documents/store-lite-kuma/data`. Antes estaban en
+`%TEMP%`, que Windows limpia: los monitores podían desaparecer sin aviso.
+
+### Monitores a crear
+
+Todos con intervalo de 5 minutos y alerta por email.
+
+| Nombre         | URL                                                         | Tipo              | Keyword      |
+| -------------- | ----------------------------------------------------------- | ----------------- | ------------ |
+| Landing        | `https://store-lite-eirl.vercel.app/`                       | HTTP(s) + Keyword | `Store Lite` |
+| Ingest PostHog | `https://store-lite-eirl.vercel.app/ingest/static/array.js` | HTTP(s) + Keyword | `posthog`    |
+| Auth           | `https://store-lite-eirl.vercel.app/auth`                   | HTTP(s)           | —            |
+
+El del ingest es el importante: si el bypass del proxy se rompe, esa URL responde la
+pantalla de login (200) en lugar del JavaScript. Sin el chequeo por keyword el monitor
+diría "up" mientras todos los eventos se pierden.
+
+### Lo que NO se puede monitorear ahí
+
+El túnel de Sentry (`/monitoring`) **no** sirve como monitor HTTP en UptimeRobot: el
+rewrite exige los parámetros `o`, `p` y `r`, y sólo atiende envelopes por POST. Un GET
+con esos parámetros devuelve 404 por diseño, así que el monitor lo marcaría caído.
+
+Verificación manual del túnel (esperado: **401** con `bad envelope authentication header`):
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" -X POST \
+  -H "Content-Type: application/x-sentry-envelope" \
+  "https://store-lite-eirl.vercel.app/monitoring?o=4511785250324480&p=4511785277063168&r=us"
+```
+
+Un **200, 302 o 404** ahí significan que el túnel dejó de reenviar, y con él se pierden
+los errores de los usuarios que tienen bloqueadores.
