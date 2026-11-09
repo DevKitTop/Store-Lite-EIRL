@@ -324,7 +324,10 @@ describe('POST /api/webhooks/culqi — charge.paid / charge.failed (design D13/D
     expect(mockInsert).not.toHaveBeenCalled();
     expect(mockSet).not.toHaveBeenCalled();
     expect(mockFulfillPaidSale).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('is not attributable to a sale'));
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('is not attributable to a sale'),
+      expect.anything(),
+    );
 
     warnSpy.mockRestore();
   });
@@ -419,7 +422,10 @@ describe('POST /api/webhooks/culqi — charge.paid / charge.failed (design D13/D
     // No row could be built ⇒ no row is written at all (the old update-only
     // fallback wrote a status onto a row that does not exist).
     expect(mockSet).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Cannot create a payment row'));
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Cannot create a payment row'),
+      expect.anything(),
+    );
 
     warnSpy.mockRestore();
   });
