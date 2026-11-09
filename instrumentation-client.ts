@@ -34,7 +34,11 @@ Sentry.init({
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
 
 // ─── PostHog ───────────────────────────────────────────────────────────────
-import { buildPostHogInitOptions, resolvePostHogKey } from '@/shared/analytics/posthogInitOptions';
+import {
+  buildPostHogInitOptions,
+  resolvePostHogEnvironment,
+  resolvePostHogKey,
+} from '@/shared/analytics/posthogInitOptions';
 import posthog from 'posthog-js';
 
 const POSTHOG_KEY = resolvePostHogKey({
@@ -52,4 +56,14 @@ if (!POSTHOG_KEY) {
   }
 } else {
   posthog.init(POSTHOG_KEY, buildPostHogInitOptions({ isDev, host: POSTHOG_HOST }));
+
+  // One PostHog project holds every environment. Tagging each event keeps
+  // development, preview and production traffic separable inside that project
+  // instead of splitting the data across projects nobody can compare.
+  posthog.register({
+    environment: resolvePostHogEnvironment({
+      vercelEnv: process.env.NEXT_PUBLIC_VERCEL_ENV,
+      hostname: window.location.hostname,
+    }),
+  });
 }

@@ -1,4 +1,8 @@
-import { buildPostHogInitOptions, resolvePostHogKey } from '@/shared/analytics/posthogInitOptions';
+import {
+  buildPostHogInitOptions,
+  resolvePostHogEnvironment,
+  resolvePostHogKey,
+} from '@/shared/analytics/posthogInitOptions';
 import { describe, expect, test } from 'vitest';
 
 describe('buildPostHogInitOptions', () => {
@@ -49,6 +53,40 @@ describe('buildPostHogInitOptions', () => {
     // these are disabled, and both sit on the critical path for first paint.
     expect(options.disable_session_recording).toBe(true);
     expect(options.disable_surveys).toBe(true);
+  });
+});
+
+describe('resolvePostHogEnvironment', () => {
+  test('labels the Vercel production deployment as production', () => {
+    expect(resolvePostHogEnvironment({ vercelEnv: 'production' })).toBe('production');
+  });
+
+  test('labels a Vercel preview deployment as preview', () => {
+    expect(resolvePostHogEnvironment({ vercelEnv: 'preview' })).toBe('preview');
+  });
+
+  test('labels a local run as development', () => {
+    // Without VERCEL_ENV, everything running on a developer machine is
+    // development, including a production build served with `next start`.
+    expect(resolvePostHogEnvironment({ hostname: 'localhost' })).toBe('development');
+    expect(resolvePostHogEnvironment({ hostname: '127.0.0.1' })).toBe('development');
+    expect(resolvePostHogEnvironment({ hostname: 'demo-store.localhost' })).toBe('development');
+  });
+
+  test('falls back to the hostname when the system variable is unavailable', () => {
+    // Vercel exposes NEXT_PUBLIC_VERCEL_ENV only while the project keeps the
+    // "Automatically expose System Environment Variables" opt-in enabled, so
+    // analytics must not silently degrade to development when it is off.
+    expect(resolvePostHogEnvironment({ hostname: 'store-lite-eirl.vercel.app' })).toBe(
+      'production',
+    );
+    expect(
+      resolvePostHogEnvironment({ hostname: 'store-lite-eirl-git-fix-x-team.vercel.app' }),
+    ).toBe('preview');
+  });
+
+  test('treats an unknown host as production so real traffic is never misfiled', () => {
+    expect(resolvePostHogEnvironment({ hostname: 'tienda.ejemplo.com' })).toBe('production');
   });
 });
 
