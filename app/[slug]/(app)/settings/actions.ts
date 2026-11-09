@@ -18,6 +18,7 @@ import {
   normalizeStorefrontTheme,
 } from '@/core/storefront';
 import { requireAccessOnId } from '@/features/storage/actions/authz';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { getPostHogClient } from '@/lib/posthogServer';
 import type { ActionState } from '@/types/actions';
 import { getErrorMessage } from '@/utils/errors';
@@ -115,7 +116,7 @@ export async function updateBusinessSlug(
     const posthog = getPostHogClient();
     posthog.capture({
       distinctId: businessId,
-      event: 'business_slug_updated',
+      event: AnalyticsEvents.BUSINESS_SLUG_UPDATED,
       properties: { business_id: businessId, new_slug: newSlug },
     });
     await posthog.flush();
@@ -364,7 +365,7 @@ export async function updateStorefrontTheme(
     const posthog = getPostHogClient();
     posthog.capture({
       distinctId: businessId,
-      event: 'storefront_customized',
+      event: AnalyticsEvents.STOREFRONT_CUSTOMIZED,
       properties: { business_id: businessId, customization_type: 'theme', slug },
     });
     await posthog.flush();
@@ -550,7 +551,7 @@ export async function updateCulqiCredentials(
     const posthog = getPostHogClient();
     posthog.capture({
       distinctId: businessId,
-      event: 'payment_gateway_configured',
+      event: AnalyticsEvents.PAYMENT_GATEWAY_CONFIGURED,
       properties: { business_id: businessId, gateway: 'culqi' },
     });
     await posthog.flush();

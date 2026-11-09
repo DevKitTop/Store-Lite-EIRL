@@ -1,6 +1,7 @@
 'use client';
 
 import type { CartItem } from '@/features/storage/context/CartContext';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { chargePayment } from '@/shared/payments/paymentApi';
 import type { CulqiOrderResult } from '@/types/culqi';
 import { posthog } from 'posthog-js';
@@ -382,8 +383,8 @@ function trackPaymentAnalytics({
 }: TrackPaymentAnalyticsParams): void {
   try {
     if (typeof posthog?.capture === 'function') {
-      posthog.capture('order_created', { orderId, amount, businessSlug });
-      posthog.capture('payment_completed', { paymentId, amount, method });
+      posthog.capture(AnalyticsEvents.ORDER_CREATED, { orderId, amount, businessSlug });
+      posthog.capture(AnalyticsEvents.PAYMENT_COMPLETED, { paymentId, amount, method });
     }
   } catch {
     // Analytics should never block user flow
