@@ -9,6 +9,8 @@ import {
 } from '@/core/whatsapp/guards/whatsappSendGuards';
 import { normalizeMetaStatus } from '@/core/whatsapp/templates/metaStatus';
 import { BASE_TEMPLATES, applyBusinessName } from '@/features/chat/constants/baseTemplates';
+import { captureEvent } from '@/lib/analytics/capture';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { createClient } from '@/lib/supabase/server';
 import { and, desc, eq } from 'drizzle-orm';
 
@@ -547,6 +549,12 @@ export async function sendTemplateMessage(data: {
       .update(whatsappConversations)
       .set({ lastMessageAt: new Date(), updatedAt: new Date() })
       .where(eq(whatsappConversations.id, data.conversationId));
+
+    // Fire-and-forget: analytics must never block an outbound message.
+    captureEvent(AnalyticsEvents.WHATSAPP_TEMPLATE_MESSAGE_SENT, {
+      business_id: channel[0].businessId,
+      template_name: data.templateName,
+    }).catch(() => {});
 
     return { success: true, messageId: newMessage.id };
   } catch (error) {

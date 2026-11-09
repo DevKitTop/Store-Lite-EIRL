@@ -1,5 +1,6 @@
 'use client';
 
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { Button, Card, Icon } from '@/shared/components/ui';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -50,7 +51,7 @@ export default function OnboardingPage() {
     trackedRef.current = true;
     try {
       if (typeof posthog?.capture === 'function') {
-        posthog.capture('user_registered');
+        posthog.capture(AnalyticsEvents.USER_REGISTERED);
       }
     } catch {
       // Analytics should never block user flow

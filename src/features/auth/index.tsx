@@ -1,5 +1,6 @@
 'use client';
 
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { createClient } from '@/lib/supabase/client';
 import { buildAuthCallbackUrl, extractRedirectFromSearch } from '@/shared/utils/redirectTarget';
 import type { AuthContextType, AuthSession, AuthUser } from '@/types/auth';
@@ -187,7 +188,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           posthog.identify(session.user.id, {
             role: session.user.role,
           });
-          posthog.capture('user_signed_in', {
+          posthog.capture(AnalyticsEvents.USER_SIGNED_IN, {
             provider: session.user.app_metadata?.provider,
           });
         }
@@ -283,7 +284,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const signOut = async () => {
-    posthog.capture('user_signed_out');
+    posthog.capture(AnalyticsEvents.USER_SIGNED_OUT);
     posthog.reset();
     const { error } = await supabase.auth.signOut();
     if (error) throw error;

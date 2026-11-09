@@ -4,6 +4,7 @@ import { productCategories, products } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import type { Product } from '@/features/storage/data';
 import { getMemberPermissions } from '@/lib/permissions/checkPermission';
+import { applySentryContext } from '@/lib/sentryContext';
 import { createClient } from '@/lib/supabase/server';
 import AppLayout from '@/shared/components/layout/AppLayout';
 import { eq } from 'drizzle-orm';
@@ -46,6 +47,13 @@ export default async function AppGroupLayout({ children, modal, params }: AppLay
   // Calcular entitlements del negocio según su plan de suscripción activo
   const entitlements = await getBusinessEntitlements(business.id);
   const navbarPlanName = entitlements.plan;
+
+  // Every authenticated page render tags its Sentry scope, so an error report
+  // answers "which business and which plan" without a manual lookup.
+  applySentryContext(
+    { userId: user?.id ?? null, businessId: business.id, plan: entitlements.plan },
+    `/${slug}`,
+  );
 
   let categoryNames: { id: string; name: string }[] | undefined;
   let storageProducts: Product[] | undefined;

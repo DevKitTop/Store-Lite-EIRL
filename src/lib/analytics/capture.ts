@@ -11,6 +11,7 @@ import type { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { AnalyticsTags } from '@/lib/analytics/taxonomy';
 import { scrubPII } from '@/lib/piiScrubber';
 import { getPostHogClient } from '@/lib/posthogServer';
+import { applySentryContext } from '@/lib/sentryContext';
 
 import { getAnalyticsContext, type AnalyticsContext } from './context';
 
@@ -27,6 +28,11 @@ export async function captureEvent(
 ): Promise<void> {
   const ctx: AnalyticsContext = await getAnalyticsContext();
   const client = getPostHogClient();
+
+  // The context is already resolved here, so tag the Sentry scope too:
+  // an error raised later in this server action will carry the same
+  // user, business and plan.
+  applySentryContext(ctx);
 
   const cleanProps = properties ? scrubPII(properties) : {};
 

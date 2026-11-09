@@ -13,6 +13,8 @@ import {
   assertOutboundRateLimit,
   assertWithinServiceWindow,
 } from '@/core/whatsapp/guards/whatsappSendGuards';
+import { captureEvent } from '@/lib/analytics/capture';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { createClient } from '@/lib/supabase/server';
 import { and, desc, eq } from 'drizzle-orm';
 
@@ -340,6 +342,12 @@ export async function sendWhatsAppMessage(data: {
       .update(whatsappConversations)
       .set({ lastMessageAt: new Date(), updatedAt: new Date() })
       .where(eq(whatsappConversations.id, data.conversationId));
+
+    // Fire-and-forget: analytics must never block an outbound message.
+    captureEvent(AnalyticsEvents.WHATSAPP_MESSAGE_SENT, {
+      business_id: channel[0].businessId,
+      message_type: data.type,
+    }).catch(() => {});
 
     return { success: true, message: newMessage };
   } catch (error) {

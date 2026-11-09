@@ -7,6 +7,8 @@ import {
   VerifyIdentitySchema,
   VerifyOtpSchema,
 } from '@/features/business/actions/kybSchemas';
+import { captureEvent } from '@/lib/analytics/capture';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { getRucInfo, getRucRepresentatives } from '@/lib/factiliza/client';
 import { checkOtpViaVerify, sendOtpViaVerify } from '@/lib/twilio/client';
 import { and, desc, eq, gt, sql } from 'drizzle-orm';
@@ -205,6 +207,9 @@ export async function requestOtpAction(formData: FormData) {
       return { error: 'Email OTP not implemented yet' };
     }
 
+    // Fire-and-forget: analytics must never block identity verification.
+    captureEvent(AnalyticsEvents.OTP_REQUESTED, { channel: 'whatsapp' }).catch(() => {});
+
     return { success: true, message: 'Código OTP enviado via WhatsApp' };
   } catch (error: unknown) {
     console.error(`[KYB] Error requesting OTP:`, error);
@@ -230,6 +235,7 @@ export async function verifyOtpAction(formData: FormData) {
     const result = await checkOtpViaVerify(phone, code);
 
     if (!result.valid) {
+      captureEvent(AnalyticsEvents.OTP_VERIFICATION_FAILED).catch(() => {});
       return { error: 'Código inválido o expirado. Solicita un nuevo código.' };
     }
 
@@ -247,6 +253,9 @@ export async function verifyOtpAction(formData: FormData) {
         .set({ verified: true })
         .where(eq(verificationOtps.id, otpRecord[0].id));
     }
+
+    // Fire-and-forget: analytics must never block identity verification.
+    captureEvent(AnalyticsEvents.OTP_VERIFIED).catch(() => {});
 
     return { success: true, message: 'Código verificado exitosamente' };
   } catch (error: unknown) {
