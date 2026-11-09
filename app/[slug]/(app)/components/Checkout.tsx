@@ -2,6 +2,7 @@
 
 import { PERU_LOCATIONS } from '@/core/logistics/peruLocations';
 import type { CartItem } from '@/features/storage/context/CartContext';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { createClient } from '@/lib/supabase/client';
 import { AlertSnackbar, Icon } from '@/shared/components/ui';
 import { prefillBuyerName } from '@/shared/payments/buyerName';
@@ -297,7 +298,7 @@ export default function Checkout({
     businessCity,
     onOrderPaid: useCallback(
       (order) => {
-        posthog.capture('order_completed', {
+        posthog.capture(AnalyticsEvents.ORDER_COMPLETED, {
           order_number: order.orderNumber,
           payment_method: order.paymentMethod,
           total_amount: finalTotal,
@@ -368,7 +369,7 @@ export default function Checkout({
           return;
         }
       }
-      posthog.capture('checkout_shipping_completed', {
+      posthog.capture(AnalyticsEvents.CHECKOUT_SHIPPING_COMPLETED, {
         courier: shippingInfo.courier,
         department: shippingInfo.department,
         store_slug: slug,
@@ -421,7 +422,7 @@ export default function Checkout({
   }, [onSuccess]);
 
   const handlePayment = () => {
-    posthog.capture('payment_initiated', {
+    posthog.capture(AnalyticsEvents.PAYMENT_INITIATED, {
       total_amount: finalTotal,
       item_count: cartItems.length,
       store_slug: slug,

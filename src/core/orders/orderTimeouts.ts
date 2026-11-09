@@ -19,6 +19,7 @@ import {
 } from '@/core/penalties/penaltyTypes';
 import { processOrderCompletion } from '@/lib/deactivation';
 import { checkIncompleteOrderDeactivation } from '@/lib/incompleteOrderRate';
+import { logger } from '@/lib/logger';
 import { transition } from './orderService';
 import type { OrderStatusV2 } from './orderStatus';
 import { ORDER_STATUS, ORDER_STATUS_V2 } from './orderStatus';
@@ -153,9 +154,11 @@ export async function processTimeouts(): Promise<{
             processed++;
           } catch (err) {
             errors++;
-            console.error(
-              `[Timeouts] ${rule.label}: ${order.id} penalty failed — ${err instanceof Error ? err.message : String(err)}`,
-            );
+            logger.error('Timeouts: penalty failed', {
+              rule: rule.label,
+              orderId: order.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         } else {
           // Transition rules: delegate to orderService.transition()
@@ -172,21 +175,28 @@ export async function processTimeouts(): Promise<{
               processed++;
             } else {
               errors++;
-              console.error(`[Timeouts] ${rule.label}: ${order.id} failed — ${result.error}`);
+              logger.error('Timeouts: transition failed', {
+                rule: rule.label,
+                orderId: order.id,
+                error: result.error,
+              });
             }
           } catch (err) {
             errors++;
-            console.error(
-              `[Timeouts] ${rule.label}: ${order.id} threw — ${err instanceof Error ? err.message : String(err)}`,
-            );
+            logger.error('Timeouts: transition threw', {
+              rule: rule.label,
+              orderId: order.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         }
       }
     } catch (err) {
       errors++;
-      console.error(
-        `[Timeouts] Rule "${rule.label}" query failed — ${err instanceof Error ? err.message : String(err)}`,
-      );
+      logger.error('Timeouts: rule query failed', {
+        rule: rule.label,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -316,7 +326,12 @@ async function handlePenalty(
         await processOrderCompletion(order.businessId!);
       }
     } catch (deactivationError) {
-      console.error('[handlePenalty] Error checking incomplete order rate:', deactivationError);
+      logger.error('handlePenalty: incomplete order rate check failed', {
+        error:
+          deactivationError instanceof Error
+            ? deactivationError.message
+            : String(deactivationError),
+      });
       // Don't fail the penalty processing if deactivation check fails
     }
   }

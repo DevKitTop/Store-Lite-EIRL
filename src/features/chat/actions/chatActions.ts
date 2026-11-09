@@ -8,6 +8,7 @@ import {
   messages,
   payments,
 } from '@/core/database/schema';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { notifyNewMessage } from '@/lib/notifications';
 import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
 import { checkPermission } from '@/lib/permissions';
@@ -180,7 +181,7 @@ export async function startChatSession(data: {
     if (posthog) {
       posthog.capture({
         distinctId: data.guestId,
-        event: 'chat_session_started',
+        event: AnalyticsEvents.CHAT_SESSION_STARTED,
         properties: {
           business_id: data.businessId,
           session_id: newSession.id,

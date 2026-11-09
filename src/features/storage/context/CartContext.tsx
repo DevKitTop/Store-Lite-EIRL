@@ -1,5 +1,6 @@
 'use client';
 
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import posthog from 'posthog-js';
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { Product } from '../data';
@@ -90,7 +91,7 @@ export const CartProvider = ({
         if (existingItem.quantity >= product.stock) {
           return prevItems;
         }
-        posthog.capture('cart_item_added', {
+        posthog.capture(AnalyticsEvents.CART_ITEM_ADDED, {
           product_id: product.id,
           product_name: product.name,
           quantity: existingItem.quantity + 1,
@@ -104,7 +105,7 @@ export const CartProvider = ({
       if (product.stock <= 0) {
         return prevItems;
       }
-      posthog.capture('cart_item_added', {
+      posthog.capture(AnalyticsEvents.CART_ITEM_ADDED, {
         product_id: product.id,
         product_name: product.name,
         quantity: 1,

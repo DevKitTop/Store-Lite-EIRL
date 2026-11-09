@@ -1,11 +1,12 @@
 import { env } from '@/config/env';
+import { logger } from '@/lib/logger';
 import { Resend } from 'resend';
 
 let _client: Resend | null = null;
 
 function getResend(): Resend | null {
   if (!env.resendApiKey) {
-    console.warn('[Resend] API key not configured — skipping email');
+    logger.warn('Resend: API key not configured, skipping email');
     return null;
   }
   if (!_client) {
@@ -29,7 +30,7 @@ export async function sendEmail(params: SendEmailParams): Promise<void> {
   if (!resend) return;
 
   if (!env.resendFromEmail) {
-    console.warn('[Resend] RESEND_FROM_EMAIL not configured — skipping email');
+    logger.warn('Resend: from address not configured, skipping email');
     return;
   }
 
@@ -42,9 +43,13 @@ export async function sendEmail(params: SendEmailParams): Promise<void> {
     });
 
     if (error) {
-      console.error('[Resend] API error:', error);
+      logger.error('Resend: API error', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   } catch (err) {
-    console.error('[Resend] Network/HTTP error:', err);
+    logger.error('Resend: network error', {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }

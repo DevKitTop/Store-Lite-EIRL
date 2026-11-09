@@ -1,6 +1,7 @@
 'use client';
 
 import { getProductStats, getProductsForExport } from '@/features/business/actions/businessActions';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { Icon } from '@/shared/components/ui/data-display';
 import { posthog } from 'posthog-js';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -104,7 +105,7 @@ export const ProductosTab: React.FC<ProductosTabProps> = ({ businessId }) => {
 
       try {
         if (typeof posthog?.capture === 'function') {
-          posthog.capture('export_downloaded', {
+          posthog.capture(AnalyticsEvents.EXPORT_DOWNLOADED, {
             type: 'products',
             businessId,
           });

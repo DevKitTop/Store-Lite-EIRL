@@ -3,6 +3,7 @@
 import type { CartItem, CartServerItem } from '@/features/storage/context/CartContext';
 import { useCart } from '@/features/storage/context/CartContext';
 import { formatPrice } from '@/features/storage/utils/currency';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { Icon } from '@/shared/components/ui';
 import { IconButton } from '@/shared/components/ui/buttons';
 import { getBusinessPath } from '@/shared/utils/url';
@@ -274,7 +275,7 @@ export function CartDrawer({
                   // Re-validar antes de checkout por si pasó tiempo
                   await validateCart();
                   if (hasPaymentGateway) {
-                    posthog.capture('checkout_started', {
+                    posthog.capture(AnalyticsEvents.CHECKOUT_STARTED, {
                       item_count: cartItems.length,
                       total_amount: totalPrice,
                       store_slug: slug,

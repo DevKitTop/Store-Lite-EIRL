@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger';
+
 /**
  * Lista de mensajes de error esperados (lógica de negocio, permisos, etc.)
  * que no deben ensuciar la consola como errores de sistema.
@@ -45,5 +47,7 @@ export function logError(context: string, error: unknown) {
     return;
   }
 
-  console.error(`[${context}] Error crítico:`, error);
+  logger.error(`${context}: critical error`, {
+    error: error instanceof Error ? error.message : String(error),
+  });
 }
