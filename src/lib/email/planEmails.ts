@@ -1,6 +1,7 @@
 import { db } from '@/core/database/client';
 import { businesses, formatTicketNumber, type PlanPayment } from '@/core/database/schema';
 import { PlanPurchaseConfirmationEmail } from '@/emails/PlanPurchaseConfirmationEmail';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { getSignedTicketUrl } from '@/lib/storage/signedTicket';
 import { extractTicketPath } from '@/lib/storage/ticketImage';
 import { PLAN_PRICES } from '@/shared/billing/planPrices';
@@ -76,6 +77,6 @@ export async function sendPlanPurchaseConfirmationEmail(
       html,
     });
   } catch (error) {
-    console.error('[PlanEmails] Error sending plan purchase confirmation email:', error);
+    logger.error('PlanEmails: plan purchase confirmation failed', { error: toErrorDetail(error) });
   }
 }

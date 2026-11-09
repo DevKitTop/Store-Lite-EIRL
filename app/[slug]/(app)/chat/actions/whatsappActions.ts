@@ -15,6 +15,7 @@ import {
 } from '@/core/whatsapp/guards/whatsappSendGuards';
 import { captureEvent } from '@/lib/analytics/capture';
 import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { and, desc, eq } from 'drizzle-orm';
 
@@ -165,7 +166,7 @@ export async function fetchWhatsAppConversations(businessId: string) {
       channelId: channel.id,
     };
   } catch (error) {
-    console.error('Error fetching WhatsApp conversations:', error);
+    logger.error('Error fetching WhatsApp conversations:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: 'No se pudo cargar las conversaciones de WhatsApp',
@@ -211,7 +212,7 @@ export async function fetchWhatsAppMessages(conversationId: string) {
 
     return { success: true, messages };
   } catch (error) {
-    console.error('Error fetching WhatsApp messages:', error);
+    logger.error('Error fetching WhatsApp messages:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo cargar los mensajes', messages: [] };
   }
 }
@@ -280,7 +281,7 @@ export async function sendWhatsAppMessage(data: {
 
     const apiKey = env.ycloudApiKey;
     if (!apiKey) {
-      console.error('[sendWhatsAppMessage] Missing YCloud API key');
+      logger.error('[sendWhatsAppMessage] Missing YCloud API key');
       return { success: false, error: 'Configuración de WhatsApp incompleta' };
     }
 
@@ -309,7 +310,7 @@ export async function sendWhatsAppMessage(data: {
     const ycloudResponse = await response.json();
 
     if (!response.ok) {
-      console.error('[sendWhatsAppMessage] YCloud error:', ycloudResponse);
+      logger.error('[sendWhatsAppMessage] YCloud error:', { error: toErrorDetail(ycloudResponse) });
       return {
         success: false,
         error: ycloudResponse.message || 'Error al enviar mensaje por WhatsApp',
@@ -318,7 +319,9 @@ export async function sendWhatsAppMessage(data: {
 
     const ycloudMessageId = ycloudResponse.id;
     if (!ycloudMessageId) {
-      console.error('[sendWhatsAppMessage] Invalid YCloud response:', ycloudResponse);
+      logger.error('[sendWhatsAppMessage] Invalid YCloud response:', {
+        error: toErrorDetail(ycloudResponse),
+      });
       return { success: false, error: 'Respuesta inválida de YCloud' };
     }
 
@@ -351,7 +354,7 @@ export async function sendWhatsAppMessage(data: {
 
     return { success: true, message: newMessage };
   } catch (error) {
-    console.error('Error sending WhatsApp message:', error);
+    logger.error('Error sending WhatsApp message:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo enviar el mensaje' };
   }
 }

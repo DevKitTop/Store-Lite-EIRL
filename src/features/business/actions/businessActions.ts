@@ -10,6 +10,7 @@ import {
   productMedia,
   products,
 } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import type { CookieOptions } from '@supabase/ssr';
 import { createServerClient } from '@supabase/ssr';
 import { and, asc, avg, count, desc, eq, inArray, sum } from 'drizzle-orm';
@@ -178,7 +179,7 @@ export async function removeTeamMemberAction(memberId: string) {
     revalidatePath('/list-business');
     return { success: true };
   } catch (error) {
-    console.error('Error removing team member:', error);
+    logger.error('Error removing team member:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error al quitar miembro del equipo',
@@ -304,7 +305,9 @@ export async function deleteBusinessAction(businessId: string) {
           .remove(pathsToDelete);
 
         if (storageError) {
-          console.error('Error deleting images from storage:', storageError);
+          logger.error('Error deleting images from storage:', {
+            error: toErrorDetail(storageError),
+          });
           // We might continue anyway to delete the DB record, but logging it is good
         }
       }
@@ -318,7 +321,7 @@ export async function deleteBusinessAction(businessId: string) {
 
     return { success: true };
   } catch (error) {
-    console.error('Error in deleteBusinessAction:', error);
+    logger.error('Error in deleteBusinessAction:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido al eliminar la empresa',

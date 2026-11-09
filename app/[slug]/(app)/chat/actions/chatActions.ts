@@ -2,6 +2,7 @@
 
 import { db } from '@/core/database/client';
 import { businesses, businessTeamMembers, chatSessions, messages } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { notifyNewMessage } from '@/lib/notifications';
 import { checkPermission } from '@/lib/permissions';
 import { createClient } from '@/lib/supabase/server';
@@ -144,7 +145,7 @@ export async function startChatSession(data: {
 
     return { success: true, sessionId: newSession.id };
   } catch (error) {
-    console.error('Error starting chat session:', error);
+    logger.error('Error starting chat session:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo iniciar el chat' };
   }
 }
@@ -188,14 +189,14 @@ export async function sendMessage(data: {
           customerName: session.guestName,
           preview: data.content,
         }).catch((notifyErr) => {
-          console.error('[notifyNewMessage] Error:', notifyErr);
+          logger.error('[notifyNewMessage] Error:', { error: toErrorDetail(notifyErr) });
         });
       }
     }
 
     return { success: true, message: newMessage };
   } catch (error) {
-    console.error('Error sending message:', error);
+    logger.error('Error sending message:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo enviar el mensaje' };
   }
 }
@@ -214,7 +215,7 @@ export async function fetchMessages(sessionId: string, guestId?: string) {
 
     return { success: true, messages: chatMessages };
   } catch (error) {
-    console.error('Error fetching messages:', error);
+    logger.error('Error fetching messages:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo cargar los mensajes', messages: [] };
   }
 }
@@ -233,7 +234,7 @@ export async function getActiveChatSession(guestId: string, businessId: string) 
 
     return { success: true, session };
   } catch (error) {
-    console.error('Error getting active chat session:', error);
+    logger.error('Error getting active chat session:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo obtener la sesion actual' };
   }
 }
@@ -308,7 +309,7 @@ export async function fetchChatSessions(businessId: string) {
 
     return { success: true, sessions };
   } catch (error) {
-    console.error('Error fetching chat sessions:', error);
+    logger.error('Error fetching chat sessions:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo cargar las sesiones de chat', sessions: [] };
   }
 }
@@ -339,7 +340,7 @@ export async function deleteChatSession(sessionId: string) {
     await db.delete(chatSessions).where(eq(chatSessions.id, sessionId));
     return { success: true };
   } catch (error) {
-    console.error('Error deleting chat session:', error);
+    logger.error('Error deleting chat session:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo eliminar el chat' };
   }
 }

@@ -4,6 +4,7 @@ import { businessTeamMembers } from '@/core/database/schema';
 import { withTenantContext } from '@/core/database/tenant';
 import type { TeamMember } from '@/core/team/directory';
 import { resolveTeamDirectory, resolveUserTeams } from '@/core/team/directory';
+import { logger, toErrorDetail } from '@/lib/logger';
 import type { ActionState } from '@/types/actions';
 import { and, eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
@@ -83,7 +84,7 @@ export async function removeTeamMember(
 
     return { success: true, message: 'Miembro eliminado del equipo.' };
   } catch (err) {
-    console.error('[removeTeamMember] Error:', err);
+    logger.error('[removeTeamMember] Error:', { error: toErrorDetail(err) });
     return { success: false, error: 'Error al eliminar el miembro.' };
   }
 }
@@ -124,7 +125,7 @@ export async function leaveTeam(businessId: string): Promise<ActionState> {
 
     return { success: true, message: 'Has salido del equipo.' };
   } catch (err) {
-    console.error('[leaveTeam] Error:', err);
+    logger.error('[leaveTeam] Error:', { error: toErrorDetail(err) });
     return { success: false, error: 'Error al salir del equipo.' };
   }
 }
@@ -149,7 +150,7 @@ export async function getUserTeams(): Promise<
 
     return { success: true, teams };
   } catch (err) {
-    console.error('[getUserTeams] Error:', err);
+    logger.error('[getUserTeams] Error:', { error: toErrorDetail(err) });
     return { success: false, error: 'Error al obtener tus equipos.' };
   }
 }

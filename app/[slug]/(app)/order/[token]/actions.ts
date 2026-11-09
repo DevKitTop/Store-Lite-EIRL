@@ -4,6 +4,7 @@ import { db } from '@/core/database/client';
 import { chatSessions, messages, payments } from '@/core/database/schema';
 import { transition } from '@/core/orders/orderService';
 import { ORDER_STATUS_V2, type OrderStatusV2 } from '@/core/orders/orderStatus';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { deleteOrderAccessCookie, setOrderAccessCookie } from '@/lib/orderAccessCookie';
 import {
   ORDER_ACCESS_DENIED_ERROR,
@@ -136,7 +137,7 @@ export async function updateOrderStatus(
     revalidatePath('/[slug]/order/[token]', 'page');
     return { success: true };
   } catch (error) {
-    console.error('[Action Error] updateOrderStatus:', error);
+    logger.error('[Action Error] updateOrderStatus:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: 'Error al actualizar el estado',
@@ -324,7 +325,7 @@ export async function syncChatSession(params: {
 
     return { success: true, sessionId: newSession.id, guestId: finalGuestId };
   } catch (error) {
-    console.error('[Action Error] syncChatSession:', error);
+    logger.error('[Action Error] syncChatSession:', { error: toErrorDetail(error) });
     return { success: false, error: 'Error al sincronizar chat' };
   }
 }
@@ -384,7 +385,7 @@ export async function verifyOrderByGoogleIdentity(
 
     return { success: true };
   } catch (error) {
-    console.error('[Action Error] verifyOrderByGoogleIdentity:', error);
+    logger.error('[Action Error] verifyOrderByGoogleIdentity:', { error: toErrorDetail(error) });
     return { success: false, reason: 'error' };
   }
 }
@@ -474,7 +475,7 @@ export async function reportIssueV2(
     revalidatePath('/[slug]/order/[token]', 'page');
     return { success: true };
   } catch (error) {
-    console.error('[reportIssueV2] Error:', error);
+    logger.error('[reportIssueV2] Error:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: 'Error al reportar el problema',

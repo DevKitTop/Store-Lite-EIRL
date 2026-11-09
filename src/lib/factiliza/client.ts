@@ -7,6 +7,7 @@
 // =====================================================
 
 import { env } from '@/config/env';
+import { logger } from '@/lib/logger';
 import type {
   CacheEntry,
   JsonpeDniInfo,
@@ -71,14 +72,14 @@ async function apiPost<T>(endpoint: string, body: Record<string, string>): Promi
     }
 
     // Generic error — NEVER expose provider name or internal details
-    console.error(`[API] HTTP Error ${response.status}: ${errorBody}`);
+    logger.error('factiliza: HTTP error', { status: response.status, body: errorBody });
     throw new Error('Error al consultar el documento. Intente nuevamente.');
   }
 
   const json: JsonpeResponse<T> = await response.json();
 
   if (!json.success) {
-    console.warn(`[API] Response error: ${json.message}`);
+    logger.warn('factiliza: response error', { message: json.message });
     throw new Error(json.message || 'Error al consultar el documento.');
   }
 

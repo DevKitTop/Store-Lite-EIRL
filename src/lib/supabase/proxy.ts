@@ -24,6 +24,7 @@
 // =====================================================
 
 import { env } from '@/config/env';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
@@ -173,7 +174,7 @@ export async function updateProxy(request: NextRequest) {
     }
   } catch (error) {
     // Gracefully handle fetch failures in proxy/edge runtime
-    console.error('Supabase Auth error in Proxy:', error);
+    logger.error('Supabase proxy: auth error', { error: toErrorDetail(error) });
   }
 
   return supabaseResponse;

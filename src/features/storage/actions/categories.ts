@@ -9,6 +9,7 @@ import { eq, sql } from 'drizzle-orm';
 
 import { getBusinessEntitlements } from '@/core/entitlements';
 import { logError } from '@/lib/errorHandling';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { revalidatePath } from 'next/cache';
 import { requireAccess } from './authz';
 
@@ -39,19 +40,23 @@ async function deleteCategoryImage(businessId: string, url: string | null): Prom
 
   // Reject traversal attempts up front; the prefix check below does NOT stop "..".
   if (filePath.includes('..')) {
-    console.warn('[deleteCategoryImage] Path contains traversal, skipping deletion:', filePath);
+    logger.warn('[deleteCategoryImage] Path contains traversal, skipping deletion:', {
+      filePath,
+    });
     return;
   }
 
   const expectedPrefix = `${CATEGORY_PREFIX}/${businessId}/`;
   if (!filePath.startsWith(expectedPrefix)) {
-    console.warn('[deleteCategoryImage] Path outside categories, skipping deletion:', filePath);
+    logger.warn('[deleteCategoryImage] Path outside categories, skipping deletion:', {
+      error: toErrorDetail(filePath),
+    });
     return;
   }
 
   const { error } = await createAdminClient().storage.from(CATEGORY_BUCKET).remove([filePath]);
   if (error) {
-    console.warn('[deleteCategoryImage] Failed to remove previous image:', error.message);
+    logger.warn('[deleteCategoryImage] Failed to remove previous image:', { error: error.message });
   }
 }
 

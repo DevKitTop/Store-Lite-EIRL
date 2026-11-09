@@ -26,6 +26,7 @@ import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { chatSessions, messages, payments } from '@/core/database/schema';
 import { ORDER_STATUS } from '@/core/orders/orderStatus';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createBusinessNotification } from '@/lib/notifications';
 import { and, eq, lt } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
@@ -108,7 +109,10 @@ export async function autoFinalizeExpiredPayments(): Promise<{
 
         processedCount++;
       } catch (err) {
-        console.error(`[autoFinalize] Error processing payment ${payment.id}:`, err);
+        logger.error('autoFinalize: payment processing failed', {
+          paymentId: payment.id,
+          error: toErrorDetail(err),
+        });
       }
     }
 
@@ -116,7 +120,7 @@ export async function autoFinalizeExpiredPayments(): Promise<{
 
     return { success: true, processedCount };
   } catch (error) {
-    console.error('[autoFinalize] Error:', error);
+    logger.error('[autoFinalize] Error:', { error: toErrorDetail(error) });
     return {
       success: false,
       processedCount: 0,

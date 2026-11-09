@@ -5,6 +5,7 @@ import { db } from '@/core/database/client';
 import { businessInvitations, businessTeamMembers, businesses } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import { type AcceptInvitationResult, acceptBusinessInvitation } from '@/core/team/invitations';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { isBusinessOwner } from '@/lib/permissions/checkPermission';
 import type { ActionState } from '@/types/actions';
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
@@ -70,7 +71,9 @@ export async function generateInvitationCode(
         ),
       );
   } catch (err) {
-    console.error('[generateInvitationCode] Error invalidating old codes:', err);
+    logger.error('[generateInvitationCode] Error invalidating old codes:', {
+      error: toErrorDetail(err),
+    });
   }
 
   // 5. Generate and save new code
@@ -97,7 +100,7 @@ export async function generateInvitationCode(
       code,
     };
   } catch (err) {
-    console.error('[generateInvitationCode] Error:', err);
+    logger.error('[generateInvitationCode] Error:', { error: toErrorDetail(err) });
     return { success: false, error: 'Error al generar el código de invitación.' };
   }
 }
@@ -173,7 +176,7 @@ export async function revokeInvitationCode(businessId: string, code: string): Pr
 
     return { success: true, message: 'Código de invitación revocado.' };
   } catch (err) {
-    console.error('[revokeInvitationCode] Error:', err);
+    logger.error('[revokeInvitationCode] Error:', { error: toErrorDetail(err) });
     return { success: false, error: 'Error al revocar el código.' };
   }
 }
@@ -319,7 +322,7 @@ async function completeJoin({ business, code, userId, successMessage }: JoinRequ
   try {
     result = await acceptBusinessInvitation(business.id, code.toUpperCase(), userId);
   } catch (err) {
-    console.error('[joinTeam] Error:', err);
+    logger.error('[joinTeam] Error:', { error: toErrorDetail(err) });
     return { success: false, error: 'Error al unirte al equipo.' };
   }
 

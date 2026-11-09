@@ -15,6 +15,7 @@ import type { z } from 'zod';
 
 import { calculateComplaintScore, updateComplaintScore } from '@/lib/complaintScoring';
 import { processComplaintSubmission } from '@/lib/deactivation';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { complaintFormSchema, complaintResponseSchema, legalContentSchema } from './schemas';
 import type { ComplaintRecord } from './types';
 
@@ -81,7 +82,7 @@ export async function saveLegalContent(
 
     return { success: true, message: 'Contenido legal guardado correctamente.' };
   } catch (error) {
-    console.error('[legal] Error saving legal content:', error);
+    logger.error('[legal] Error saving legal content:', { error: toErrorDetail(error) });
     if (error instanceof Error && error.message.includes('Forbidden')) {
       return { success: false, error: 'No tenés permisos para editar la información legal.' };
     }
@@ -273,7 +274,9 @@ async function createComplaintRecord(
       .set({ emailSentAt: new Date() })
       .where(eq(complaintBookRecords.id, record.id));
   } catch (emailError) {
-    console.warn('[legal] Failed to send complaint confirmation email:', emailError);
+    logger.warn('[legal] Failed to send complaint confirmation email:', {
+      error: toErrorDetail(emailError),
+    });
     emailFailed = true;
   }
 
@@ -286,7 +289,9 @@ async function createComplaintRecord(
       // Check for deactivation trigger (async, non-blocking)
       await processComplaintSubmission(record.id, businessId);
     } catch (scoringError) {
-      console.error('[legal] Error calculating complaint score:', scoringError);
+      logger.error('[legal] Error calculating complaint score:', {
+        error: toErrorDetail(scoringError),
+      });
       // Don't fail the complaint submission if scoring fails
     }
   }
@@ -341,7 +346,7 @@ export async function submitComplaint(
 
     return createComplaintRecord(business, formData);
   } catch (error) {
-    console.error('[legal] Error submitting complaint:', error);
+    logger.error('[legal] Error submitting complaint:', { error: toErrorDetail(error) });
     return { success: false, error: 'Error al registrar el reclamo. Intentalo de nuevo.' };
   }
 }
@@ -386,7 +391,7 @@ export async function submitPlatformComplaint(
 
     return await createComplaintRecord(business, formData);
   } catch (error) {
-    console.error('[legal] Error submitting platform complaint:', error);
+    logger.error('[legal] Error submitting platform complaint:', { error: toErrorDetail(error) });
     return { success: false, error: 'Error al registrar el reclamo. Intentalo de nuevo.' };
   }
 }
@@ -436,7 +441,7 @@ export async function getComplaints(
       })),
     };
   } catch (error) {
-    console.error('[legal] Error fetching complaints:', error);
+    logger.error('[legal] Error fetching complaints:', { error: toErrorDetail(error) });
     if (error instanceof Error && error.message.includes('Forbidden')) {
       return { success: false, error: 'No tenés permisos para ver reclamos.' };
     }
@@ -491,7 +496,7 @@ export async function respondToComplaint(
 
     return { success: true, message: 'Respuesta registrada correctamente.' };
   } catch (error) {
-    console.error('[legal] Error responding to complaint:', error);
+    logger.error('[legal] Error responding to complaint:', { error: toErrorDetail(error) });
     if (error instanceof Error && error.message.includes('Forbidden')) {
       return { success: false, error: 'No tenés permisos para responder reclamos.' };
     }
@@ -515,7 +520,7 @@ export async function submitSupportRequest(subject: string, message: string): Pr
 
     return { success: true, message: 'Mensaje enviado correctamente.' };
   } catch (error) {
-    console.error('[legal] Error sending support request:', error);
+    logger.error('[legal] Error sending support request:', { error: toErrorDetail(error) });
     return { success: false, error: 'Error al enviar el mensaje de soporte.' };
   }
 }

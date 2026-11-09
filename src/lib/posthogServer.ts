@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { resolvePostHogKey } from '@/shared/analytics/posthogInitOptions';
 import { PostHog } from 'posthog-node';
 
@@ -13,9 +14,7 @@ export function getPostHogClient(): PostHog {
 
     if (!key) {
       if (process.env.NODE_ENV !== 'production') {
-        console.error(
-          'NEXT_PUBLIC_POSTHOG_KEY (or NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN) variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once one of them is configured',
-        );
+        logger.error('PostHog: key not configured, events will be silently missed');
       }
       // Return a no-op stub so callers don't need to guard
       return new PostHog('__missing__', {

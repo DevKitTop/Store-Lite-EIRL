@@ -1,3 +1,4 @@
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
 
 /**
@@ -90,7 +91,7 @@ export function decrypt(cipherText: string): string {
 
     return decrypted;
   } catch (error) {
-    console.error('Decryption failed:', error);
+    logger.error('crypto: decryption failed', { error: toErrorDetail(error) });
     // During transition, if it starts with sk_, it's probably not encrypted yet
     if (cipherText.startsWith('sk_')) return cipherText;
     throw new Error('Could not decrypt the secret key. Ensure ENCRYPTION_KEY is correct.');

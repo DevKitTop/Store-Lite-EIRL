@@ -2,6 +2,7 @@
 
 import { businessTeamMembers, businessTeamRoles } from '@/core/database/schema';
 import { withTenantContext } from '@/core/database/tenant';
+import { logger, toErrorDetail } from '@/lib/logger';
 import type { ActionState } from '@/types/actions';
 import { and, eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
@@ -52,7 +53,7 @@ export async function updateMemberRole(
       message: `Rol actualizado a ${newRole === 'admin' ? 'Administrador' : 'Miembro'}.`,
     };
   } catch (err) {
-    console.error('[updateMemberRole] Error:', err);
+    logger.error('[updateMemberRole] Error:', { error: toErrorDetail(err) });
     return { success: false, error: 'Error al actualizar el rol.' };
   }
 }
@@ -115,7 +116,7 @@ export async function updateMemberPermissions(
 
     return { success: true, message: 'Permisos actualizados.' };
   } catch (err) {
-    console.error('[updateMemberPermissions] Error:', err);
+    logger.error('[updateMemberPermissions] Error:', { error: toErrorDetail(err) });
     return { success: false, error: 'Error al actualizar los permisos.' };
   }
 }
@@ -175,7 +176,7 @@ export async function updateRolePermissions(
 
     return { success: true, message: `Permisos del rol ${role} actualizados.` };
   } catch (err) {
-    console.error('[updateRolePermissions] Error:', err);
+    logger.error('[updateRolePermissions] Error:', { error: toErrorDetail(err) });
     return { success: false, error: 'Error al actualizar los permisos del rol.' };
   }
 }
@@ -216,7 +217,7 @@ export async function removeMemberPermissionsOverride(
 
     return { success: true, message: 'Se restauraron los permisos por defecto del rol.' };
   } catch (err) {
-    console.error('[removeMemberPermissionsOverride] Error:', err);
+    logger.error('[removeMemberPermissionsOverride] Error:', { error: toErrorDetail(err) });
     return { success: false, error: 'Error al restaurar los permisos.' };
   }
 }

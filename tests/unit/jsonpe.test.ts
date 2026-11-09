@@ -69,7 +69,9 @@ describe('sendSms', () => {
 
     await sendSms('51999999999', 'Error test');
 
-    expect(errorSpy).toHaveBeenCalledWith('[JSON.pe] API error: Insufficient credits');
+    expect(errorSpy).toHaveBeenCalledWith('[ERROR] JSON.pe: API error', {
+      message: 'Insufficient credits',
+    });
   });
 
   test('logs network error and does NOT throw on fetch rejection', async () => {
@@ -79,7 +81,9 @@ describe('sendSms', () => {
 
     await expect(sendSms('51999999999', 'Net error')).resolves.toBeUndefined();
 
-    expect(errorSpy).toHaveBeenCalledWith('[JSON.pe] Network/HTTP error:', networkError);
+    expect(errorSpy).toHaveBeenCalledWith('[ERROR] JSON.pe: network error', {
+      error: 'Network failure',
+    });
   });
 
   test('handles empty message string', async () => {
