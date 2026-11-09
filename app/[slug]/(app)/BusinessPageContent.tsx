@@ -16,6 +16,7 @@ import { useProductFilters } from '@/features/products/hooks/useProductFilters';
 import type { ProductWithRelations } from '@/features/products/types/productTypes';
 import { StorageProvider, useStorage } from '@/features/storage/context/StorageContext';
 import type { Product as StorageProduct } from '@/features/storage/data';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { AlertSnackbar } from '@/shared/components/ui';
 import type { PublicBusiness } from '@/types/business';
 import type { ProductCategory } from '@/types/product';
@@ -285,7 +286,7 @@ function BusinessPageContentUI({
       if (!isEdit) {
         try {
           if (typeof posthog?.capture === 'function') {
-            posthog.capture('product_created', {
+            posthog.capture(AnalyticsEvents.PRODUCT_CREATED, {
               productId: optimisticProduct.id,
               businessSlug: business.slug,
             });
