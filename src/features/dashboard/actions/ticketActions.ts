@@ -5,6 +5,7 @@ import { db } from '@/core/database/client';
 import { businesses, payments, profiles } from '@/core/database/schema';
 import { transition } from '@/core/orders/orderService';
 import { ORDER_STATUS, ORDER_STATUS_V2 } from '@/core/orders/orderStatus';
+import { logger } from '@/lib/logger';
 import { checkPermission } from '@/lib/permissions';
 import { getSignedTicketUrl } from '@/lib/storage/signedTicket';
 import { createClient as createServerClient } from '@/lib/supabase/server';
@@ -33,7 +34,7 @@ async function getAuthenticatedUserId(): Promise<string | null> {
     });
 
     if (!existingProfile) {
-      console.warn('[getAuthenticatedUserId] Profile missing, auto-creating for user:', user.id);
+      logger.warn('getAuthenticatedUserId: profile missing, auto-creating', { userId: user.id });
       await db.insert(profiles).values({
         id: user.id,
         email: user.email ?? '',
@@ -112,22 +113,20 @@ export async function uploadTicketAndUpdatePayment(
       .limit(1);
 
     if (!existingPayment) {
-      console.error('[uploadTicket] Payment not found:', paymentId);
+      logger.error('uploadTicket: payment not found', { paymentId });
       return { success: false, error: 'Pedido no encontrado' };
     }
 
     if (existingPayment.businessId !== businessId) {
-      console.error(
-        '[uploadTicket] Permission denied — expected:',
-        businessId,
-        'got:',
-        existingPayment.businessId,
-      );
+      logger.error('uploadTicket: permission denied', {
+        expectedBusinessId: businessId,
+        actualBusinessId: existingPayment.businessId,
+      });
       return { success: false, error: NO_PERMISSION_ERROR };
     }
 
     if (!existingPayment.trackingToken) {
-      console.error('[uploadTicket] No trackingToken for payment:', paymentId);
+      logger.error('uploadTicket: payment has no tracking token', { paymentId });
       return { success: false, error: 'El pedido no tiene un token de seguimiento' };
     }
 
@@ -156,7 +155,7 @@ export async function uploadTicketAndUpdatePayment(
       });
 
     if (uploadError) {
-      console.error('[uploadTicket] Upload error:', uploadError.message);
+      logger.error('uploadTicket: storage upload failed', { error: uploadError.message });
       return { success: false, error: uploadError.message };
     }
 
@@ -176,7 +175,7 @@ export async function uploadTicketAndUpdatePayment(
       });
 
       if (!result.success) {
-        console.error('[uploadTicket] OrderService error:', result.error);
+        logger.error('uploadTicket: order transition failed', { error: result.error });
         // Mapear errores técnicos a mensajes amigables para el usuario
         const friendlyError = mapTransitionError(result.error);
         return { success: false, error: friendlyError };
@@ -194,7 +193,7 @@ export async function uploadTicketAndUpdatePayment(
         .returning({ id: payments.id });
 
       if (!updated) {
-        console.error('[uploadTicket] Version conflict for payment:', paymentId);
+        logger.error('uploadTicket: version conflict', { paymentId });
         return {
           success: false,
           error: 'El pedido fue modificado por otra operación. Recargá e intentá de nuevo.',
@@ -208,7 +207,9 @@ export async function uploadTicketAndUpdatePayment(
       trackingToken: existingPayment.trackingToken,
     };
   } catch (error) {
-    console.error('[uploadTicket] Error:', error instanceof Error ? error.message : String(error));
+    logger.error('uploadTicket: unexpected error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { success: false, error: 'Error al procesar el ticket' };
   }
 }
@@ -269,7 +270,7 @@ export async function notifyDelivery(
       });
 
       if (!result.success) {
-        console.error('[notifyDelivery] OrderService error:', result.error);
+        logger.error('notifyDelivery: order transition failed', { error: result.error });
         return { success: false, error: result.error };
       }
     } else {
@@ -284,7 +285,7 @@ export async function notifyDelivery(
         .returning({ id: payments.id });
 
       if (!updated) {
-        console.error('[notifyDelivery] Version conflict for payment:', paymentId);
+        logger.error('notifyDelivery: version conflict', { paymentId });
         return {
           success: false,
           error: 'El estado del pedido fue modificado. Recargá e intentá de nuevo.',
@@ -294,10 +295,9 @@ export async function notifyDelivery(
 
     return { success: true };
   } catch (error) {
-    console.error(
-      '[notifyDelivery] Error:',
-      error instanceof Error ? error.message : String(error),
-    );
+    logger.error('notifyDelivery: unexpected error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { success: false, error: 'Error al notificar la entrega' };
   }
 }
@@ -345,7 +345,9 @@ export async function prepareOrder(
     revalidatePath(`/${businessId}/dashboard`, 'page');
     return { success: true };
   } catch (error) {
-    console.error('[prepareOrder] Error:', error instanceof Error ? error.message : String(error));
+    logger.error('prepareOrder: unexpected error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { success: false, error: 'Error al preparar el pedido' };
   }
 }
@@ -393,10 +395,9 @@ export async function markReadyForPickup(
     revalidatePath(`/${businessId}/dashboard`, 'page');
     return { success: true };
   } catch (error) {
-    console.error(
-      '[markReadyForPickup] Error:',
-      error instanceof Error ? error.message : String(error),
-    );
+    logger.error('markReadyForPickup: unexpected error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { success: false, error: 'Error al marcar como listo para recojo' };
   }
 }
@@ -465,10 +466,9 @@ export async function confirmPickedUp(
         metadata: { autoCompletedAfterPickup: true },
       });
       if (!completeResult.success) {
-        console.error(
-          '[confirmPickedUp] Auto-complete failed (order stays PICKED_UP):',
-          completeResult.error,
-        );
+        logger.error('confirmPickedUp: auto-complete failed, order stays picked up', {
+          error: completeResult.error,
+        });
         // Non-fatal — the order is already PICKED_UP, auto-complete will retry via cron.
         // Return success with a flag so the client knows to show PICKED_UP status (not COMPLETED)
         revalidatePath(`/${businessId}/dashboard`, 'page');
@@ -493,10 +493,9 @@ export async function confirmPickedUp(
     }
     return { success: true };
   } catch (error) {
-    console.error(
-      '[confirmPickedUp] Error:',
-      error instanceof Error ? error.message : String(error),
-    );
+    logger.error('confirmPickedUp: unexpected error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { success: false, error: 'Error al confirmar el recojo' };
   }
 }

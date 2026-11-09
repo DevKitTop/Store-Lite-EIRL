@@ -261,9 +261,11 @@ describe('POST /api/webhooks/culqi — order.status.changed', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ received: true });
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Order not found in DB: ord_unknown_999'),
-    );
+    // The order id moved from the message into the structured payload, where
+    // it is indexed in Sentry Logs instead of being buried in a string.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Order not found in DB'), {
+      culqiOrderId: 'ord_unknown_999',
+    });
     expect(mockTransaction).not.toHaveBeenCalled();
     expect(mockFulfillPaidSale).not.toHaveBeenCalled();
 
@@ -283,7 +285,7 @@ describe('POST /api/webhooks/culqi — order.status.changed', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ received: true });
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('flip'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('flip'), expect.anything());
     expect(mockFulfillPaidSale).not.toHaveBeenCalled();
 
     warnSpy.mockRestore();
@@ -375,7 +377,10 @@ describe('POST /api/webhooks/culqi — order.status.changed', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ received: true });
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Missing order'));
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Missing order'),
+      expect.anything(),
+    );
     expect(mockSet).not.toHaveBeenCalled();
     expect(mockTransaction).not.toHaveBeenCalled();
 
@@ -392,7 +397,10 @@ describe('POST /api/webhooks/culqi — order.status.changed', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ received: true });
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Unknown order status'));
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Unknown order status'),
+      expect.anything(),
+    );
     expect(mockSet).not.toHaveBeenCalled();
 
     warnSpy.mockRestore();
