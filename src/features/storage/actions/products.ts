@@ -7,6 +7,7 @@ import { FROZEN_FIELD_MESSAGE, hasLockingPayments } from '@/core/orders/paymentG
 import { captureEvent } from '@/lib/analytics/capture';
 import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { logError } from '@/lib/errorHandling';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { notifyLowStock, notifyOutOfStock } from '@/lib/notifications';
 import { setSentryContext } from '@/lib/sentryContext';
 import { getUniqueCategorySlug } from '@/shared/utils/categorySlug';
@@ -316,7 +317,7 @@ export async function createProduct(businessSlug: string, productData: ProductAc
         productId: newProduct.id,
         productName: normalizedProduct.name,
       }).catch((notifyErr) => {
-        console.error('[notifyOutOfStock] Error:', notifyErr);
+        logger.error('[notifyOutOfStock] Error:', { error: toErrorDetail(notifyErr) });
       });
     } else if (normalizedProduct.stock <= LOW_STOCK_THRESHOLD) {
       notifyLowStock(businessId, {
@@ -325,7 +326,7 @@ export async function createProduct(businessSlug: string, productData: ProductAc
         currentStock: normalizedProduct.stock,
         minStock: LOW_STOCK_THRESHOLD,
       }).catch((notifyErr) => {
-        console.error('[notifyLowStock] Error:', notifyErr);
+        logger.error('[notifyLowStock] Error:', { error: toErrorDetail(notifyErr) });
       });
     }
 
@@ -475,7 +476,7 @@ export async function updateProduct(
         productId,
         productName: normalizedProduct.name,
       }).catch((notifyErr) => {
-        console.error('[notifyOutOfStock] Error:', notifyErr);
+        logger.error('[notifyOutOfStock] Error:', { error: toErrorDetail(notifyErr) });
       });
     } else if (
       existingProduct.stock > LOW_STOCK_THRESHOLD &&
@@ -488,7 +489,7 @@ export async function updateProduct(
         currentStock: normalizedProduct.stock,
         minStock: LOW_STOCK_THRESHOLD,
       }).catch((notifyErr) => {
-        console.error('[notifyLowStock] Error:', notifyErr);
+        logger.error('[notifyLowStock] Error:', { error: toErrorDetail(notifyErr) });
       });
     }
 

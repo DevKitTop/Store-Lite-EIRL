@@ -19,6 +19,7 @@ import {
 } from '@/core/storefront';
 import { requireAccessOnId } from '@/features/storage/actions/authz';
 import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { getPostHogClient } from '@/lib/posthogServer';
 import type { ActionState } from '@/types/actions';
 import { getErrorMessage } from '@/utils/errors';
@@ -123,7 +124,7 @@ export async function updateBusinessSlug(
 
     return { success: true, newSlug };
   } catch (error: unknown) {
-    console.error('Error updating slug:', error);
+    logger.error('Error updating slug:', { error: toErrorDetail(error) });
     return { success: false, error: 'Error inesperado al actualizar el slug.' };
   }
 }
@@ -172,7 +173,7 @@ export async function toggleBusinessActive(
 
     return { success: true, isActive: nextState };
   } catch (error: unknown) {
-    console.error('Error toggling business active state:', error);
+    logger.error('Error toggling business active state:', { error: toErrorDetail(error) });
     return { success: false, error: 'Error inesperado al cambiar estado del negocio.' };
   }
 }
@@ -228,7 +229,7 @@ export async function updateBusinessSEO(
     revalidatePath('/', 'layout');
     return { success: true, message: 'Configuracion SEO actualizada correctamente.' };
   } catch (error: unknown) {
-    console.error('Error updating business SEO:', error);
+    logger.error('Error updating business SEO:', { error: toErrorDetail(error) });
     return { success: false, error: 'Error inesperado al actualizar la configuracion SEO.' };
   }
 }
@@ -295,7 +296,7 @@ export async function updateStorefrontLayout(
       layout: normalizedLayout,
     };
   } catch (error: unknown) {
-    console.error('Error updating storefront layout:', error);
+    logger.error('Error updating storefront layout:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: 'Error inesperado al actualizar el layout del storefront.',
@@ -376,7 +377,7 @@ export async function updateStorefrontTheme(
       storefrontTheme: normalizedTheme,
     };
   } catch (error: unknown) {
-    console.error('Error updating storefront theme:', error);
+    logger.error('Error updating storefront theme:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: 'Error inesperado al actualizar la apariencia publica.',
@@ -432,7 +433,7 @@ export async function clearStorefrontTheme(businessId: string, slug: string): Pr
       message: 'Apariencia publica restablecida a los colores de la plataforma.',
     };
   } catch (error: unknown) {
-    console.error('Error clearing storefront theme:', error);
+    logger.error('Error clearing storefront theme:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: 'Error inesperado al restablecer la apariencia publica.',
@@ -558,7 +559,7 @@ export async function updateCulqiCredentials(
 
     return { success: true, message: 'Credenciales de Culqi actualizadas correctamente.' };
   } catch (error: unknown) {
-    console.error('Error updating Culqi credentials:', error);
+    logger.error('Error updating Culqi credentials:', { error: toErrorDetail(error) });
     return { success: false, error: 'Error inesperado al actualizar las credenciales.' };
   }
 }
@@ -587,7 +588,7 @@ export async function updateBusinessData(
     revalidatePath('/', 'layout');
     return { success: true, message: 'WhatsApp actualizado correctamente.' };
   } catch (error: unknown) {
-    console.error('Error updating business data:', error);
+    logger.error('Error updating business data:', { error: toErrorDetail(error) });
     return { success: false, error: 'Error inesperado al actualizar datos del negocio.' };
   }
 }
@@ -673,7 +674,7 @@ export async function updateSocialLinks(
     revalidatePath('/', 'layout');
     return { success: true, message: 'Redes sociales actualizadas correctamente.' };
   } catch (error: unknown) {
-    console.error('Error updating social links:', error);
+    logger.error('Error updating social links:', { error: toErrorDetail(error) });
     return { success: false, error: 'Error inesperado al actualizar las redes sociales.' };
   }
 }

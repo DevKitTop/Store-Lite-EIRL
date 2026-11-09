@@ -10,6 +10,7 @@ import {
   whatsappTemplates,
 } from '@/core/database/schema';
 import { BASE_TEMPLATES } from '@/features/chat/constants/baseTemplates';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { and, eq } from 'drizzle-orm';
 
 const YCLOUD_API_BASE = 'https://api.ycloud.com/v2';
@@ -170,7 +171,7 @@ export async function sendOrderNotification(
     // 6. Send via YCloud
     const apiKey = env.ycloudApiKey;
     if (!apiKey) {
-      console.error('[sendOrderNotification] Missing YCloud API key');
+      logger.error('[sendOrderNotification] Missing YCloud API key');
       return { success: false, error: 'Configuración de WhatsApp incompleta' };
     }
 
@@ -196,7 +197,9 @@ export async function sendOrderNotification(
     const ycloudResponse = await response.json();
 
     if (!response.ok) {
-      console.error('[sendOrderNotification] YCloud error:', ycloudResponse);
+      logger.error('[sendOrderNotification] YCloud error:', {
+        error: toErrorDetail(ycloudResponse),
+      });
       return {
         success: false,
         error: ycloudResponse.message || 'Error al enviar template por WhatsApp',
@@ -231,7 +234,7 @@ export async function sendOrderNotification(
 
     return { success: true, messageId: newMessage.id };
   } catch (error) {
-    console.error('[sendOrderNotification] Error:', error);
+    logger.error('[sendOrderNotification] Error:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo enviar la notificación' };
   }
 }

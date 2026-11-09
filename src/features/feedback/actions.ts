@@ -11,6 +11,7 @@
 import { db } from '@/core/database/client';
 import { businesses, feedbackResponses, feedbackTickets, profiles } from '@/core/database/schema';
 import { requireAccessOnId } from '@/features/storage/actions/authz';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { desc, eq, sql } from 'drizzle-orm';
 import { notifyAdminNewTicket, notifyUserResponse } from './email';
 import { respondToTicketSchema, submitFeedbackSchema } from './schemas';
@@ -148,7 +149,7 @@ export async function submitFeedback({
       ticketNumber,
     };
   } catch (error) {
-    console.error('[Feedback] Error submitting feedback:', error);
+    logger.error('[Feedback] Error submitting feedback:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error al enviar el feedback',
@@ -195,7 +196,7 @@ export async function getFeedbackHistory(businessId: string): Promise<GetFeedbac
       })),
     };
   } catch (error) {
-    console.error('[Feedback] Error getting history:', error);
+    logger.error('[Feedback] Error getting history:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error al obtener el historial',
@@ -246,7 +247,7 @@ export async function getFeedbackTicket(ticketId: string): Promise<GetFeedbackTi
       },
     };
   } catch (error) {
-    console.error('[Feedback] Error getting ticket:', error);
+    logger.error('[Feedback] Error getting ticket:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error al obtener el ticket',
@@ -302,7 +303,7 @@ export async function respondToTicket(
 
     return { success: true };
   } catch (error) {
-    console.error('[Feedback] Error responding to ticket:', error);
+    logger.error('[Feedback] Error responding to ticket:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error al responder al ticket',
@@ -334,7 +335,7 @@ export async function closeTicket(ticketId: string): Promise<{ success: boolean;
 
     return { success: true };
   } catch (error) {
-    console.error('[Feedback] Error closing ticket:', error);
+    logger.error('[Feedback] Error closing ticket:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error al cerrar el ticket',

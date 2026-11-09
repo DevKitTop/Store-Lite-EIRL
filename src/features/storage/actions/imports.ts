@@ -4,6 +4,7 @@ import { db } from '@/core/database/client';
 import { productCategories, productMedia, products } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements';
 import { logError } from '@/lib/errorHandling';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { notifyLowStock, notifyOutOfStock } from '@/lib/notifications';
 import { getUniqueCategorySlug } from '@/shared/utils/categorySlug';
 import { and, eq, sql } from 'drizzle-orm';
@@ -149,7 +150,7 @@ export async function importProductsBatch(
             productId: inserted.id,
             productName: normalizedProductsList[idx].name,
           }).catch((notifyErr) => {
-            console.error('[notifyOutOfStock] Error:', notifyErr);
+            logger.error('[notifyOutOfStock] Error:', { error: toErrorDetail(notifyErr) });
           });
         } else if (importedStock <= LOW_STOCK_THRESHOLD) {
           notifyLowStock(businessId, {
@@ -158,7 +159,7 @@ export async function importProductsBatch(
             currentStock: importedStock,
             minStock: LOW_STOCK_THRESHOLD,
           }).catch((notifyErr) => {
-            console.error('[notifyLowStock] Error:', notifyErr);
+            logger.error('[notifyLowStock] Error:', { error: toErrorDetail(notifyErr) });
           });
         }
       }

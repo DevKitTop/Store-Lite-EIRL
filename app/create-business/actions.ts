@@ -18,6 +18,7 @@ import {
 } from '@/core/storefront';
 import { captureEvent } from '@/lib/analytics/capture';
 import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { generateBusinessSlug } from '@/shared/utils/slugify';
 import { createServerClient } from '@supabase/ssr';
 import { eq } from 'drizzle-orm';
@@ -271,7 +272,9 @@ export async function createBusinessAction(formData: FormData) {
       return { businessId: bizId, finalSlug };
     });
 
-    console.warn('[createBusinessAction] Transaction committed for slug:', txSlug);
+    logger.warn('[createBusinessAction] Transaction committed for slug:', {
+      error: toErrorDetail(txSlug),
+    });
 
     // 6. Handle Logo Upload — OUTSIDE the transaction.
     // If it fails, the business is already created. We treat it as non-fatal.
@@ -279,7 +282,9 @@ export async function createBusinessAction(formData: FormData) {
 
     if (logoFile && logoFile.size > 0) {
       try {
-        console.warn('[createBusinessAction] Preparing logo upload for business:', businessId);
+        logger.warn('[createBusinessAction] Preparing logo upload for business:', {
+          error: toErrorDetail(businessId),
+        });
 
         const fileExt = logoFile.name.split('.').pop();
         const fileName = `${Date.now()}.${fileExt}`;
@@ -305,26 +310,34 @@ export async function createBusinessAction(formData: FormData) {
           });
 
         if (uploadError) {
-          console.error('[createBusinessAction] Logo upload failed (non-fatal):', uploadError);
+          logger.error('[createBusinessAction] Logo upload failed (non-fatal):', {
+            error: toErrorDetail(uploadError),
+          });
           logoWarning = uploadError.message;
         } else {
           const {
             data: { publicUrl },
           } = adminStorage.storage.from('store-covers').getPublicUrl(filePath);
 
-          console.warn('[createBusinessAction] Final logo URL:', publicUrl);
+          logger.warn('[createBusinessAction] Final logo URL:', {
+            error: toErrorDetail(publicUrl),
+          });
           await db
             .update(businesses)
             .set({ logoUrl: publicUrl })
             .where(eq(businesses.id, businessId));
         }
       } catch (logoError) {
-        console.error('[createBusinessAction] Logo upload exception (non-fatal):', logoError);
+        logger.error('[createBusinessAction] Logo upload exception (non-fatal):', {
+          error: toErrorDetail(logoError),
+        });
         logoWarning = 'No se pudo subir el logo.';
       }
     }
 
-    console.warn('[createBusinessAction] Creation fully completed for slug:', txSlug);
+    logger.warn('[createBusinessAction] Creation fully completed for slug:', {
+      error: toErrorDetail(txSlug),
+    });
 
     // Fire-and-forget: the business already exists, analytics cannot undo it.
     captureEvent(AnalyticsEvents.BUSINESS_CREATED, {
@@ -337,7 +350,9 @@ export async function createBusinessAction(formData: FormData) {
     if (error instanceof Error && error.message === 'LIMIT_EXCEEDED') {
       return { error: 'Has alcanzado el límite máximo de 3 negocios por cuenta.' };
     }
-    console.error('[createBusinessAction] Top level catch block error:', error);
+    logger.error('[createBusinessAction] Top level catch block error:', {
+      error: toErrorDetail(error),
+    });
     return { error: 'Error al guardar los datos en la base de datos.' };
   }
 }

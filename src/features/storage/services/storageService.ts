@@ -1,3 +1,4 @@
+import { logger, toErrorDetail } from '@/lib/logger';
 import { compressImageToMaxSize } from '@/shared/utils/image';
 import {
   deleteProductImageAction,
@@ -18,8 +19,8 @@ export const uploadProductImage = async (
 
   const compressedFile = await compressImageToMaxSize(file);
 
-  console.warn('[uploadProductImage] Preparing FormData for server action...');
-  console.warn('[uploadProductImage] businessId:', businessId);
+  logger.warn('[uploadProductImage] Preparing FormData for server action...');
+  logger.warn('[uploadProductImage] businessId:', { error: toErrorDetail(businessId) });
   console.warn(
     '[uploadProductImage] file:',
     file.name,
@@ -36,11 +37,13 @@ export const uploadProductImage = async (
   const { publicUrl, error } = await uploadProductImageAction(formData);
 
   if (error || !publicUrl) {
-    console.error('[uploadProductImage] Server action returned error:', error);
+    logger.error('[uploadProductImage] Server action returned error:', {
+      error: toErrorDetail(error),
+    });
     throw new Error(error || 'Error desconocido al subir imagen');
   }
 
-  console.warn('[uploadProductImage] Upload successful! URL:', publicUrl);
+  logger.warn('[uploadProductImage] Upload successful! URL:', { error: toErrorDetail(publicUrl) });
   return publicUrl;
 };
 
@@ -56,7 +59,7 @@ export async function deleteProductImage(url: string): Promise<void> {
 
   const { error } = await deleteProductImageAction(url, businessIdFromUrl);
   if (error) {
-    console.error('[deleteProductImage] Server action error:', error);
+    logger.error('[deleteProductImage] Server action error:', { error: toErrorDetail(error) });
   }
 }
 
@@ -72,7 +75,9 @@ export const uploadCategoryImage = async (file: File, businessSlug: string): Pro
   const { publicUrl, error } = await uploadCategoryImageAction(formData);
 
   if (error || !publicUrl) {
-    console.error('[uploadCategoryImage] Server action returned error:', error);
+    logger.error('[uploadCategoryImage] Server action returned error:', {
+      error: toErrorDetail(error),
+    });
     throw new Error(error || 'Error desconocido al subir imagen de categoría');
   }
 
