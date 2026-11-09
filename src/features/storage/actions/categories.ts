@@ -41,7 +41,7 @@ async function deleteCategoryImage(businessId: string, url: string | null): Prom
   // Reject traversal attempts up front; the prefix check below does NOT stop "..".
   if (filePath.includes('..')) {
     logger.warn('[deleteCategoryImage] Path contains traversal, skipping deletion:', {
-      error: toErrorDetail(filePath),
+      filePath,
     });
     return;
   }

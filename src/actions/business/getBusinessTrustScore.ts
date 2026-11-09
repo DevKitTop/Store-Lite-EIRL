@@ -11,6 +11,7 @@ import { db } from '@/core/database/client';
 import { businesses, complaintBookRecords } from '@/core/database/schema';
 import { calculateBusinessIncompleteOrderRate } from '@/lib/incompleteOrderRate';
 import { get30DayWindowStart } from '@/lib/incompleteOrderRateCore';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { and, eq, gte } from 'drizzle-orm';
 
 export interface BusinessTrustScore {
@@ -42,9 +43,9 @@ export async function getBusinessTrustScore(
   try {
     return await computeBusinessTrustScore(businessId);
   } catch (error) {
-    console.error('[storefront] getBusinessTrustScore failed; hiding trust banner', {
+    logger.error('storefront: trust score failed, hiding banner', {
       businessId,
-      error,
+      error: toErrorDetail(error),
     });
     return null;
   }

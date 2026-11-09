@@ -19,16 +19,14 @@ export const uploadProductImage = async (
 
   const compressedFile = await compressImageToMaxSize(file);
 
-  logger.warn('[uploadProductImage] Preparing FormData for server action...');
-  logger.warn('[uploadProductImage] businessId:', { error: toErrorDetail(businessId) });
-  console.warn(
-    '[uploadProductImage] file:',
-    file.name,
-    file.size,
-    '-> compressed:',
-    compressedFile.size,
-    compressedFile.type,
-  );
+  logger.debug('uploadProductImage: preparing form data');
+  logger.debug('uploadProductImage: building payload', { businessId });
+  logger.debug('uploadProductImage: image compressed', {
+    fileName: file.name,
+    originalSize: file.size,
+    compressedSize: compressedFile.size,
+    type: compressedFile.type,
+  });
 
   const formData = new FormData();
   formData.append('file', compressedFile);
@@ -43,7 +41,7 @@ export const uploadProductImage = async (
     throw new Error(error || 'Error desconocido al subir imagen');
   }
 
-  logger.warn('[uploadProductImage] Upload successful! URL:', { error: toErrorDetail(publicUrl) });
+  logger.debug('uploadProductImage: upload succeeded', { publicUrl });
   return publicUrl;
 };
 

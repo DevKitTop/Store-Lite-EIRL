@@ -9,6 +9,7 @@
 
 import { db } from '@/core/database/client';
 import { businessSettings, businessSubscriptions, businesses } from '@/core/database/schema';
+import { logger } from '@/lib/logger';
 import { and, desc, eq } from 'drizzle-orm';
 import { cache } from 'react';
 
@@ -61,9 +62,11 @@ export const getBusinessEntitlements = cache(
     let plan: PlanType;
     if (!subscription || isExpired) {
       if (isExpired) {
-        console.warn(
-          `[entitlements] Business ${businessId} plan expired (${subscription?.planEndDate?.toISOString()}), degrading to ${DEFAULT_PLAN}`,
-        );
+        logger.warn('entitlements: plan expired, degrading to default', {
+          businessId,
+          planEndDate: subscription?.planEndDate?.toISOString(),
+          degradedTo: DEFAULT_PLAN,
+        });
       }
       plan = DEFAULT_PLAN;
     } else {

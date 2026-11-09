@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { logger, toErrorDetail } from '@/lib/logger';
 
 const API_URL = 'https://api.sms.json.pe/send';
 
@@ -49,9 +50,9 @@ export async function sendSms(phone: string, message: string): Promise<void> {
     const data = await response.json();
 
     if (!data.success) {
-      console.error(`[JSON.pe] API error: ${data.message}`);
+      logger.error('JSON.pe: API error', { message: data.message });
     }
   } catch (error) {
-    console.error('[JSON.pe] Network/HTTP error:', error);
+    logger.error('JSON.pe: network error', { error: toErrorDetail(error) });
   }
 }

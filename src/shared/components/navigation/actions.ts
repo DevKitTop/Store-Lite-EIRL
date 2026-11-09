@@ -3,6 +3,7 @@
 import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businesses } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { eq } from 'drizzle-orm';
 
 export async function getBusinessBySlug(slug: string) {
@@ -33,7 +34,7 @@ export async function getBusinessBySlug(slug: string) {
 
     return business || null;
   } catch (error) {
-    console.error('Error fetching business:', error);
+    logger.error('navigation: failed to fetch business', { error: toErrorDetail(error) });
     return null;
   }
 }

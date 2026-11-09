@@ -5,6 +5,7 @@
 
 import { env } from '@/config/env';
 import { ORDER_STATUS_V2, type OrderStatusV2 } from '@/core/orders/orderStatus';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { sendSms } from '../sms/jsonpe';
 
 // ─── Message templates per status ───
@@ -70,6 +71,6 @@ export async function sendOrderStatusSms(params: SendOrderSmsParams): Promise<vo
   try {
     await sendSms(buyerPhone, message);
   } catch (error) {
-    console.error(`[OrderSms] Failed to send SMS for ${toStatus}:`, error);
+    logger.error('OrderSms: send failed', { status: toStatus, error: toErrorDetail(error) });
   }
 }

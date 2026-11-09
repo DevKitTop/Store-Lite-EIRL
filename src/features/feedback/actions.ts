@@ -141,7 +141,9 @@ export async function submitFeedback({
       priority,
       contactEmail,
       contactPhone,
-    }).catch((err) => console.error('[Feedback] Error sending admin notification:', err));
+    }).catch((err) =>
+      logger.error('Feedback: admin notification failed', { error: toErrorDetail(err) }),
+    );
 
     return {
       success: true,
@@ -298,7 +300,9 @@ export async function respondToTicket(
         subject: ticket.subject,
         adminMessage: parsed.data.message,
         userEmail: user.email,
-      }).catch((err) => console.error('[Feedback] Error sending user notification:', err));
+      }).catch((err) =>
+        logger.error('Feedback: user notification failed', { error: toErrorDetail(err) }),
+      );
     }
 
     return { success: true };

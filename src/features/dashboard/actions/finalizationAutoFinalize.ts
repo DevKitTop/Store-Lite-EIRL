@@ -109,7 +109,10 @@ export async function autoFinalizeExpiredPayments(): Promise<{
 
         processedCount++;
       } catch (err) {
-        console.error(`[autoFinalize] Error processing payment ${payment.id}:`, err);
+        logger.error('autoFinalize: payment processing failed', {
+          paymentId: payment.id,
+          error: toErrorDetail(err),
+        });
       }
     }
 

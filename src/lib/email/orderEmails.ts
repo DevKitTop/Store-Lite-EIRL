@@ -3,6 +3,7 @@ import { db } from '@/core/database/client';
 import { businesses, products } from '@/core/database/schema';
 import { OrderCompletedEmail } from '@/emails/OrderCompletedEmail';
 import { OrderConfirmationEmail } from '@/emails/OrderConfirmationEmail';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { render } from '@react-email/components';
 import { eq } from 'drizzle-orm';
 import { sendEmail } from './resend';
@@ -104,7 +105,7 @@ export async function sendOrderConfirmationEmail(
       html,
     });
   } catch (error) {
-    console.error('[OrderEmails] Error sending confirmation email:', error);
+    logger.error('OrderEmails: confirmation email failed', { error: toErrorDetail(error) });
   }
 }
 
@@ -156,6 +157,6 @@ export async function sendOrderCompletedEmail(
       html,
     });
   } catch (error) {
-    console.error('[OrderEmails] Error sending completion email:', error);
+    logger.error('OrderEmails: completion email failed', { error: toErrorDetail(error) });
   }
 }

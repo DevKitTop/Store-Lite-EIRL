@@ -1,5 +1,6 @@
 import { importRows, productCategories, productMedia, products } from '@/core/database/schema';
 import type { TenantDb } from '@/core/database/tenant';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { notifyLowStock, notifyOutOfStock } from '@/lib/notifications';
 import { getUniqueCategorySlug } from '@/shared/utils/categorySlug';
 import { eq, inArray, sql } from 'drizzle-orm';
@@ -150,14 +151,18 @@ export async function processRows(
         notifyOutOfStock(businessId, {
           productId,
           productName: name,
-        }).catch((err) => console.error('[notifyOutOfStock]', err));
+        }).catch((err) =>
+          logger.error('imports: out-of-stock notification failed', { error: toErrorDetail(err) }),
+        );
       } else if (stock <= LOW_STOCK_THRESHOLD) {
         notifyLowStock(businessId, {
           productId,
           productName: name,
           currentStock: stock,
           minStock: LOW_STOCK_THRESHOLD,
-        }).catch((err) => console.error('[notifyLowStock]', err));
+        }).catch((err) =>
+          logger.error('imports: low-stock notification failed', { error: toErrorDetail(err) }),
+        );
       }
 
       results.push({ rowId: row.id, rowNumber: row.rowNumber, productId });

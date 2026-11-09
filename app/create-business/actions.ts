@@ -177,10 +177,9 @@ export async function createBusinessAction(formData: FormData) {
     try {
       storefrontTheme = normalizeStorefrontTheme(JSON.parse(rawStorefrontTheme));
     } catch (error) {
-      console.warn(
-        '[createBusinessAction] Invalid storefront theme payload, using default.',
-        error,
-      );
+      logger.warn('createBusinessAction: invalid theme payload, using default', {
+        error: toErrorDetail(error),
+      });
     }
   }
 
@@ -194,10 +193,7 @@ export async function createBusinessAction(formData: FormData) {
     generateBusinessSlug(commercialName, 'store'),
   );
 
-  console.warn(
-    '[createBusinessAction] Initiating business creation with logo size:',
-    logoFile?.size || 0,
-  );
+  logger.debug('createBusinessAction: initiating creation', { logoSize: logoFile?.size ?? 0 });
 
   try {
     // 5. Insert into Database — wrapped in a transaction so the limit check
@@ -272,8 +268,8 @@ export async function createBusinessAction(formData: FormData) {
       return { businessId: bizId, finalSlug };
     });
 
-    logger.warn('[createBusinessAction] Transaction committed for slug:', {
-      error: toErrorDetail(txSlug),
+    logger.debug('createBusinessAction: transaction committed', {
+      slug: txSlug,
     });
 
     // 6. Handle Logo Upload — OUTSIDE the transaction.
@@ -282,8 +278,8 @@ export async function createBusinessAction(formData: FormData) {
 
     if (logoFile && logoFile.size > 0) {
       try {
-        logger.warn('[createBusinessAction] Preparing logo upload for business:', {
-          error: toErrorDetail(businessId),
+        logger.debug('createBusinessAction: preparing logo upload', {
+          businessId,
         });
 
         const fileExt = logoFile.name.split('.').pop();
@@ -319,8 +315,8 @@ export async function createBusinessAction(formData: FormData) {
             data: { publicUrl },
           } = adminStorage.storage.from('store-covers').getPublicUrl(filePath);
 
-          logger.warn('[createBusinessAction] Final logo URL:', {
-            error: toErrorDetail(publicUrl),
+          logger.debug('createBusinessAction: logo uploaded', {
+            publicUrl,
           });
           await db
             .update(businesses)
@@ -335,7 +331,7 @@ export async function createBusinessAction(formData: FormData) {
       }
     }
 
-    logger.warn('[createBusinessAction] Creation fully completed for slug:', {
+    logger.debug('createBusinessAction: creation completed', {
       error: toErrorDetail(txSlug),
     });
 

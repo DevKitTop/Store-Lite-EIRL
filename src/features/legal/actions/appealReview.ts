@@ -163,7 +163,9 @@ export async function reviewAppeal(
     if (notification.success) {
       notificationSent = true;
     } else {
-      console.warn('[AppealReview] Decision notification failed (non-fatal):', notification.error);
+      logger.warn('AppealReview: decision notification failed (non-fatal)', {
+        error: toErrorDetail(notification.error),
+      });
     }
 
     revalidatePath('/', 'layout');
