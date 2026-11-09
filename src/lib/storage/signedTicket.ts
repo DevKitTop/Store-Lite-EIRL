@@ -9,6 +9,7 @@
  */
 
 import { env } from '@/config/env';
+import { logger } from '@/lib/logger';
 import { createClient } from '@supabase/supabase-js';
 import { extractTicketLocation, type TicketBucket } from './ticketImage';
 
@@ -33,15 +34,14 @@ export async function getSignedTicketUrl(
       .storage.from(location.bucket)
       .createSignedUrl(location.path, ttlSeconds);
     if (error || !data?.signedUrl) {
-      console.error('[signedTicket] Could not sign:', error?.message ?? 'empty result');
+      logger.error('signedTicket: could not sign', { error: error?.message ?? 'empty result' });
       return null;
     }
     return data.signedUrl;
   } catch (error) {
-    console.error(
-      '[signedTicket] Signing failed:',
-      error instanceof Error ? error.message : String(error),
-    );
+    logger.error('signedTicket: signing failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }
@@ -79,7 +79,9 @@ export async function getSignedTicketUrls(
           );
 
         if (error || !data) {
-          console.error('[signedTicket] Batch signing failed:', error?.message ?? 'empty result');
+          logger.error('signedTicket: batch signing failed', {
+            error: error?.message ?? 'empty result',
+          });
           return;
         }
 
@@ -90,10 +92,9 @@ export async function getSignedTicketUrls(
           if (target && item.signedUrl) result[target.index] = item.signedUrl;
         });
       } catch (error) {
-        console.error(
-          '[signedTicket] Batch signing threw:',
-          error instanceof Error ? error.message : String(error),
-        );
+        logger.error('signedTicket: batch signing threw', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }),
   );

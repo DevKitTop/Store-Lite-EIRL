@@ -28,6 +28,7 @@ import {
   deactivationNotice,
   gracePeriodNotice,
 } from '@/lib/legal/notificationTemplates';
+import { logger } from '@/lib/logger';
 
 export type DeactivationReason = 'verified_complaints' | 'incomplete_orders';
 
@@ -78,7 +79,9 @@ async function sendNotificationEmail(params: SendEmailParams): Promise<void> {
   try {
     await sendEmail(params);
   } catch (error) {
-    console.warn('[GracePeriodWorkflow] Email send failed (non-fatal):', error);
+    logger.warn('GracePeriodWorkflow: email send failed (non-fatal)', {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -188,7 +191,9 @@ export async function triggerGracePeriodNotifications(
 
     return { success: true, noticeId, graceUntil };
   } catch (error) {
-    console.error('[GracePeriodWorkflow] Error triggering deactivation notices:', error);
+    logger.error('GracePeriodWorkflow: deactivation notices failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -253,7 +258,9 @@ export async function sendGracePeriodReminder(
 
     return { success: true, noticeId };
   } catch (error) {
-    console.error('[GracePeriodWorkflow] Error sending grace period reminder:', error);
+    logger.error('GracePeriodWorkflow: grace period reminder failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -318,7 +325,9 @@ export async function sendAppealReceivedNotification(
 
     return { success: true, noticeId };
   } catch (error) {
-    console.error('[GracePeriodWorkflow] Error sending appeal received notification:', error);
+    logger.error('GracePeriodWorkflow: appeal received notification failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -382,7 +391,9 @@ export async function sendAppealDecisionNotification(
 
     return { success: true, noticeId };
   } catch (error) {
-    console.error('[GracePeriodWorkflow] Error sending appeal decision notification:', error);
+    logger.error('GracePeriodWorkflow: appeal decision notification failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',

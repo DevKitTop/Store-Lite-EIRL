@@ -9,6 +9,7 @@ import { businesses, payments } from '@/core/database/schema';
 import { and, eq } from 'drizzle-orm';
 
 import { sendOrderCompletedEmail } from '@/lib/email/orderEmails';
+import { logger } from '@/lib/logger';
 import { sendOrderStatusSms } from '@/lib/twilio/orderSms';
 import { generatePickupCode } from './orderPickup';
 import {
@@ -162,12 +163,16 @@ export async function transition(
 
     // 7. Fire-and-forget: notify customer via SMS (no await)
     notifyOrderSms(updated, input.toStatus, input.actor.type).catch((err) => {
-      console.error('[OrderService] SMS notification failed:', err);
+      logger.error('OrderService: SMS notification failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
 
     // 8. Fire-and-forget: notify customer via WhatsApp template (no await)
     notifyOrderWhatsApp(updated, input.toStatus, input.actor.type).catch((err) => {
-      console.error('[OrderService] WhatsApp notification failed:', err);
+      logger.error('OrderService: WhatsApp notification failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
 
     return { success: true, payment: updated, eventId: event.id };
@@ -179,7 +184,9 @@ export async function transition(
     ) {
       return { success: false, error: error.message };
     }
-    console.error('[OrderService.transition] Error:', error);
+    logger.error('OrderService: transition failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { success: false, error: 'Error al actualizar el estado del pedido' };
   }
 }
@@ -217,7 +224,9 @@ async function notifyOrderSms(
   // Send email notification for completed orders
   if (toStatus === ORDER_STATUS_V2.COMPLETED) {
     sendOrderCompletedEmail(payment, payment.businessId).catch((err) => {
-      console.error('[OrderService] Completion email error:', err);
+      logger.error('OrderService: completion email failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
   }
 }
@@ -258,7 +267,9 @@ async function notifyOrderWhatsApp(
           amount: payment.amount.toString(),
           orderUrl: `https://${business.slug}.storelite.app/orders/${payment.trackingToken}`,
         }).catch((err: Error) =>
-          console.error('[OrderService] WhatsApp order_confirmed failed:', err),
+          logger.error('OrderService: WhatsApp order_confirmed failed', {
+            error: err instanceof Error ? err.message : String(err),
+          }),
         );
         break;
       }
@@ -272,14 +283,18 @@ async function notifyOrderWhatsApp(
           estimatedDelivery: 'Por confirmar', // Could be calculated from shipping info
           trackingUrl: `https://${business.slug}.storelite.app/track/${payment.trackingToken}`,
         }).catch((err: Error) =>
-          console.error('[OrderService] WhatsApp order_shipped failed:', err),
+          logger.error('OrderService: WhatsApp order_shipped failed', {
+            error: err instanceof Error ? err.message : String(err),
+          }),
         );
         break;
       }
       // Add more status transitions as needed
     }
   } catch (error) {
-    console.error('[OrderService] WhatsApp notification error:', error);
+    logger.error('OrderService: WhatsApp notification threw', {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
