@@ -14,10 +14,16 @@ import {
 } from '@/core/database/schema';
 import { and, eq, gte, lt } from 'drizzle-orm';
 
+/** Keeps the catch blocks terse: a ternary per handler inflates complexity. */
+function describeError(error: unknown): string {
+  return describeError(error);
+}
+
 import {
   sendAppealReceivedNotification,
   triggerGracePeriodNotifications,
 } from '@/lib/legal/gracePeriodWorkflow';
+import { logger } from '@/lib/logger';
 import { calculateComplaintScore, updateComplaintScore } from './complaintScoring';
 import { computeDeactivationWindows } from './complaintScoringCore';
 import { checkIncompleteOrderDeactivation } from './incompleteOrderRate';
@@ -178,13 +184,14 @@ export async function executeDeactivation(
       if (noticeResult.success && noticeResult.noticeId) {
         deactivationNoticeId = noticeResult.noticeId;
       } else {
-        console.warn(
-          '[Deactivation] Written notification flow failed (non-fatal):',
-          noticeResult.error,
-        );
+        logger.warn('Deactivation: written notification flow failed (non-fatal)', {
+          error: noticeResult.error,
+        });
       }
     } catch (error) {
-      console.warn('[Deactivation] Written notification flow threw (non-fatal):', error);
+      logger.warn('Deactivation: written notification flow threw (non-fatal)', {
+        error: describeError(error),
+      });
     }
 
     return {
@@ -194,7 +201,9 @@ export async function executeDeactivation(
       appealDeadline,
     };
   } catch (error) {
-    console.error('[Deactivation] Error executing deactivation:', error);
+    logger.error('Deactivation: execution failed', {
+      error: describeError(error),
+    });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -317,18 +326,21 @@ export async function submitAppeal(
     try {
       const notifyResult = await sendAppealReceivedNotification(businessId, appeal.id, slaDeadline);
       if (!notifyResult.success) {
-        console.warn(
-          '[Appeal] Appeal-received notification failed (non-fatal):',
-          notifyResult.error,
-        );
+        logger.warn('Appeal: received notification failed (non-fatal)', {
+          error: notifyResult.error,
+        });
       }
     } catch (error) {
-      console.warn('[Appeal] Appeal-received notification threw (non-fatal):', error);
+      logger.warn('Appeal: received notification threw (non-fatal)', {
+        error: describeError(error),
+      });
     }
 
     return { success: true, appealId: appeal.id };
   } catch (error) {
-    console.error('[Appeal] Error submitting appeal:', error);
+    logger.error('Appeal: submission failed', {
+      error: describeError(error),
+    });
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
@@ -435,7 +447,9 @@ export async function reviewAppeal(
 
     return { success: true };
   } catch (error) {
-    console.error('[Appeal] Error reviewing appeal:', error);
+    logger.error('Appeal: review failed', {
+      error: describeError(error),
+    });
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
@@ -486,7 +500,9 @@ export async function processExpiredGracePeriods(): Promise<{ processed: number;
       processed++;
     } catch (error) {
       errors++;
-      console.error('[Deactivation] Error processing expired grace period:', error);
+      logger.error('Deactivation: expired grace period processing failed', {
+        error: describeError(error),
+      });
     }
   }
 
@@ -523,7 +539,9 @@ export async function processAppealSLABreaches(): Promise<{ processed: number; e
       processed++;
     } catch (error) {
       errors++;
-      console.error('[Appeal] Error processing SLA breach:', error);
+      logger.error('Appeal: SLA breach processing failed', {
+        error: describeError(error),
+      });
     }
   }
 
