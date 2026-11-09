@@ -10,6 +10,51 @@ export interface PostHogInitEnvironment {
   host?: string;
 }
 
+export type PostHogEnvironment = 'production' | 'preview' | 'development';
+
+export interface PostHogEnvironmentInput {
+  /** `NEXT_PUBLIC_VERCEL_ENV`, when Vercel exposes it at build time. */
+  vercelEnv?: string;
+  /** `window.location.hostname`, used when the build-time value is absent. */
+  hostname?: string;
+}
+
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/**
+ * Labels the running deployment so one PostHog project can separate
+ * development, preview and production traffic.
+ *
+ * A PostHog project is the unit of data, not the environment: keeping a single
+ * project and filtering on this super property preserves dev-versus-production
+ * comparisons. Two projects, by contrast, force a project switch to read each
+ * environment and hide the traffic written to the other one.
+ *
+ * The build-time value wins. When Vercel's "Automatically expose System
+ * Environment Variables" opt-in is off it is absent, so the hostname decides
+ * instead of misfiling real traffic as development.
+ */
+export function resolvePostHogEnvironment({
+  vercelEnv,
+  hostname,
+}: PostHogEnvironmentInput): PostHogEnvironment {
+  if (vercelEnv === 'production' || vercelEnv === 'preview') {
+    return vercelEnv;
+  }
+
+  const host = (hostname ?? '').toLowerCase();
+
+  if (!host || LOCAL_HOSTNAMES.has(host) || host.endsWith('.localhost')) {
+    return 'development';
+  }
+
+  if (host.endsWith('.vercel.app') && host.includes('-git-')) {
+    return 'preview';
+  }
+
+  return 'production';
+}
+
 export interface PostHogKeyEnvironment {
   NEXT_PUBLIC_POSTHOG_KEY?: string;
   NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN?: string;
