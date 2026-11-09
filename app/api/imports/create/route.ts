@@ -3,6 +3,7 @@ import { db } from '@/core/database/client';
 import { businessTeamMembers, importJobs, importRows, products } from '@/core/database/schema';
 import { withTenantContext } from '@/core/database/tenant';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { checkPermission, isBusinessOwner } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq, sql } from 'drizzle-orm';
@@ -194,7 +195,7 @@ export async function POST(request: Request) {
       errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error) {
-    console.error('[POST /api/imports/create]', error);
+    logger.error('[POST /api/imports/create]', { error: toErrorDetail(error) });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Error al crear la importación' },
       { status: 500 },

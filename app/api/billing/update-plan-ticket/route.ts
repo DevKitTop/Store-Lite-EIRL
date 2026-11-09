@@ -3,6 +3,7 @@ import { db } from '@/core/database/client';
 import { formatTicketNumber, planPayments } from '@/core/database/schema';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
 import { sendPlanPurchaseConfirmationEmail } from '@/lib/email/planEmails';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { getSignedTicketUrl } from '@/lib/storage/signedTicket';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { createClient } from '@supabase/supabase-js';
@@ -118,7 +119,7 @@ export async function POST(req: Request) {
       .upload(fileName, bytes, { contentType: 'image/png', upsert: true });
 
     if (uploadError) {
-      console.error('[update-plan-ticket] Upload error:', uploadError.message);
+      logger.error('update-plan-ticket: upload failed', { error: uploadError.message });
       return NextResponse.json(
         { success: false, error: 'No se pudo guardar el ticket' },
         { status: 500 },
@@ -152,12 +153,16 @@ export async function POST(req: Request) {
     // Fire-and-forget: notify the buyer that the boleta is ready.
     // The email includes the ticket link, so it never blocks the response.
     sendPlanPurchaseConfirmationEmail(result, result.businessId).catch((err) => {
-      console.error('[update-plan-ticket] Plan purchase email error:', err);
+      logger.error('[update-plan-ticket] Plan purchase email error:', {
+        error: toErrorDetail(err),
+      });
     });
 
     return NextResponse.json({ success: true, signedUrl });
   } catch (error) {
-    console.error('[update-plan-ticket] Error storing plan ticket:', error);
+    logger.error('[update-plan-ticket] Error storing plan ticket:', {
+      error: toErrorDetail(error),
+    });
     return NextResponse.json(
       { success: false, error: 'Error interno del servidor' },
       { status: 500 },

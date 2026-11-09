@@ -1,6 +1,7 @@
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, whatsappChannels } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -67,7 +68,7 @@ export async function POST(request: Request) {
     const wabaId = env.ycloudWabaId;
 
     if (!apiKey || !wabaId) {
-      console.error('[whatsapp/connect/init] Missing YCloud credentials');
+      logger.error('[whatsapp/connect/init] Missing YCloud credentials');
       return NextResponse.json(
         { error: 'Configuración de WhatsApp incompleta. Contacta al administrador.' },
         { status: 500 },
@@ -88,7 +89,7 @@ export async function POST(request: Request) {
     const ycloudData = await ycloudResponse.json();
 
     if (!ycloudResponse.ok) {
-      console.error('[whatsapp/connect/init] YCloud error:', ycloudData);
+      logger.error('[whatsapp/connect/init] YCloud error:', { error: toErrorDetail(ycloudData) });
       return NextResponse.json(
         { error: ycloudData.message || 'Error al iniciar conexión con WhatsApp' },
         { status: ycloudResponse.status },
@@ -161,7 +162,7 @@ export async function POST(request: Request) {
       connectedAt,
     });
   } catch (error) {
-    console.error('[whatsapp/connect/init] Error:', error);
+    logger.error('[whatsapp/connect/init] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }

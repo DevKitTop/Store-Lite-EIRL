@@ -10,6 +10,7 @@
 // ChatDialog's "Continue with Google" button
 // =====================================================
 
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
@@ -21,7 +22,7 @@ export async function GET(request: Request) {
 
   // No code means something went wrong — just go back to the store
   if (!code || !slug) {
-    console.warn('[ChatCallback] Missing code or slug, redirecting to store', {
+    logger.warn('ChatCallback: missing code or slug, redirecting to store', {
       code: !!code,
       slug,
     });
@@ -34,7 +35,7 @@ export async function GET(request: Request) {
   const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
   if (exchangeError) {
-    console.error('[ChatCallback] Error exchanging code:', exchangeError);
+    logger.error('[ChatCallback] Error exchanging code:', { error: toErrorDetail(exchangeError) });
     // Don't show the user an error — just go back to the store
     return NextResponse.redirect(`${origin}/${slug}`);
   }

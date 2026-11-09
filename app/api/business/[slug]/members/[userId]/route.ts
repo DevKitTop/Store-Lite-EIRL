@@ -1,6 +1,7 @@
 import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { businessTeamMembers } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import type { Permission } from '@/lib/permissions';
 import { isBusinessOwner } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
@@ -130,7 +131,7 @@ export async function PATCH(
         : null,
     });
   } catch (error) {
-    console.error('[PATCH member] Error:', error);
+    logger.error('[PATCH member] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error al actualizar el miembro' }, { status: 500 });
   }
 }
@@ -191,7 +192,7 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[DELETE member] Error:', error);
+    logger.error('[DELETE member] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error al eliminar el miembro' }, { status: 500 });
   }
 }

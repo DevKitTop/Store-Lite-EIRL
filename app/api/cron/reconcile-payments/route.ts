@@ -38,6 +38,7 @@ import {
   FULFILLMENT_WATERMARK,
   fulfillPaidSale,
 } from '@/core/payments/stockFulfillment';
+import { logger } from '@/lib/logger';
 import { and, eq, gte, isNotNull, lt, or } from 'drizzle-orm';
 import { timingSafeEqual } from 'node:crypto';
 
@@ -344,7 +345,7 @@ async function reconcileFulfillment(): Promise<{
     } catch (error) {
       // One bad sale must never abort the run: log it and keep going.
       fulfillmentSkipped += 1;
-      console.error('[reconcile-payments] fulfillment failed for a paid sale', {
+      logger.error('reconcile-payments: fulfillment failed for a paid sale', {
         businessId: sale.businessId,
         paymentOrderId: sale.paymentOrderId,
         paymentId: sale.paymentId,

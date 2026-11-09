@@ -1,5 +1,6 @@
 import { db } from '@/core/database/client';
 import { notifications } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { getMemberPermissions } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
 import { eq } from 'drizzle-orm';
@@ -52,7 +53,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
     return NextResponse.json({ error: 'Se requiere isRead en el body' }, { status: 400 });
   } catch (error) {
-    console.error('[PATCH notification] Error:', error);
+    logger.error('[PATCH notification] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error al actualizar la notificación' }, { status: 500 });
   }
 }
@@ -91,7 +92,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     await db.update(notifications).set({ isDismissed: true }).where(eq(notifications.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[DELETE notification] Error:', error);
+    logger.error('[DELETE notification] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error al descartar la notificación' }, { status: 500 });
   }
 }

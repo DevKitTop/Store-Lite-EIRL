@@ -35,6 +35,7 @@ import { validateAmount } from '@/features/billing/validateAmount';
 import { captureEvent } from '@/lib/analytics/capture';
 import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { sendOrderConfirmationEmail } from '@/lib/email/orderEmails';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { notifyLowStock, notifyNewOrder, notifyOutOfStock } from '@/lib/notifications';
 import { setSentryContext } from '@/lib/sentryContext';
 import { createClient } from '@/lib/supabase/server';
@@ -844,12 +845,12 @@ export async function POST(request: Request) {
       amount: authoritativeAmount / 100,
       itemsCount: (metadata?.cartItems as { id: string; quantity: number }[])?.length || 1,
     }).catch((notifyErr) => {
-      console.error('[notifyNewOrder] Error:', notifyErr);
+      logger.error('[notifyNewOrder] Error:', { error: toErrorDetail(notifyErr) });
     });
 
     // ─── Notificar al customer por SMS ───
     notifyOrderPaymentSms(result, businessId).catch((smsErr) => {
-      console.error('[charge] SMS notification error:', smsErr);
+      logger.error('[charge] SMS notification error:', { error: toErrorDetail(smsErr) });
     });
 
     // Notificar stock bajo/agotado
@@ -913,7 +914,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(responseBody);
   } catch (error) {
-    console.error('[payment/charge] Critical Error:', error);
+    logger.error('[payment/charge] Critical Error:', { error: toErrorDetail(error) });
 
     // A key left at `processing` with a null body is a PERMANENT lockout: the
     // client key is deterministic (`charge-${token || culqiOrderId}`,
@@ -929,7 +930,9 @@ export async function POST(request: Request) {
         );
       } catch (completeError) {
         // Never let the cleanup mask the original failure.
-        console.error('[payment/charge] Idempotency completion error:', completeError);
+        logger.error('[payment/charge] Idempotency completion error:', {
+          error: toErrorDetail(completeError),
+        });
       }
     }
 
@@ -962,6 +965,6 @@ async function notifyOrderPaymentSms(
 
   // Also send confirmation email
   sendOrderConfirmationEmail(payment, businessId).catch((emailErr) => {
-    console.error('[charge] Confirmation email error:', emailErr);
+    logger.error('[charge] Confirmation email error:', { error: toErrorDetail(emailErr) });
   });
 }

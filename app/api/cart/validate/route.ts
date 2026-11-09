@@ -1,5 +1,6 @@
 import { db } from '@/core/database/client';
 import { products } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { inArray } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
       removed,
     });
   } catch (error) {
-    console.error('[cart/validate] Error:', error);
+    logger.error('[cart/validate] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error al validar el carrito' }, { status: 500 });
   }
 }

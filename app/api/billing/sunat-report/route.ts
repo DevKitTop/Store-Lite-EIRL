@@ -2,6 +2,7 @@ import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { planPayments } from '@/core/database/schema';
 import { requireAuthenticatedUserId } from '@/features/storage/actions/authz';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { and, gte, lte } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
@@ -103,7 +104,7 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    console.error('[sunat-report] Error:', error);
+    logger.error('[sunat-report] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error generando reporte' }, { status: 500 });
   }
 }
