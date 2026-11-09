@@ -16,6 +16,8 @@ import {
   mergeStorefrontThemeIntoPreferences,
   normalizeStorefrontTheme,
 } from '@/core/storefront';
+import { captureEvent } from '@/lib/analytics/capture';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { generateBusinessSlug } from '@/shared/utils/slugify';
 import { createServerClient } from '@supabase/ssr';
 import { eq } from 'drizzle-orm';
@@ -323,6 +325,13 @@ export async function createBusinessAction(formData: FormData) {
     }
 
     console.warn('[createBusinessAction] Creation fully completed for slug:', txSlug);
+
+    // Fire-and-forget: the business already exists, analytics cannot undo it.
+    captureEvent(AnalyticsEvents.BUSINESS_CREATED, {
+      business_id: businessId,
+      slug: txSlug,
+    }).catch(() => {});
+
     return { success: true, slug: txSlug, logoWarning };
   } catch (error) {
     if (error instanceof Error && error.message === 'LIMIT_EXCEEDED') {
