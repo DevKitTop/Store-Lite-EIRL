@@ -8,6 +8,7 @@
 import { db } from '@/core/database/client';
 import { businesses, businessSettings, penalties } from '@/core/database/schema';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { splitFullName } from '@/shared/payments/fullName';
 import type { CulqiChargeResponse } from '@/types/culqi';
@@ -186,7 +187,7 @@ export async function POST(request: Request) {
       culqiChargeId: culqiData.id,
     });
   } catch (error) {
-    console.error('[business/penalties/pay] Error:', error);
+    logger.error('[business/penalties/pay] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }

@@ -1,6 +1,7 @@
 import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { notifications } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { getMemberPermissions } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
@@ -66,7 +67,7 @@ export async function PUT(request: Request) {
       message: 'Todas las notificaciones marcadas como leídas',
     });
   } catch (error) {
-    console.error('[PUT read-all] Error:', error);
+    logger.error('[PUT read-all] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error al marcar todas como leídas' }, { status: 500 });
   }
 }

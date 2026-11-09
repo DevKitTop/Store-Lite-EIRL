@@ -2,6 +2,7 @@ import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import type { NotificationCategory } from '@/core/database/schema';
 import { notificationCategoryEnum } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { getMemberPermissions } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
 import { sql } from 'drizzle-orm';
@@ -99,7 +100,7 @@ export async function GET(request: Request) {
       ...(byCategory && { byCategory }),
     });
   } catch (error) {
-    console.error('[GET unread-count] Error:', error);
+    logger.error('[GET unread-count] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error al obtener contador' }, { status: 500 });
   }
 }

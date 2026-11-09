@@ -60,6 +60,20 @@ function log(level: LogLevel, message: string, data?: Record<string, unknown>): 
   formatConsole(level, cleanMessage, cleanData);
 }
 
+/**
+ * Normalises a thrown value for the log payload: an Error becomes its message,
+ * anything else (an API response body, a string) is kept as-is. Written as a
+ * helper rather than an inline ternary because each ternary adds to the
+ * cognitive complexity of the surrounding function.
+ */
+export function toErrorDetail(error: unknown): unknown {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return error;
+}
+
 export const logger: Logger = {
   debug: (message, data) => log('debug', message, data),
   info: (message, data) => log('info', message, data),

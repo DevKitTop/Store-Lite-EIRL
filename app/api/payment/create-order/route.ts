@@ -12,6 +12,7 @@ import { completeIdempotencyKey, reserveIdempotencyKey } from '@/core/payments/i
 import { validateAmount } from '@/features/billing/validateAmount';
 import { captureEvent } from '@/lib/analytics/capture';
 import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { setSentryContext } from '@/lib/sentryContext';
 import { createClient } from '@/lib/supabase/server';
 import { splitFullName } from '@/shared/payments/fullName';
@@ -290,7 +291,7 @@ export async function POST(request: Request) {
     await completeIdempotencyKey(reservedIdempotencyKey, responseBody, 200);
     return NextResponse.json(responseBody);
   } catch (error) {
-    console.error('[payment/create-order] Critical Error:', error);
+    logger.error('[payment/create-order] Critical Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno procesando la orden' }, { status: 500 });
   }
 }

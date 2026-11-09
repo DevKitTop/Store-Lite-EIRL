@@ -2,6 +2,7 @@ import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, whatsappChannels } from '@/core/database/schema';
 import { upsertWhatsappChannel } from '@/core/whatsapp/connect/whatsappChannelUpsert';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
     const apiKey = env.ycloudApiKey;
 
     if (!apiKey) {
-      console.error('[whatsapp/connect/complete] Missing YCloud API key');
+      logger.error('[whatsapp/connect/complete] Missing YCloud API key');
       return NextResponse.json(
         { error: 'Configuración de WhatsApp incompleta. Contacta al administrador.' },
         { status: 500 },
@@ -100,7 +101,9 @@ export async function POST(request: Request) {
     const ycloudData = (await ycloudResponse.json()) as { message?: string } | null;
 
     if (!ycloudResponse.ok) {
-      console.error('[whatsapp/connect/complete] YCloud bind error:', ycloudData);
+      logger.error('[whatsapp/connect/complete] YCloud bind error:', {
+        error: toErrorDetail(ycloudData),
+      });
       // Surface YCloud's own message (e.g. PAYMENT_METHOD_REQUIRED,
       // WABA_NOT_FOUND) so the modal can show it with retry.
       return NextResponse.json(
@@ -136,7 +139,7 @@ export async function POST(request: Request) {
       displayPhoneNumber: null,
     });
   } catch (error) {
-    console.error('[whatsapp/connect/complete] Error:', error);
+    logger.error('[whatsapp/connect/complete] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, whatsappChannels, whatsappTemplates } from '@/core/database/schema';
 import { normalizeMetaStatus } from '@/core/whatsapp/templates/metaStatus';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -160,7 +161,9 @@ export async function POST(request: Request) {
       results,
     });
   } catch (error) {
-    console.error('[POST /api/seller/whatsapp/templates/sync] Error:', error);
+    logger.error('[POST /api/seller/whatsapp/templates/sync] Error:', {
+      error: toErrorDetail(error),
+    });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }

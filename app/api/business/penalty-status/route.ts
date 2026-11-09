@@ -13,6 +13,7 @@
 import { db } from '@/core/database/client';
 import { businesses } from '@/core/database/schema';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
@@ -58,7 +59,7 @@ export async function GET(request: Request) {
       return NextResponse.json(bannerStatus);
     }
   } catch (error) {
-    console.error('[business/penalty-status] Error:', error);
+    logger.error('[business/penalty-status] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }

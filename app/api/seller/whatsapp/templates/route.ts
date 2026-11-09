@@ -2,6 +2,7 @@ import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, whatsappChannels, whatsappTemplates } from '@/core/database/schema';
 import { BASE_TEMPLATES, applyBusinessName } from '@/features/chat/constants/baseTemplates';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { and, desc, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -110,7 +111,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ templates });
   } catch (error) {
-    console.error('[GET /api/seller/whatsapp/templates] Error:', error);
+    logger.error('[GET /api/seller/whatsapp/templates] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }
@@ -146,7 +147,7 @@ export async function POST(request: Request) {
 
     return handleCreateTemplate(validation.data, user.id);
   } catch (error) {
-    console.error('[POST /api/seller/whatsapp/templates] Error:', error);
+    logger.error('[POST /api/seller/whatsapp/templates] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }
@@ -217,7 +218,9 @@ async function handleCreateFromBase(data: z.infer<typeof createFromBaseSchema>, 
   const ycloudResponse = await response.json();
 
   if (!response.ok) {
-    console.error('[POST /api/seller/whatsapp/templates] YCloud error:', ycloudResponse);
+    logger.error('[POST /api/seller/whatsapp/templates] YCloud error:', {
+      error: toErrorDetail(ycloudResponse),
+    });
     return NextResponse.json(
       { error: ycloudResponse.message || 'Error al crear template en YCloud' },
       { status: response.status },
@@ -295,7 +298,9 @@ async function handleCreateTemplate(data: z.infer<typeof createTemplateSchema>, 
   const ycloudResponse = await response.json();
 
   if (!response.ok) {
-    console.error('[POST /api/seller/whatsapp/templates] YCloud error:', ycloudResponse);
+    logger.error('[POST /api/seller/whatsapp/templates] YCloud error:', {
+      error: toErrorDetail(ycloudResponse),
+    });
     return NextResponse.json(
       { error: ycloudResponse.message || 'Error al crear template en YCloud' },
       { status: response.status },

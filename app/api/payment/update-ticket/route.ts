@@ -1,6 +1,7 @@
 import { db } from '@/core/database/client';
 import { payments } from '@/core/database/schema';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -82,7 +83,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error updating payment ticket:', error);
+    logger.error('Error updating payment ticket:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }

@@ -8,6 +8,7 @@ import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import type { NotificationType } from '@/core/database/schema';
 import { businessSubscriptions, notifications } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { notifyPlanExpired, notifyPlanExpiring } from '@/lib/notifications';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -105,7 +106,10 @@ export async function GET(request: Request) {
           notified++;
         }
       } catch (error) {
-        console.error(`[Cron] check-plans: error for business ${sub.businessId}:`, error);
+        logger.error('Cron: check-plans error for business', {
+          businessId: sub.businessId,
+          error: toErrorDetail(error),
+        });
         errors++;
       }
     }
@@ -118,7 +122,7 @@ export async function GET(request: Request) {
       total: subscriptions.length,
     });
   } catch (error) {
-    console.error('[Cron] check-plans: error —', error);
+    logger.error('[Cron] check-plans: error —', { error: toErrorDetail(error) });
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, payments, products } from '@/core/database/schema';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { getSignedTicketUrl } from '@/lib/storage/signedTicket';
 import { safeTokenEqual } from '@/lib/tokenCompare';
 import type { ServerTicketData, ServerTicketItem } from '@/shared/payments/serverTicketRenderer';
@@ -203,7 +204,7 @@ export async function POST(req: Request) {
         color: { dark: '#1c1b1f', light: '#ffffff' },
       });
     } catch (qrError) {
-      console.error('[ticket/generate] QR generation failed:', qrError);
+      logger.error('[ticket/generate] QR generation failed:', { error: toErrorDetail(qrError) });
     }
 
     // ── 4. Build shipping address string ────────────────────────────────
@@ -275,7 +276,7 @@ export async function POST(req: Request) {
       .upload(fileName, blob, { contentType: 'image/png', upsert: true });
 
     if (uploadError) {
-      console.error('[ticket/generate] Upload error:', uploadError);
+      logger.error('[ticket/generate] Upload error:', { error: toErrorDetail(uploadError) });
       return NextResponse.json({ error: `Upload failed: ${uploadError.message}` }, { status: 500 });
     }
 
@@ -298,7 +299,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true, signedUrl });
   } catch (error) {
-    console.error('[ticket/generate] Internal error:', error);
+    logger.error('[ticket/generate] Internal error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

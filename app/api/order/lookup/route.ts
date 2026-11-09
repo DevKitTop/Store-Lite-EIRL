@@ -1,6 +1,7 @@
 import { db } from '@/core/database/client';
 import { businesses, payments } from '@/core/database/schema';
 import { isBusinessSeller } from '@/core/orders/sellerAccess';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
 import { ORDER_ACCESS_DENIED_ERROR } from '@/lib/orderAccessGate';
 import { checkOrderAccessRateLimit } from '@/lib/orderAccessRateLimit';
@@ -236,7 +237,7 @@ export async function POST(request: NextRequest) {
       token: payment.trackingToken,
     });
   } catch (error) {
-    console.error('[order/lookup] Error:', error);
+    logger.error('[order/lookup] Error:', { error: toErrorDetail(error) });
     return NextResponse.json(
       { success: false, error: 'Error interno al buscar el pedido' },
       { status: 500 },
