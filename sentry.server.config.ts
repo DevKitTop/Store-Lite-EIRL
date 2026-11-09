@@ -11,9 +11,6 @@ Sentry.init({
   // Free tier: 5M spans/month — 10% sampling in production
   tracesSampleRate: 0.1,
 
-  // Enable logs to be sent to Sentry
-  enableLogs: true,
-
   // Release tracking from the deployment that produced this build
   release: resolveSentryRelease(),
   environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
