@@ -9,6 +9,7 @@ import {
   whatsappTemplates,
 } from '@/core/database/schema';
 import { normalizeMetaStatus } from '@/core/whatsapp/templates/metaStatus';
+import { logger } from '@/lib/logger';
 import { and, eq } from 'drizzle-orm';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
@@ -155,7 +156,7 @@ async function handleInboundMessageReceived(payload: YCloudPayload): Promise<voi
   const contactData = payload.contact;
 
   if (!messageData || !phoneNumberData) {
-    console.warn('[ycloud-webhook] Inbound message missing message or phone_number data');
+    logger.warn('Inbound message missing message or phone_number data');
     return;
   }
 
@@ -196,9 +197,14 @@ async function handleInboundMessageReceived(payload: YCloudPayload): Promise<voi
     timestamp,
   });
 
-  console.warn(
-    `[ycloud-webhook] Inbound message from ${customerPhone} to business ${businessId} (channel: ${channelId}): ${body?.slice(0, 100)}`,
-  );
+  // Deliberately no customer phone and no message body: a support log is not a
+  // reason to persist a customer's identity and private conversation.
+  logger.warn('Inbound message stored', {
+    businessId,
+    channelId,
+    ycloudMessageId,
+    bodyLength: body?.length ?? 0,
+  });
 }
 
 async function findChannelByPhoneNumberId(ycloudPhoneNumberId: string) {
@@ -209,9 +215,7 @@ async function findChannelByPhoneNumberId(ycloudPhoneNumberId: string) {
     .limit(1);
 
   if (!channel.length) {
-    console.warn(
-      `[ycloud-webhook] Channel not found for ycloudPhoneNumberId: ${ycloudPhoneNumberId}`,
-    );
+    logger.warn('Channel not found for phone number id', { ycloudPhoneNumberId });
     return null;
   }
   return channel[0];
@@ -324,7 +328,7 @@ async function insertInboundMessage(params: {
 async function handleMessageUpdated(payload: YCloudPayload): Promise<void> {
   const messageData = payload.message;
   if (!messageData) {
-    console.warn('[ycloud-webhook] Message updated event missing message data');
+    logger.warn('Message updated event missing message data');
     return;
   }
 
@@ -348,13 +352,13 @@ async function handleMessageUpdated(payload: YCloudPayload): Promise<void> {
     })
     .where(eq(whatsappMessages.ycloudMessageId, ycloudMessageId));
 
-  console.warn(`[ycloud-webhook] Message ${ycloudMessageId} status updated to ${status}`);
+  logger.warn('Message status updated', { ycloudMessageId, status });
 }
 
 async function handleTemplateReviewed(payload: YCloudPayload): Promise<void> {
   const templateData = payload.template;
   if (!templateData) {
-    console.warn('[ycloud-webhook] Template reviewed event missing template data');
+    logger.warn('Template reviewed event missing template data');
     return;
   }
 
@@ -371,13 +375,13 @@ async function handleTemplateReviewed(payload: YCloudPayload): Promise<void> {
     })
     .where(eq(whatsappTemplates.metaTemplateId, metaTemplateId));
 
-  console.warn(`[ycloud-webhook] Template ${metaTemplateId} status: ${metaStatus}`);
+  logger.warn('Template status updated', { metaTemplateId, metaStatus });
 }
 
 async function handlePhoneNumberUpdated(payload: YCloudPayload): Promise<void> {
   const phoneNumberData = payload.phone_number;
   if (!phoneNumberData) {
-    console.warn('[ycloud-webhook] Phone number updated event missing phone_number data');
+    logger.warn('Phone number updated event missing phone_number data');
     return;
   }
   const ycloudPhoneNumberId = phoneNumberData.id;
@@ -404,9 +408,12 @@ async function handlePhoneNumberUpdated(payload: YCloudPayload): Promise<void> {
     .update(whatsappChannels)
     .set(updates)
     .where(eq(whatsappChannels.ycloudPhoneNumberId, ycloudPhoneNumberId));
-  console.warn(
-    `[ycloud-webhook] Channel ${ycloudPhoneNumberId} updated: ${JSON.stringify(updates)}`,
-  );
+  // Log the shape of the change, never the values: `updates` can carry the
+  // channel's display phone number.
+  logger.warn('Channel updated', {
+    ycloudPhoneNumberId,
+    changedFields: Object.keys(updates),
+  });
 }
 export async function POST(request: Request): Promise<Response> {
   const rawBody = await request.text();
@@ -462,10 +469,13 @@ export async function POST(request: Request): Promise<Response> {
         break;
       }
       default:
-        console.warn(`[ycloud-webhook] Unhandled event type: ${eventType}`);
+        logger.warn('Unhandled event type', { eventType });
     }
   } catch (error) {
-    console.error(`[ycloud-webhook] DB error processing event ${eventType}:`, error);
+    logger.error('DB error processing event', {
+      eventType,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 
