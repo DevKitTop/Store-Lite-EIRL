@@ -183,3 +183,55 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST \
 
 Un **200, 302 o 404** ahí significan que el túnel dejó de reenviar, y con él se pierden
 los errores de los usuarios que tienen bloqueadores.
+
+---
+
+## 11. Tests E2E (TestSprite)
+
+Un test de humo del storefront corre contra producción. No reemplaza a Playwright: lo
+complementa donde hace falta una ejecución en navegador real sin escribir el test a mano.
+
+- **Proyecto:** `storelite` (`5ac72cbd-321f-4fe9-bac4-cc07af026ac2`), entorno `default`
+  apuntando a `https://storelite.app`.
+- **Test:** "Storefront adds a product to the cart" (`e06d5b54-1258-436b-a5e4-bee51853a9d6`).
+
+### Alcance deliberado
+
+El test abre `https://store-lite-store-cfno.storelite.app/product/plan-99-pasarela`, verifica
+nombre y precio, pulsa **"Al carrito"** y comprueba que el carrito queda con el ítem.
+
+**Se detiene ahí a propósito.** El checkout exige OTP por WhatsApp y termina en un cobro
+real: un test E2E sobre producción no debe disparar mensajes ni pagos. Verificar el
+formulario de checkout requiere un entorno con números de prueba, no el sitio real.
+
+### Cómo correrlo
+
+```bash
+npx -y @testsprite/testsprite-cli test rerun e06d5b54-1258-436b-a5e4-bee51853a9d6 --wait
+npx -y @testsprite/testsprite-cli test failure get <testId> --out ./.testsprite/failure
+```
+
+La API key vive en `~/.testsprite/credentials`, fuera del repositorio. En CI se pasa por
+`TESTSPRITE_API_KEY`; nunca como argumento ni en un archivo versionado.
+
+### Costo y límites del plan Free
+
+| Dato                    | Valor medido                       |
+| ----------------------- | ---------------------------------- |
+| Créditos por corrida    | ~0.5 (146.7 → 146.2)               |
+| Créditos por mes        | 150 por asiento                    |
+| Tamaño del proyecto     | 1 entorno, 1 lista de tests        |
+| Ejecuciones programadas | no incluidas (empiezan en Starter) |
+
+La única automatización disponible en Free es el auto-test en PR del portal, sobre un
+repositorio. Con ~290 corridas mensuales disponibles, el costo no es el límite.
+
+### Límite conocido
+
+Con _V3 routing_, un rerun de frontend reproduce **la corrida a la que se apuntó**, no
+necesariamente el código guardado más reciente. Un verde en un rerun confirma que el
+comportamiento sigue igual, no que esté probando el último cambio de código.
+
+Además, los controles son custom elements de Material Web: el botón se localiza por su
+texto visible ("Al carrito"), no por selector CSS. Si se renombra esa etiqueta, el test
+falla por un motivo que no es una regresión.
