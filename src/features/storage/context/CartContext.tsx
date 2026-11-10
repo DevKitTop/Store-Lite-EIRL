@@ -4,13 +4,12 @@ import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import posthog from 'posthog-js';
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { Product } from '../data';
+import { resolveAddToCart, type CartItem } from './cartOperations';
+
+export type { CartItem } from './cartOperations';
 
 /** Valida que un string sea un UUID v4 (formato 8-4-4-4-12) */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export interface CartItem extends Product {
-  quantity: number;
-}
 
 /** Datos frescos de un producto desde el servidor */
 export interface CartServerItem {
@@ -84,35 +83,23 @@ export const CartProvider = ({
   }, [cartItems, STORAGE_KEY, isInitialized]);
 
   const addToCart = (product: Product) => {
-    setCartItems((prevItems) => {
-      const existingItem = prevItems.find((item) => item.id === product.id);
-      if (existingItem) {
-        // Prevent adding more than available stock
-        if (existingItem.quantity >= product.stock) {
-          return prevItems;
-        }
-        posthog.capture(AnalyticsEvents.CART_ITEM_ADDED, {
-          product_id: product.id,
-          product_name: product.name,
-          quantity: existingItem.quantity + 1,
-          store_slug: businessSlug,
-        });
-        return prevItems.map((item) =>
-          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
-        );
-      }
-      // If product has no stock, don't add
-      if (product.stock <= 0) {
-        return prevItems;
-      }
+    // La decisión se calcula fuera del updater: emitir analytics dentro de un
+    // updater duplica eventos (StrictMode, renders descartados) y no garantiza
+    // una sola ejecución por click.
+    const decision = resolveAddToCart(cartItems, product);
+
+    // Forma funcional: conserva altas encadenadas dentro del mismo tick.
+    setCartItems((prevItems) => resolveAddToCart(prevItems, product).items);
+
+    if (decision.added) {
       posthog.capture(AnalyticsEvents.CART_ITEM_ADDED, {
         product_id: product.id,
         product_name: product.name,
-        quantity: 1,
+        quantity: decision.quantity,
         store_slug: businessSlug,
       });
-      return [...prevItems, { ...product, quantity: 1 }];
-    });
+    }
+
     // Invalidar validación previa — el carrito cambió, hay que re-validar
     setCartValidation(null);
   };
