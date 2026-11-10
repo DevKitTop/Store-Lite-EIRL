@@ -348,9 +348,16 @@ existe con `$user_state: "anonymous"` y esos requests dan `200`, `posthog.init` 
 visitante anónimo quedó registrado: lo que falte es transporte o vista, no inicialización. Si la
 cookie no existe, el problema está antes y el token no tiene nada que ver.
 
-En un navegador headless la cookie se crea igual, pero **no sale ningún `POST` a
-`/ingest/i/v0/e`**: `_is_bot()` corta la captura. Es el comportamiento esperado, no una falla, y es
-la razón por la que no se puede automatizar esta verificación.
+En un navegador headless por defecto **no sale ningún `POST` a `/ingest/i/v0/e`**: `_is_bot()`
+corta la captura. La cookie aparece igual, así que un Playwright sin más da un falso positivo y no
+sirve para validar la entrega.
+
+**Estado sano de referencia.** En una carga normal de tienda, Live events muestra `$pageview` y
+`$web_vitals` del visitante anónimo; al tocar **Al carrito**, además `$autocapture` y
+`cart_item_added` con el `product_id`. Si esos cuatro aparecen, la entrega funciona y un evento
+faltante es un problema del sitio en ese evento, no del túnel. Los eventos anónimos se guardan
+aunque el payload lleve `$process_person_profile: false` y `$is_identified: false`: esa bandera no
+los descarta.
 
 ### 13.4 Cuando no aparece ningún evento: qué descartar y en qué orden
 
