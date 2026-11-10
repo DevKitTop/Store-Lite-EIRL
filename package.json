@@ -29,6 +29,7 @@
     "test:e2e": "playwright test",
     "test": "pnpm test:unit && pnpm test:e2e",
     "analyze:bundle": "next build",
+    "audit:js": "tsx scripts/measure-first-load-js.ts",
     "security:check": "pnpm audit --prod",
     "culqi:create-test-user": "tsx scripts/create-culqi-test-user.ts",
     "performance:audit": "lighthouse http://localhost:3000 --output=json --output-path=./reports/lighthouse.json --chrome-flags='--headless'"
