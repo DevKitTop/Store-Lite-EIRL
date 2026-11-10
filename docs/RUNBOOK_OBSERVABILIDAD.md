@@ -265,3 +265,25 @@ misma ruta, no como comparación absoluta contra el presupuesto histórico.
 
 No está cableado en CI a propósito: un gate de bytes que nadie calibró falla por ruido. Se
 corre a mano antes de una release que toque el storefront.
+
+### Lighthouse manual
+
+`pnpm performance:audit` se eliminó: apuntaba a un binario que no está instalado,
+escribía en un `reports/` que no existe y no fijaba versión. Fallaba siempre y
+prometía una medición que nunca ocurrió.
+
+Cuando haga falta una auditoría real de performance:
+
+1. Build de producción local y servidor levantado. Con `next dev` los números no
+   representan nada.
+2. Un Chrome real disponible: Lighthouse lanza su propia instancia y necesita el
+   binario (las de Playwright sirven si se exporta `CHROME_PATH`).
+3. Crear `reports/` antes y correr:
+
+```bash
+npx --yes lighthouse@12 http://localhost:3000 \
+  --output=json --output-path=./reports/lighthouse.json --chrome-flags="--headless"
+```
+
+Es manual a propósito: los scores varían ±10 entre corridas y un gate de CI con ese
+ruido se termina desactivando.
