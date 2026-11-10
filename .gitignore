@@ -133,3 +133,6 @@ send-test-email.ts
 .env.current
 
 sendTestEmail.ts
+
+# Local audit output (Lighthouse reports referenced by the observability runbook)
+reports/
