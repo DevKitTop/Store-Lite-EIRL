@@ -328,13 +328,91 @@ automatizados (`_is_bot()`). Por eso ningún test headless sirve acá: ni un ver
 prueban algo. Se hace a mano, una vez, y de nuevo después de cada deploy que toque analytics.
 
 1. Abrir `https://storelite.app` en una ventana normal, sin bloqueadores.
-2. Aceptar el banner de cookies. Sin consentimiento no se envía nada, por diseño.
-3. Entrar a una tienda y tocar **Al carrito** en un producto.
-4. En PostHog (proyecto 525950, US Cloud) → **Activity → Live events**.
-5. Esperado: `cart_item_added` con la super property `environment: production` —la registra
+2. Entrar a una tienda y tocar **Al carrito** en un producto.
+3. En PostHog (proyecto 525950, US Cloud) → **Activity → Live events**.
+4. Esperado: `cart_item_added` con la super property `environment: production` —la registra
    `instrumentation-client.ts` con `posthog.register`— más la URL del producto.
 
-Si no aparece en un par de minutos, revisar en este orden: bloqueador de anuncios,
-consentimiento no aceptado, o un build con el token de otro proyecto. `resolvePostHogKey()`
-prioriza `NEXT_PUBLIC_POSTHOG_KEY` sobre `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`, y los
-`NEXT_PUBLIC_*` se inlinean en build: cambiarlos exige redeploy.
+PostHog **no** está detrás del banner de cookies: el consentimiento solo gobierna Meta Pixel
+(`ConsentBanner`). Aceptar o rechazar el banner no cambia lo que se envía, así que nunca es la
+causa de un evento ausente.
+
+Si `cart_item_added` no aparece en un par de minutos, revisar en este orden: que el token del
+build sea el del proyecto que estás mirando (13.4), el navegador (bloqueador de anuncios) y por
+último la vista elegida en PostHog (un filtro de `environment`).
+
+**Cómo saber que el SDK arrancó aunque no veas ningún evento.** Al inicializar, `posthog-js` pide
+`/ingest/array/<token>/config.js` y los scripts de `/ingest/static/`, y escribe la cookie
+`ph_phc_<token>_posthog` con `$device_id`, `distinct_id`, `$sesid` y `$user_state`. Si esa cookie
+existe con `$user_state: "anonymous"` y esos requests dan `200`, `posthog.init` corrió y el
+visitante anónimo quedó registrado: lo que falte es transporte o vista, no inicialización. Si la
+cookie no existe, el problema está antes y el token no tiene nada que ver.
+
+En un navegador headless por defecto **no sale ningún `POST` a `/ingest/i/v0/e`**: `_is_bot()`
+corta la captura. La cookie aparece igual, así que un Playwright sin más da un falso positivo y no
+sirve para validar la entrega.
+
+**Estado sano de referencia.** En una carga normal de tienda, Live events muestra `$pageview` y
+`$web_vitals` del visitante anónimo; al tocar **Al carrito**, además `$autocapture` y
+`cart_item_added` con el `product_id`. Si esos cuatro aparecen, la entrega funciona y un evento
+faltante es un problema del sitio en ese evento, no del túnel. Los eventos anónimos se guardan
+aunque el payload lleve `$process_person_profile: false` y `$is_identified: false`: esa bandera no
+los descarta.
+
+### 13.4 Cuando no aparece ningún evento: qué descartar y en qué orden
+
+**`defaultIdentifiedOnly: true` no descarta eventos anónimos.** Es la opción por defecto de
+PostHog (`person_profiles: 'identified_only'`) y solo evita crear person profiles para visitantes
+anónimos: los eventos se guardan igual. Lo confirma la documentación oficial de "Anonymous vs
+identified events". No es la causa de un evento ausente y no hay nada que cambiar en la UI por
+esto.
+
+Lo que sí hay que verificar, en orden:
+
+1. **El token del build contra el del proyecto que estás mirando.** El token es lo único que
+   decide a qué proyecto entra un evento. Si no coinciden, el SDK envía, PostHog responde `200`
+   y nada aparece en la pantalla equivocada. Se compara así:
+
+   - En PostHog: **Project Settings → Project API key**, copiar el `phc_...`.
+   - En el navegador, con la tienda abierta: DevTools → **Application → Cookies** → buscar la
+     cookie `ph_phc_<token>_posthog`. Ese `<token>` es el que usa la página.
+
+   Si no coincide, el build apunta a otro proyecto y ahí están tus eventos. Si la cookie no
+   existe, el SDK no llegó a inicializar: el paso 1 no aplica y hay que mirar 13.3.
+
+2. **El evento de prueba.** Un `POST` manual a `/ingest/i/v0/e` con el token del build y un
+   evento `diagnostic_probe` debe aparecer en **Activity → Live events** sin filtros. Si no
+   aparece, ese token no apunta al proyecto que estás viendo.
+
+3. **El navegador.** Un bloqueador de anuncios corta el request antes de salir; probar en una
+   ventana limpia o en otro navegador.
+
+4. **La vista.** `environment` se guarda como super property; un filtro por ese valor deja fuera
+   todo lo que no lo tenga. Live events muestra lo que se ingiere ahora, no el histórico.
+
+### 13.5 Verificar el túnel de ingesta sin navegador
+
+`posthog-js` publica en `/ingest/i/v0/e/`, con barra final. Next normaliza esa barra con un
+**308** hacia `/ingest/i/v0/e`, que es la forma que sí matchea el rewrite `/ingest/:path*`.
+Los navegadores repiten el POST con su cuerpo en un 308 (verificado con `fetch`), así que el
+redirect cuesta un round-trip extra pero no pierde eventos. No se "arregla" con
+`skipTrailingSlashRedirect`: es global y duplicaría la URL de cada tienda.
+
+Para probar el túnel desde la terminal:
+
+```bash
+node -e "fetch('https://storelite.app/ingest/i/v0/e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:'phc_...',event:'diagnostic_probe',properties:{distinct_id:'diagnostic-probe'}})}).then(async r=>console.log(r.status,await r.text()))"
+```
+
+Esperado: `200 {"status":"Ok"}`, que prueba que el rewrite, el bypass del middleware y el payload
+son válidos. No prueba que el evento se guarde ni en qué proyecto: eso lo resuelve el checklist
+de 13.4.
+
+Un `400` significa que el cuerpo llegó vacío o inválido. No usar `curl` para esta verificación:
+al seguir el 308 no repite el cuerpo del POST y devuelve un `400` que parece una falla del túnel
+pero es del cliente.
+
+Si el probe devuelve HTML o `404`, el problema es el rewrite de `next.config.ts` o el bypass del
+middleware (`src/lib/middleware/proxyBypass.ts`), no el token. `resolvePostHogKey()` prioriza
+`NEXT_PUBLIC_POSTHOG_KEY` sobre `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`, y los `NEXT_PUBLIC_*` se
+inlinean en build: cambiarlos exige redeploy.
