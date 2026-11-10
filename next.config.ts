@@ -1,4 +1,4 @@
-import { withSentryConfig } from '@sentry/nextjs';
+import { withSentryConfig } from '@sentry/nextjs/config';
 import type { NextConfig } from 'next';
 
 // Derive the Supabase hostname from the env var so both dev and prod work
@@ -15,6 +15,9 @@ const nextConfig: NextConfig = {
   // Exponer explícitamente vars al build para que el Edge Runtime las tenga disponibles
   env: {
     FEATURE_SUBDOMAIN_REWRITE: process.env.FEATURE_SUBDOMAIN_REWRITE,
+    // Inline the release name into the browser bundle too. Without this the
+    // client SDK has no release, so browser errors cannot be tied to a deploy.
+    NEXT_PUBLIC_SENTRY_RELEASE: process.env.SENTRY_RELEASE ?? process.env.VERCEL_GIT_COMMIT_SHA,
   },
   poweredByHeader: false,
   compress: true,

@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { logger, toErrorDetail } from '@/lib/logger';
 import twilio from 'twilio';
 
 // Twilio client instance (initialized server-side only)
@@ -94,7 +95,7 @@ export async function sendOtpWhatsApp(phone: string, code: string): Promise<Twil
       body: message.body,
     };
   } catch (error: unknown) {
-    console.error(`[Twilio] Error sending OTP:`, error);
+    logger.error('Twilio: send OTP failed', { error: toErrorDetail(error) });
     throw new Error(
       `Twilio error: ${error instanceof Error ? error.message : 'Failed to send OTP'}`,
     );

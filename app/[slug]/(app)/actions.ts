@@ -2,6 +2,7 @@
 
 import { db } from '@/core/database/client';
 import { businesses, payments } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { and, eq } from 'drizzle-orm';
 
 /**
@@ -67,7 +68,7 @@ export async function lookupOrderByGoogleIdentity(
       token: payment.trackingToken,
     };
   } catch (error) {
-    console.error('[lookupOrderByGoogleIdentity] Error:', error);
+    logger.error('[lookupOrderByGoogleIdentity] Error:', { error: toErrorDetail(error) });
     return { success: false as const, error: 'Error al buscar el pedido' };
   }
 }

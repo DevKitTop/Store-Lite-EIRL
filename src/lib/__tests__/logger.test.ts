@@ -15,7 +15,7 @@ vi.mock('@sentry/nextjs', () => ({
   logger: mockSentryLogger,
 }));
 
-import { logger } from '../logger';
+import { logger, toErrorDetail } from '../logger';
 
 describe('logger', () => {
   beforeEach(() => {
@@ -77,5 +77,22 @@ describe('logger', () => {
         email: '[REDACTED_EMAIL]',
       });
     });
+  });
+});
+
+describe('toErrorDetail', () => {
+  it('returns the message for a thrown Error', () => {
+    expect(toErrorDetail(new Error('boom'))).toBe('boom');
+  });
+
+  it('passes a non-Error payload through untouched', () => {
+    // An API response body must survive: String() would flatten it to
+    // "[object Object]" and destroy the diagnostic payload.
+    const payload = { code: 'invalid_payload' };
+    expect(toErrorDetail(payload)).toBe(payload);
+  });
+
+  it('does not recurse on itself', () => {
+    expect(toErrorDetail('plain string')).toBe('plain string');
   });
 });

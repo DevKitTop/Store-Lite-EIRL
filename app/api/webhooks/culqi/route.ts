@@ -17,6 +17,7 @@ import {
 import { claimWebhookEvent } from '@/core/payments/webhookDedup';
 import { buildWebhookPaymentValues } from '@/core/payments/webhookPaymentValues';
 import { generateTrackingToken } from '@/core/utils/trackingToken';
+import { logger } from '@/lib/logger';
 import type { OrderStatus } from '@/types/order';
 import { and, eq, or, sql } from 'drizzle-orm';
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -158,9 +159,7 @@ function resolveRefundChargeId(
 ): string | undefined {
   const chargeId = data?.charge_id ?? data?.id;
   if (chargeId && !data?.charge_id) {
-    console.warn(
-      `[culqi-webhook] Refund event ${eventType} missing charge_id; falling back to data.id`,
-    );
+    logger.warn('Refund event missing charge_id; falling back to data.id', { eventType });
   }
   return chargeId;
 }
@@ -307,7 +306,7 @@ async function applyOrderStatusChanged(culqiOrderId: string, mapped: OrderStatus
   });
 
   if (!preRead) {
-    console.warn(`[culqi-webhook] Order not found in DB: ${culqiOrderId}`);
+    logger.warn('Order not found in DB', { culqiOrderId });
     return;
   }
 
@@ -361,9 +360,7 @@ async function applyOrderStatusChanged(culqiOrderId: string, mapped: OrderStatus
       });
 
       if (!identity) {
-        console.warn(
-          `[culqi-webhook] Could not resolve the sale for order ${culqiOrderId}; no stock moved`,
-        );
+        logger.warn('Could not resolve the sale for order; no stock moved', { culqiOrderId });
         return;
       }
 
@@ -379,9 +376,7 @@ async function applyOrderStatusChanged(culqiOrderId: string, mapped: OrderStatus
     });
   } catch (error) {
     if (error instanceof FlipMissedError) {
-      console.warn(
-        `[culqi-webhook] Order flip missed for ${culqiOrderId}: the scoped update matched no row`,
-      );
+      logger.warn('Order flip missed: the scoped update matched no row', { culqiOrderId });
       return;
     }
     throw error;
@@ -425,9 +420,7 @@ async function fulfillChargeSale(chargeId: string, outcome: ChargeStatusOutcome)
   });
 
   if (!identity) {
-    console.warn(
-      `[culqi-webhook] Could not resolve the sale for charge ${chargeId}; no stock moved`,
-    );
+    logger.warn('Could not resolve the sale for charge; no stock moved', { chargeId });
     return;
   }
 
@@ -550,9 +543,7 @@ async function applyChargeStatus(
   // ── 5. ATTRIBUTION (D14/A2). A charge that resolves to no sale at all —
   //       no business scope and no order link — is NOT written.
   if (!businessId) {
-    console.warn(
-      `[culqi-webhook] Charge ${chargeId} is not attributable to a sale; no payment row created`,
-    );
+    logger.warn('Charge is not attributable to a sale; no payment row created', { chargeId });
     return null;
   }
 
@@ -624,8 +615,11 @@ async function applyChargeStatus(
   });
 
   if (!values) {
-    console.warn(
-      `[culqi-webhook] Cannot create a payment row for charge ${chargeId} (missing business/product/owner); no row created`,
+    logger.warn(
+      'Cannot create a payment row (missing business, product or owner); no row created',
+      {
+        chargeId,
+      },
     );
     return null;
   }
@@ -689,7 +683,7 @@ export async function POST(request: Request) {
       if (process.env.CULQI_WEBHOOK_STRICT_SIGNATURE === 'true') {
         return NextResponse.json({ error: 'Missing authentication' }, { status: 401 });
       }
-      console.warn('[culqi-webhook] Missing authentication in production');
+      logger.warn('Missing authentication in production');
     }
     // Allow in development for testing
   }
@@ -723,7 +717,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ received: true, duplicate: true });
     }
   } catch (err) {
-    console.error('[culqi-webhook] Failed to claim webhook event:', err);
+    logger.error('Failed to claim webhook event', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     // Fail open to avoid blocking on DB issues, but prefer to dedup
   }
 
@@ -761,7 +757,7 @@ export async function POST(request: Request) {
         const culqiOrderId = event.data?.id;
 
         if (!culqiOrderId) {
-          console.warn('[culqi-webhook] Missing order ID or status in order.status.changed');
+          logger.warn('Missing order ID or status in order.status.changed');
           break;
         }
 
@@ -769,18 +765,18 @@ export async function POST(request: Request) {
 
         if (!mapped) {
           if (reason === 'missing') {
-            console.warn('[culqi-webhook] Missing order ID or status in order.status.changed');
+            logger.warn('Missing order ID or status in order.status.changed');
           } else if (reason === 'unproven') {
             // The legacy `status` key claims 'paid' but the canonical proof
             // (`state` / `paid_at`) is missing — the same money gate the charge
             // route applies denies it.
-            console.warn(
-              `[culqi-webhook] Order payment state unproven for ${culqiOrderId}: no canonical state/paid_at`,
-            );
+            logger.warn('Order payment state unproven: no canonical state or paid_at', {
+              culqiOrderId,
+            });
           } else {
-            console.warn(
-              `[culqi-webhook] Unknown order status: ${event.data?.state ?? event.data?.status}`,
-            );
+            logger.warn('Unknown order status', {
+              status: event.data?.state ?? event.data?.status,
+            });
           }
           break;
         }
@@ -789,10 +785,13 @@ export async function POST(request: Request) {
         break;
       }
       default:
-        console.warn(`[culqi-webhook] Unhandled event type: ${eventType}`);
+        logger.warn('Unhandled event type', { eventType });
     }
   } catch (error) {
-    console.error(`[culqi-webhook] DB error processing event ${eventType}:`, error);
+    logger.error('DB error processing event', {
+      eventType,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 

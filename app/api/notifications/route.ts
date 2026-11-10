@@ -7,6 +7,7 @@ import {
   type NewNotification,
   type NotificationCategory,
 } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { getMemberPermissions } from '@/lib/permissions/checkPermission';
 import { createClient } from '@/lib/supabase/server';
 import { getErrorMessage } from '@/utils/errors';
@@ -106,7 +107,7 @@ export async function GET(request: Request) {
     });
   } catch (error: unknown) {
     const message = getErrorMessage(error, 'Error al obtener notificaciones');
-    console.error('[GET notifications] Critical Error:', {
+    logger.error('GET notifications: critical error', {
       message,
       stack: error instanceof Error ? error.stack : undefined,
       businessId: resolvedBusinessId,
@@ -177,7 +178,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, notification: created });
   } catch (error) {
-    console.error('[POST notifications] Error:', error);
+    logger.error('[POST notifications] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error al crear la notificación' }, { status: 500 });
   }
 }

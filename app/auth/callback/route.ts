@@ -41,7 +41,7 @@ export async function GET(request: Request) {
   const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
   if (exchangeError) {
-    console.error('Error exchanging code for session:', exchangeError);
+    logger.error('Error exchanging code for session:', { error: toErrorDetail(exchangeError) });
     return redirectToAuth(origin, returnTarget, 'exchange_failed');
   }
 
@@ -83,6 +83,7 @@ export async function GET(request: Request) {
   return NextResponse.redirect(`${origin}/onboarding`);
 }
 
+import { logger, toErrorDetail } from '@/lib/logger';
 import { type SupabaseClient, type User } from '@supabase/supabase-js';
 
 /**
@@ -140,7 +141,7 @@ async function syncUserProfile(supabase: SupabaseClient, user: User) {
     });
 
     if (insertError) {
-      console.error('Error creating profile:', insertError);
+      logger.error('Error creating profile:', { error: toErrorDetail(insertError) });
     }
   } else if (existingProfile) {
     // Update existing profile with latest info
@@ -153,7 +154,7 @@ async function syncUserProfile(supabase: SupabaseClient, user: User) {
       .eq('id', user.id);
 
     if (updateError) {
-      console.error('Error updating profile:', updateError);
+      logger.error('Error updating profile:', { error: toErrorDetail(updateError) });
     }
   }
 }

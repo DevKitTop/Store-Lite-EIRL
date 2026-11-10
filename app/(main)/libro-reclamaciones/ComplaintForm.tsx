@@ -8,6 +8,7 @@
 // neutral professional Spanish (Peru) per DS 011-2011-PCM.
 // =====================================================
 
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { AlertSnackbar, Button, Card, Checkbox, Icon, TextField } from '@/shared/components/ui';
 import posthog from 'posthog-js';
 import { useCallback, useState, useTransition } from 'react';
@@ -123,7 +124,7 @@ export function ComplaintForm() {
       });
 
       if (res.success) {
-        posthog.capture('platform_complaint_submitted', {
+        posthog.capture(AnalyticsEvents.PLATFORM_COMPLAINT_SUBMITTED, {
           has_claimed_amount: Boolean(formData.claimedAmount),
           is_minor: formData.minorAge,
           email_delivered: !res.emailFailed,

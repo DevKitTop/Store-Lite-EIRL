@@ -23,6 +23,7 @@ import {
 } from '@/core/database/schema';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
 import { getConsentState } from '@/lib/consent/consentServer';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { fireEvent } from '@/lib/meta/capi';
 import { generateEventId } from '@/lib/meta/eventId';
 import { extractFbclid, getCookie } from '@/lib/meta/payload';
@@ -134,7 +135,7 @@ export async function POST(request: Request) {
     // ── Obtener datos del emisor ──────────────────────────────────────────────
     const issuer = await db.query.saasIssuerConfig.findFirst();
     if (!issuer) {
-      console.error('[purchase-plan] saas_issuer_config no configurada');
+      logger.error('[purchase-plan] saas_issuer_config no configurada');
       return NextResponse.json(
         { error: 'Configuración del emisor no encontrada. Contacta al soporte.' },
         { status: 500 },
@@ -144,7 +145,7 @@ export async function POST(request: Request) {
     // ── Cobrar en Culqi (claves del SaaS, NO del merchant) ───────────────────
     const culqiSecretKey = process.env.CULQI_SK;
     if (!culqiSecretKey) {
-      console.error('[purchase-plan] CULQI_SK no configurada');
+      logger.error('[purchase-plan] CULQI_SK no configurada');
       return NextResponse.json({ error: 'Pasarela de pagos no configurada' }, { status: 500 });
     }
 
@@ -369,7 +370,7 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
-    console.error('[purchase-plan] Error inesperado:', error);
+    logger.error('[purchase-plan] Error inesperado:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }

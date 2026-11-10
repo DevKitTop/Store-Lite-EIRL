@@ -2,6 +2,7 @@
 // The config you add here will be used whenever the server handles a request.
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
+import { resolveSentryRelease } from '@/lib/sentryRelease';
 import * as Sentry from '@sentry/nextjs';
 
 Sentry.init({
@@ -10,11 +11,8 @@ Sentry.init({
   // Free tier: 5M spans/month — 10% sampling in production
   tracesSampleRate: 0.1,
 
-  // Enable logs to be sent to Sentry
-  enableLogs: true,
-
-  // Release tracking from Vercel build
-  release: process.env.NEXT_SENTRY_DSN_RELEASE,
+  // Release tracking from the deployment that produced this build
+  release: resolveSentryRelease(),
   environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
 
   dataCollection: {

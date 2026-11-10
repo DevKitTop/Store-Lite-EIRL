@@ -16,6 +16,9 @@ import {
   mergeStorefrontThemeIntoPreferences,
   normalizeStorefrontTheme,
 } from '@/core/storefront';
+import { captureEvent } from '@/lib/analytics/capture';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { generateBusinessSlug } from '@/shared/utils/slugify';
 import { createServerClient } from '@supabase/ssr';
 import { eq } from 'drizzle-orm';
@@ -174,10 +177,9 @@ export async function createBusinessAction(formData: FormData) {
     try {
       storefrontTheme = normalizeStorefrontTheme(JSON.parse(rawStorefrontTheme));
     } catch (error) {
-      console.warn(
-        '[createBusinessAction] Invalid storefront theme payload, using default.',
-        error,
-      );
+      logger.warn('createBusinessAction: invalid theme payload, using default', {
+        error: toErrorDetail(error),
+      });
     }
   }
 
@@ -191,10 +193,7 @@ export async function createBusinessAction(formData: FormData) {
     generateBusinessSlug(commercialName, 'store'),
   );
 
-  console.warn(
-    '[createBusinessAction] Initiating business creation with logo size:',
-    logoFile?.size || 0,
-  );
+  logger.debug('createBusinessAction: initiating creation', { logoSize: logoFile?.size ?? 0 });
 
   try {
     // 5. Insert into Database — wrapped in a transaction so the limit check
@@ -269,7 +268,9 @@ export async function createBusinessAction(formData: FormData) {
       return { businessId: bizId, finalSlug };
     });
 
-    console.warn('[createBusinessAction] Transaction committed for slug:', txSlug);
+    logger.debug('createBusinessAction: transaction committed', {
+      slug: txSlug,
+    });
 
     // 6. Handle Logo Upload — OUTSIDE the transaction.
     // If it fails, the business is already created. We treat it as non-fatal.
@@ -277,7 +278,9 @@ export async function createBusinessAction(formData: FormData) {
 
     if (logoFile && logoFile.size > 0) {
       try {
-        console.warn('[createBusinessAction] Preparing logo upload for business:', businessId);
+        logger.debug('createBusinessAction: preparing logo upload', {
+          businessId,
+        });
 
         const fileExt = logoFile.name.split('.').pop();
         const fileName = `${Date.now()}.${fileExt}`;
@@ -303,32 +306,49 @@ export async function createBusinessAction(formData: FormData) {
           });
 
         if (uploadError) {
-          console.error('[createBusinessAction] Logo upload failed (non-fatal):', uploadError);
+          logger.error('[createBusinessAction] Logo upload failed (non-fatal):', {
+            error: toErrorDetail(uploadError),
+          });
           logoWarning = uploadError.message;
         } else {
           const {
             data: { publicUrl },
           } = adminStorage.storage.from('store-covers').getPublicUrl(filePath);
 
-          console.warn('[createBusinessAction] Final logo URL:', publicUrl);
+          logger.debug('createBusinessAction: logo uploaded', {
+            publicUrl,
+          });
           await db
             .update(businesses)
             .set({ logoUrl: publicUrl })
             .where(eq(businesses.id, businessId));
         }
       } catch (logoError) {
-        console.error('[createBusinessAction] Logo upload exception (non-fatal):', logoError);
+        logger.error('[createBusinessAction] Logo upload exception (non-fatal):', {
+          error: toErrorDetail(logoError),
+        });
         logoWarning = 'No se pudo subir el logo.';
       }
     }
 
-    console.warn('[createBusinessAction] Creation fully completed for slug:', txSlug);
+    logger.debug('createBusinessAction: creation completed', {
+      error: toErrorDetail(txSlug),
+    });
+
+    // Fire-and-forget: the business already exists, analytics cannot undo it.
+    captureEvent(AnalyticsEvents.BUSINESS_CREATED, {
+      business_id: businessId,
+      slug: txSlug,
+    }).catch(() => {});
+
     return { success: true, slug: txSlug, logoWarning };
   } catch (error) {
     if (error instanceof Error && error.message === 'LIMIT_EXCEEDED') {
       return { error: 'Has alcanzado el límite máximo de 3 negocios por cuenta.' };
     }
-    console.error('[createBusinessAction] Top level catch block error:', error);
+    logger.error('[createBusinessAction] Top level catch block error:', {
+      error: toErrorDetail(error),
+    });
     return { error: 'Error al guardar los datos en la base de datos.' };
   }
 }

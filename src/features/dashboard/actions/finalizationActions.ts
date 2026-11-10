@@ -12,6 +12,7 @@ import {
 } from '@/core/orders/orderStatus';
 import { processOrderCompletion } from '@/lib/deactivation';
 import { checkIncompleteOrderDeactivation } from '@/lib/incompleteOrderRate';
+import { logger } from '@/lib/logger';
 import { createBusinessNotification } from '@/lib/notifications';
 import {
   ORDER_ACCESS_DENIED_ERROR,
@@ -42,7 +43,7 @@ async function getAuthenticatedUserId(): Promise<string | null> {
     });
 
     if (!existingProfile) {
-      console.warn('[getAuthenticatedUserId] Profile missing, auto-creating for user:', user.id);
+      logger.warn('getAuthenticatedUserId: profile missing, auto-creating', { userId: user.id });
       await db.insert(profiles).values({
         id: user.id,
         email: user.email ?? '',
@@ -128,7 +129,9 @@ export async function requestFinalization(
       .limit(1);
 
     if (!payment) {
-      console.error('[requestFinalization] Payment not found or not owned by business');
+      logger.error('requestFinalization: payment not found or not owned by business', {
+        paymentId,
+      });
       return { success: false, error: NO_PERMISSION_ERROR };
     }
 
@@ -139,7 +142,10 @@ export async function requestFinalization(
       : currentStatus === ORDER_STATUS.DELIVERED;
 
     if (!isValidForFinalization) {
-      console.error('[requestFinalization] Invalid status:', payment.status);
+      logger.error('requestFinalization: status does not allow finalization', {
+        paymentId,
+        status: payment.status,
+      });
       return {
         success: false,
         error: env.orderFlowV2
@@ -152,10 +158,10 @@ export async function requestFinalization(
 
     // 4. Check if already in finalization process
     if (payment.finalizationRequestedAt) {
-      console.warn(
-        '[requestFinalization] Finalization already requested at:',
-        payment.finalizationRequestedAt,
-      );
+      logger.warn('requestFinalization: already requested', {
+        paymentId,
+        requestedAt: payment.finalizationRequestedAt,
+      });
       return { success: false, error: 'La finalización ya fue solicitada anteriormente.' };
     }
 
@@ -179,7 +185,7 @@ export async function requestFinalization(
       });
 
       if (!result.success) {
-        console.error('[requestFinalization] OrderService error:', result.error);
+        logger.error('requestFinalization: order transition failed', { error: result.error });
         return { success: false, error: result.error };
       }
     } else {
@@ -196,7 +202,7 @@ export async function requestFinalization(
         .returning({ id: payments.id });
 
       if (!updated) {
-        console.error('[requestFinalization] Version conflict for payment:', paymentId);
+        logger.error('requestFinalization: version conflict', { paymentId });
         return {
           success: false,
           error: 'El pedido fue modificado por otra operación. Recargá e intentá de nuevo.',
@@ -254,7 +260,9 @@ Recuerda que si no respondes en 3 días (${deadline.toLocaleDateString('es-PE')}
       },
     };
   } catch (error) {
-    console.error('[requestFinalization] Error:', error);
+    logger.error('requestFinalization: unexpected error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       success: false,
       error: 'Error al solicitar la finalización del pedido.',
@@ -290,7 +298,7 @@ export async function confirmFinalization(
       .limit(1);
 
     if (!payment) {
-      console.error('[confirmFinalization] Payment not found or invalid token');
+      logger.error('confirmFinalization: payment not found or invalid token', { paymentId });
       return {
         success: false,
         error: 'Pedido no encontrado o token inválido.',
@@ -300,7 +308,10 @@ export async function confirmFinalization(
 
     const confirmableStatuses: readonly string[] = CONFIRMABLE_STATUSES;
     if (!confirmableStatuses.includes(payment.status)) {
-      console.error('[confirmFinalization] Invalid status:', payment.status);
+      logger.error('confirmFinalization: status is not confirmable', {
+        paymentId,
+        status: payment.status,
+      });
       return {
         success: false,
         error: `El pedido no está en estado de espera de confirmación. Estado actual: ${payment.status}`,
@@ -395,10 +406,12 @@ export async function confirmFinalization(
           await processOrderCompletion(payment.businessId);
         }
       } catch (deactivationError) {
-        console.error(
-          '[confirmFinalization] Error checking incomplete order rate:',
-          deactivationError,
-        );
+        logger.error('confirmFinalization: incomplete order rate check failed', {
+          error:
+            deactivationError instanceof Error
+              ? deactivationError.message
+              : String(deactivationError),
+        });
         // Don't fail the confirmation if deactivation check fails
       }
     }
@@ -410,7 +423,9 @@ export async function confirmFinalization(
       },
     };
   } catch (error) {
-    console.error('[confirmFinalization] Error:', error);
+    logger.error('confirmFinalization: unexpected error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       success: false,
       error: 'Error al confirmar la finalización del pedido.',
@@ -449,7 +464,7 @@ export async function rejectFinalization(
       .limit(1);
 
     if (!payment) {
-      console.error('[rejectFinalization] Payment not found or invalid token');
+      logger.error('rejectFinalization: payment not found or invalid token', { paymentId });
       return {
         success: false,
         error: 'Pedido no encontrado o token inválido.',
@@ -458,7 +473,10 @@ export async function rejectFinalization(
     }
 
     if (!CONFIRMABLE_STATUSES.includes(payment.status as string)) {
-      console.error('[rejectFinalization] Invalid status:', payment.status);
+      logger.error('rejectFinalization: status is not confirmable', {
+        paymentId,
+        status: payment.status,
+      });
       return {
         success: false,
         error: `El pedido no está en estado de espera de confirmación. Estado actual: ${payment.status}`,
@@ -553,7 +571,9 @@ export async function rejectFinalization(
       },
     };
   } catch (error) {
-    console.error('[rejectFinalization] Error:', error);
+    logger.error('rejectFinalization: unexpected error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       success: false,
       error: 'Error al reportar el problema del pedido.',

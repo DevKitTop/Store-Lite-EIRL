@@ -6,6 +6,7 @@
 // Fully public, no auth required. Submits via server action.
 // =====================================================
 
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { AlertSnackbar, Button, Card, Checkbox, Icon, TextField } from '@/shared/components/ui';
 import posthog from 'posthog-js';
 import { useCallback, useState, useTransition } from 'react';
@@ -125,7 +126,7 @@ export function ComplaintForm({ slug }: ComplaintFormProps) {
       });
 
       if (res.success) {
-        posthog.capture('complaint_submitted', {
+        posthog.capture(AnalyticsEvents.COMPLAINT_SUBMITTED, {
           store_slug: slug,
           has_claimed_amount: Boolean(formData.claimedAmount),
           is_minor: formData.minorAge,

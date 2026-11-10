@@ -4,6 +4,7 @@ import type { ProductWithRelations } from '@/features/products/types/productType
 import { updateProductPublicMetadata } from '@/features/storage/actions/products';
 import { useCart } from '@/features/storage/context/CartContext';
 import { formatPrice } from '@/features/storage/utils/currency';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { Button, Sheet } from '@/shared/components/ui';
 import { Icon } from '@/shared/components/ui/data-display/Icon';
 import { Checkbox } from '@/shared/components/ui/inputs/Checkbox';
@@ -143,7 +144,7 @@ export default function ProductPreviewSheet({
 
     try {
       if (typeof posthog?.capture === 'function') {
-        posthog.capture('product_viewed', {
+        posthog.capture(AnalyticsEvents.PRODUCT_VIEWED, {
           productId: product.id,
           productName: product.title,
           businessSlug: slug,

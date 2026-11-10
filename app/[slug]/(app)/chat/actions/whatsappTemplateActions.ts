@@ -9,6 +9,9 @@ import {
 } from '@/core/whatsapp/guards/whatsappSendGuards';
 import { normalizeMetaStatus } from '@/core/whatsapp/templates/metaStatus';
 import { BASE_TEMPLATES, applyBusinessName } from '@/features/chat/constants/baseTemplates';
+import { captureEvent } from '@/lib/analytics/capture';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { and, desc, eq } from 'drizzle-orm';
 
@@ -117,7 +120,7 @@ export async function createWhatsAppTemplate(
 
     const apiKey = env.ycloudApiKey;
     if (!apiKey) {
-      console.error('[createWhatsAppTemplate] Missing YCloud API key');
+      logger.error('[createWhatsAppTemplate] Missing YCloud API key');
       return { success: false, error: 'Configuración de WhatsApp incompleta' };
     }
 
@@ -154,7 +157,9 @@ export async function createWhatsAppTemplate(
     const ycloudResponse = await response.json();
 
     if (!response.ok) {
-      console.error('[createWhatsAppTemplate] YCloud error:', ycloudResponse);
+      logger.error('[createWhatsAppTemplate] YCloud error:', {
+        error: toErrorDetail(ycloudResponse),
+      });
       return {
         success: false,
         error: ycloudResponse.message || 'Error al crear template en YCloud',
@@ -163,7 +168,9 @@ export async function createWhatsAppTemplate(
 
     const metaTemplateId = ycloudResponse.id;
     if (!metaTemplateId) {
-      console.error('[createWhatsAppTemplate] Invalid YCloud response:', ycloudResponse);
+      logger.error('[createWhatsAppTemplate] Invalid YCloud response:', {
+        error: toErrorDetail(ycloudResponse),
+      });
       return { success: false, error: 'Respuesta inválida de YCloud' };
     }
 
@@ -183,7 +190,7 @@ export async function createWhatsAppTemplate(
 
     return { success: true, template: newTemplate, ycloudTemplateId: metaTemplateId };
   } catch (error) {
-    console.error('[createWhatsAppTemplate] Error:', error);
+    logger.error('[createWhatsAppTemplate] Error:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo crear el template' };
   }
 }
@@ -231,7 +238,7 @@ export async function fetchWhatsAppTemplates(channelId: string): Promise<FetchTe
 
     return { success: true, templates };
   } catch (error) {
-    console.error('[fetchWhatsAppTemplates] Error:', error);
+    logger.error('[fetchWhatsAppTemplates] Error:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudieron cargar los templates', templates: [] };
   }
 }
@@ -284,7 +291,7 @@ export async function syncTemplateStatus(templateId: string): Promise<SyncTempla
     const ycloudResponse = await response.json();
 
     if (!response.ok) {
-      console.error('[syncTemplateStatus] YCloud error:', ycloudResponse);
+      logger.error('[syncTemplateStatus] YCloud error:', { error: toErrorDetail(ycloudResponse) });
       return { success: false, error: 'Error al sincronizar con YCloud' };
     }
 
@@ -303,7 +310,7 @@ export async function syncTemplateStatus(templateId: string): Promise<SyncTempla
 
     return { success: true, template: updated };
   } catch (error) {
-    console.error('[syncTemplateStatus] Error:', error);
+    logger.error('[syncTemplateStatus] Error:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo sincronizar el template' };
   }
 }
@@ -331,7 +338,7 @@ export async function getApprovedTemplates(channelId: string): Promise<FetchTemp
 
     return { success: true, templates };
   } catch (error) {
-    console.error('[getApprovedTemplates] Error:', error);
+    logger.error('[getApprovedTemplates] Error:', { error: toErrorDetail(error) });
     return {
       success: false,
       error: 'No se pudieron cargar los templates aprobados',
@@ -406,7 +413,7 @@ export async function syncAllTemplateStatuses(channelId: string): Promise<{
 
     return { success: true, synced, errors };
   } catch (error) {
-    console.error('[syncAllTemplateStatuses] Error:', error);
+    logger.error('[syncAllTemplateStatuses] Error:', { error: toErrorDetail(error) });
     return { success: false, synced: 0, errors: ['Error general al sincronizar'] };
   }
 }
@@ -514,7 +521,7 @@ export async function sendTemplateMessage(data: {
     const ycloudResponse = await response.json();
 
     if (!response.ok) {
-      console.error('[sendTemplateMessage] YCloud error:', ycloudResponse);
+      logger.error('[sendTemplateMessage] YCloud error:', { error: toErrorDetail(ycloudResponse) });
       return {
         success: false,
         error: ycloudResponse.message || 'Error al enviar template por WhatsApp',
@@ -548,9 +555,15 @@ export async function sendTemplateMessage(data: {
       .set({ lastMessageAt: new Date(), updatedAt: new Date() })
       .where(eq(whatsappConversations.id, data.conversationId));
 
+    // Fire-and-forget: analytics must never block an outbound message.
+    captureEvent(AnalyticsEvents.WHATSAPP_TEMPLATE_MESSAGE_SENT, {
+      business_id: channel[0].businessId,
+      template_name: data.templateName,
+    }).catch(() => {});
+
     return { success: true, messageId: newMessage.id };
   } catch (error) {
-    console.error('[sendTemplateMessage] Error:', error);
+    logger.error('[sendTemplateMessage] Error:', { error: toErrorDetail(error) });
     return { success: false, error: 'No se pudo enviar el template' };
   }
 }

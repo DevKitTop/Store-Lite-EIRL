@@ -1,6 +1,7 @@
 import { db } from '@/core/database/client';
 import { businesses } from '@/core/database/schema';
 import { getMonthlyUsage, type MonthlyUsageOptions } from '@/core/whatsapp/billing/usageService';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -71,7 +72,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ report });
   } catch (error) {
-    console.error('[GET /api/seller/whatsapp/billing] Error:', error);
+    logger.error('[GET /api/seller/whatsapp/billing] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }

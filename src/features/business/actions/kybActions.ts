@@ -7,7 +7,10 @@ import {
   VerifyIdentitySchema,
   VerifyOtpSchema,
 } from '@/features/business/actions/kybSchemas';
+import { captureEvent } from '@/lib/analytics/capture';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { getRucInfo, getRucRepresentatives } from '@/lib/factiliza/client';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { checkOtpViaVerify, sendOtpViaVerify } from '@/lib/twilio/client';
 import { and, desc, eq, gt, sql } from 'drizzle-orm';
 
@@ -128,7 +131,7 @@ export async function verifyIdentityAction(formData: FormData) {
       },
     };
   } catch (error: unknown) {
-    console.error(`[KYB] Error verifying ${formData.get('documentNumber')}:`, error);
+    logger.error('KYB: identity verification failed', { error: toErrorDetail(error) });
     return { error: error instanceof Error ? error.message : 'Error al verificar el documento' };
   }
 }
@@ -151,7 +154,7 @@ export async function requestOtpAction(formData: FormData) {
     // ── Rate limiting ──────────────────────────────────────────────
     const rateCheck = await checkOtpRateLimit(identifier);
     if (!rateCheck.allowed) {
-      console.warn(`[KYB] Rate limit hit for ${identifier}`);
+      logger.warn('KYB: rate limit hit');
       return {
         error: `Demasiadas solicitudes. Intenta de nuevo en ${rateCheck.retryAfterSeconds} segundos.`,
       };
@@ -190,13 +193,13 @@ export async function requestOtpAction(formData: FormData) {
         const result = await sendOtpViaVerify(phone);
 
         if (result.status === 'failed' || result.status === 'canceled') {
-          console.error(`[KYB] Twilio Verify failed to send OTP:`, result.status);
+          logger.error('KYB: Twilio Verify failed to send OTP', { status: result.status });
           return {
             error: `No se pudo enviar el código. Verifica que el número sea válido y tenga WhatsApp activo.`,
           };
         }
       } catch (verifyError: unknown) {
-        console.error(`[KYB] Twilio Verify error:`, verifyError);
+        logger.error('KYB: Twilio Verify error', { error: toErrorDetail(verifyError) });
         return {
           error: `Error al enviar OTP: ${verifyError instanceof Error ? verifyError.message : 'Verifica el número e intenta nuevamente'}`,
         };
@@ -205,9 +208,12 @@ export async function requestOtpAction(formData: FormData) {
       return { error: 'Email OTP not implemented yet' };
     }
 
+    // Fire-and-forget: analytics must never block identity verification.
+    captureEvent(AnalyticsEvents.OTP_REQUESTED, { channel: 'whatsapp' }).catch(() => {});
+
     return { success: true, message: 'Código OTP enviado via WhatsApp' };
   } catch (error: unknown) {
-    console.error(`[KYB] Error requesting OTP:`, error);
+    logger.error('KYB: request OTP failed', { error: toErrorDetail(error) });
     return { error: error instanceof Error ? error.message : 'Error al solicitar código OTP' };
   }
 }
@@ -230,6 +236,7 @@ export async function verifyOtpAction(formData: FormData) {
     const result = await checkOtpViaVerify(phone, code);
 
     if (!result.valid) {
+      captureEvent(AnalyticsEvents.OTP_VERIFICATION_FAILED).catch(() => {});
       return { error: 'Código inválido o expirado. Solicita un nuevo código.' };
     }
 
@@ -248,9 +255,12 @@ export async function verifyOtpAction(formData: FormData) {
         .where(eq(verificationOtps.id, otpRecord[0].id));
     }
 
+    // Fire-and-forget: analytics must never block identity verification.
+    captureEvent(AnalyticsEvents.OTP_VERIFIED).catch(() => {});
+
     return { success: true, message: 'Código verificado exitosamente' };
   } catch (error: unknown) {
-    console.error(`[KYB] Error verifying OTP:`, error);
+    logger.error('KYB: verify OTP failed', { error: toErrorDetail(error) });
     return { error: error instanceof Error ? error.message : 'Error al verificar código' };
   }
 }

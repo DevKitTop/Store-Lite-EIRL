@@ -10,6 +10,7 @@
 import { env } from '@/config/env';
 import { processTimeouts } from '@/core/orders/orderTimeouts';
 import { processAppealSLABreaches, processExpiredGracePeriods } from '@/lib/deactivation';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { NextResponse } from 'next/server';
 
 // Vercel Cron: */15 * * * *
@@ -30,7 +31,7 @@ export async function GET(request: Request) {
   try {
     orderResult = await processTimeouts();
   } catch (error) {
-    console.error('[Cron] order-timeouts: error —', error);
+    logger.error('[Cron] order-timeouts: error —', { error: toErrorDetail(error) });
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
   }
 
@@ -47,14 +48,18 @@ export async function GET(request: Request) {
       gracePeriodsProcessed = (await processExpiredGracePeriods()).processed;
     } catch (error) {
       autoDeactivationErrors += 1;
-      console.error('[Cron] order-timeouts: grace-period sweep error —', error);
+      logger.error('[Cron] order-timeouts: grace-period sweep error —', {
+        error: toErrorDetail(error),
+      });
     }
 
     try {
       appealSlaProcessed = (await processAppealSLABreaches()).processed;
     } catch (error) {
       autoDeactivationErrors += 1;
-      console.error('[Cron] order-timeouts: appeal-SLA sweep error —', error);
+      logger.error('[Cron] order-timeouts: appeal-SLA sweep error —', {
+        error: toErrorDetail(error),
+      });
     }
   }
 

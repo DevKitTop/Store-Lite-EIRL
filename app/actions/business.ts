@@ -4,6 +4,7 @@ import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses } from '@/core/database/schema';
 import { FROZEN_FIELD_MESSAGE, hasLockingPayments } from '@/core/orders/paymentGuards';
+import { logger } from '@/lib/logger';
 import type { ActionState as BaseActionState } from '@/types/actions';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
@@ -24,7 +25,7 @@ const MAX_IMAGE_UPLOAD_SIZE = 300 * 1024;
  */
 function createAdminStorageClient() {
   if (!env.supabaseUrl || !env.supabaseServiceRoleKey) {
-    console.error('[createAdminStorageClient] Missing environment variables:', {
+    logger.error('createAdminStorageClient: missing environment variables', {
       hasUrl: !!env.supabaseUrl,
       hasServiceKey: !!env.supabaseServiceRoleKey,
     });
@@ -119,7 +120,7 @@ export async function updateBusinessLogo(
       .upload(filePath, file, { upsert: true });
 
     if (uploadError) {
-      console.error('Upload Error:', uploadError);
+      logger.error('updateBusinessLogo: storage upload failed', { error: uploadError.message });
       return { error: `Error al subir el logo: ${uploadError.message}` };
     }
 
@@ -147,7 +148,9 @@ export async function updateBusinessLogo(
           .from('store-covers')
           .remove(staleFiles);
         if (removeError) {
-          console.warn('[updateBusinessLogo] Failed to remove stale logos:', removeError);
+          logger.warn('updateBusinessLogo: failed to remove stale logos', {
+            error: removeError.message,
+          });
         }
       }
     }
@@ -157,7 +160,9 @@ export async function updateBusinessLogo(
 
     return { success: true, message: 'Logo de empresa actualizado exitosamente.', url: publicUrl };
   } catch (err) {
-    console.error('Server Action Error:', err);
+    logger.error('updateBusinessLogo: unexpected error', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return { error: 'Error inesperado al actualizar el logo.' };
   }
 }
@@ -277,7 +282,9 @@ export async function updateBusinessData(
 
     return { success: true, message: 'Información del negocio actualizada correctamente.' };
   } catch (err) {
-    console.error('Server Action Error:', err);
+    logger.error('updateBusinessData: unexpected error', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return { error: 'Error inesperado al actualizar la información del negocio.' };
   }
 }
@@ -293,7 +300,9 @@ export async function getBusinessLockState(
     const locked = await hasLockingPayments({ businessId });
     return { locked };
   } catch (error) {
-    console.error('getBusinessLockState:', error);
+    logger.error('getBusinessLockState: failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { locked: false, error: 'Error al verificar el estado del negocio.' };
   }
 }
@@ -325,7 +334,9 @@ export async function removeBusinessLogo(businessId: string, slug: string): Prom
     revalidatePath('/list-business');
     return { success: true, message: 'Logo eliminado.' };
   } catch (err) {
-    console.error(err);
+    logger.error('business action failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return { error: 'Error inesperado.' };
   }
 }
@@ -343,15 +354,15 @@ export async function updateBusinessCover(
   const file = formData.get('file') as File;
 
   if (!file) {
-    console.warn('[updateBusinessCover] No file provided in formData');
+    logger.warn('updateBusinessCover: no file provided');
     return { error: 'No se ha proporcionado ninguna imagen.' };
   }
   if (file.size > MAX_IMAGE_UPLOAD_SIZE) {
-    console.warn('[updateBusinessCover] File too large:', file.size);
+    logger.warn('updateBusinessCover: file too large', { size: file.size });
     return { error: 'La imagen comprimida excede el límite de 300KB.' };
   }
 
-  console.warn('[updateBusinessCover] Starting upload:', {
+  logger.debug('updateBusinessCover: starting upload', {
     businessId,
     slug,
     fileName: file.name,
@@ -364,10 +375,10 @@ export async function updateBusinessCover(
     data: { user },
   } = await supabaseUser.auth.getUser();
   if (!user) {
-    console.warn('[updateBusinessCover] User not authenticated');
+    logger.warn('updateBusinessCover: user not authenticated');
     return { error: 'No autorizado.' };
   }
-  console.warn('[updateBusinessCover] User authenticated:', user.id);
+  logger.debug('updateBusinessCover: user authenticated', { userId: user.id });
 
   // 2. Verify ownership
   const business = await db.query.businesses.findFirst({
@@ -375,37 +386,42 @@ export async function updateBusinessCover(
     columns: { ownerId: true },
   });
   if (!business) {
-    console.warn('[updateBusinessCover] Business not found:', businessId);
+    logger.warn('updateBusinessCover: business not found', { businessId });
     return { error: 'Negocio no encontrado.' };
   }
   if (business.ownerId !== user.id) {
-    console.warn('[updateBusinessCover] Unauthorized. Owner:', business.ownerId, 'User:', user.id);
+    logger.warn('updateBusinessCover: unauthorized', {
+      businessId,
+      ownerId: business.ownerId,
+      userId: user.id,
+    });
     return { error: 'No tienes permiso para editar este negocio.' };
   }
 
   try {
     // 3. Delete existing images to avoid accumulating unused files
-    console.warn('[updateBusinessCover] Listing existing files to delete...');
+    logger.debug('updateBusinessCover: listing existing files');
     const adminStorage = createAdminStorageClient();
     const { data: existingFiles } = await adminStorage.storage
       .from('store-covers')
       .list(`portadas/${businessId}`);
 
     if (existingFiles && existingFiles.length > 0) {
-      console.warn(
-        '[updateBusinessCover] Found existing files, deleting...',
-        existingFiles.map((f) => f.name),
-      );
+      logger.debug('updateBusinessCover: deleting existing files', {
+        count: existingFiles.length,
+      });
       const pathsToDelete = existingFiles.map((f) => `portadas/${businessId}/${f.name}`);
       const { error: deleteError } = await adminStorage.storage
         .from('store-covers')
         .remove(pathsToDelete);
 
       if (deleteError) {
-        console.warn('Could not delete old images:', deleteError);
+        logger.warn('updateBusinessCover: could not delete old images', {
+          error: deleteError.message,
+        });
       }
     } else {
-      console.warn('[updateBusinessCover] No existing images found.');
+      logger.debug('updateBusinessCover: no existing images found');
     }
 
     // 4. Upload using admin client
@@ -413,23 +429,25 @@ export async function updateBusinessCover(
     const fileName = `portada-${Date.now()}.${fileExt}`;
     const filePath = `portadas/${businessId}/${fileName}`;
 
-    console.warn('[updateBusinessCover] Ready to upload new file to path:', filePath);
+    logger.debug('updateBusinessCover: ready to upload', { filePath });
     const { error: uploadError } = await adminStorage.storage
       .from('store-covers')
       .upload(filePath, file, { upsert: true });
 
     if (uploadError) {
-      console.error('[updateBusinessCover] Storage upload error:', uploadError);
+      logger.error('updateBusinessCover: storage upload failed', {
+        error: uploadError.message,
+      });
       return { error: `Error al subir la publicidad: ${uploadError.message}` };
     }
-    console.warn('[updateBusinessCover] Upload successful. Path:', filePath);
+    logger.debug('updateBusinessCover: upload successful', { filePath });
 
     const {
       data: { publicUrl },
     } = adminStorage.storage.from('store-covers').getPublicUrl(filePath);
 
     // 5. Update DB record
-    console.warn('[updateBusinessCover] Updating DB with URL:', publicUrl);
+    logger.debug('updateBusinessCover: updating database', { publicUrl });
     await db
       .update(businesses)
       .set({ coverImageUrl: publicUrl, updatedAt: new Date() })
@@ -437,10 +455,12 @@ export async function updateBusinessCover(
 
     revalidatePath(`/${slug}`);
     revalidatePath('/list-business');
-    console.warn('[updateBusinessCover] Success');
+    logger.debug('updateBusinessCover: success');
     return { success: true, url: publicUrl, message: 'Publicidad actualizada.' };
   } catch (err) {
-    console.error(err);
+    logger.error('business action failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return { error: 'Error inesperado.' };
   }
 }
@@ -472,7 +492,9 @@ export async function removeBusinessCover(businessId: string, slug: string): Pro
     revalidatePath('/list-business');
     return { success: true, message: 'Publicidad eliminada.' };
   } catch (err) {
-    console.error(err);
+    logger.error('business action failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return { error: 'Error inesperado.' };
   }
 }
@@ -555,7 +577,9 @@ export async function addHeroImage(
     revalidatePath(`/${slug}`);
     return { success: true, url: publicUrl, message: 'Imagen agregada a la galería.' };
   } catch (err) {
-    console.error(err);
+    logger.error('business action failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return { error: 'Error inesperado al subir la imagen.' };
   }
 }
@@ -596,7 +620,9 @@ export async function deleteHeroImage(
         .from('store-covers')
         .remove([filePath]);
       if (deleteError) {
-        console.warn('Could not delete file from storage:', deleteError.message);
+        logger.warn('deleteHeroImage: could not delete file from storage', {
+          error: deleteError.message,
+        });
       }
     }
 
@@ -617,7 +643,9 @@ export async function deleteHeroImage(
     revalidatePath(`/${slug}`);
     return { success: true, message: 'Imagen eliminada.' };
   } catch (err) {
-    console.error(err);
+    logger.error('business action failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return { error: 'Error inesperado al eliminar la imagen.' };
   }
 }

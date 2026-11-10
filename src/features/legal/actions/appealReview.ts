@@ -17,6 +17,7 @@ import { appeals, businesses, deactivationNotices } from '@/core/database/schema
 import { appealReviewInputSchema } from '@/features/legal/schemas';
 import { requireAuthenticatedUserId } from '@/features/storage/actions/authz';
 import { sendAppealDecisionNotification } from '@/lib/legal/gracePeriodWorkflow';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { getMemberPermissions } from '@/lib/permissions';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
@@ -162,7 +163,9 @@ export async function reviewAppeal(
     if (notification.success) {
       notificationSent = true;
     } else {
-      console.warn('[AppealReview] Decision notification failed (non-fatal):', notification.error);
+      logger.warn('AppealReview: decision notification failed (non-fatal)', {
+        error: toErrorDetail(notification.error),
+      });
     }
 
     revalidatePath('/', 'layout');
@@ -179,7 +182,7 @@ export async function reviewAppeal(
       },
     };
   } catch (error) {
-    console.error('[AppealReview] Error reviewing appeal:', error);
+    logger.error('[AppealReview] Error reviewing appeal:', { error: toErrorDetail(error) });
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }

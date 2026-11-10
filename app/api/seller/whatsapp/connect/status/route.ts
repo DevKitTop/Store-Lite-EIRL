@@ -1,6 +1,7 @@
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses, whatsappChannels } from '@/core/database/schema';
+import { logger, toErrorDetail } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
 import { eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -80,7 +81,7 @@ export async function POST(request: Request) {
     const apiKey = env.ycloudApiKey;
 
     if (!apiKey) {
-      console.error('[whatsapp/connect/status] Missing YCloud API key');
+      logger.error('[whatsapp/connect/status] Missing YCloud API key');
       return NextResponse.json({ error: 'Configuración de WhatsApp incompleta' }, { status: 500 });
     }
 
@@ -98,7 +99,9 @@ export async function POST(request: Request) {
       ycloudData = await ycloudResponse.json();
 
       if (!ycloudResponse.ok) {
-        console.error('[whatsapp/connect/status] YCloud error:', ycloudData);
+        logger.error('[whatsapp/connect/status] YCloud error:', {
+          error: toErrorDetail(ycloudData),
+        });
         // Don't fail - return current DB state
         return NextResponse.json({
           status: 'pending',
@@ -108,7 +111,9 @@ export async function POST(request: Request) {
         });
       }
     } catch (error) {
-      console.error('[whatsapp/connect/status] YCloud request failed:', error);
+      logger.error('[whatsapp/connect/status] YCloud request failed:', {
+        error: toErrorDetail(error),
+      });
       // Don't fail - return current DB state
       return NextResponse.json({
         status: 'pending',
@@ -161,7 +166,7 @@ export async function POST(request: Request) {
       connectedAt: channel.connectedAt,
     });
   } catch (error) {
-    console.error('[whatsapp/connect/status] Error:', error);
+    logger.error('[whatsapp/connect/status] Error:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }

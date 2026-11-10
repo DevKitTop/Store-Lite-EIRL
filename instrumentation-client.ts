@@ -2,18 +2,25 @@
 // The added config here will be used whenever a users loads a page in their browser.
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
+import { resolveSentryRelease } from '@/lib/sentryRelease';
 import * as Sentry from '@sentry/nextjs';
 
 Sentry.init({
   dsn: 'https://b6c1dc0143987d3b1c69b6a28a479ac8@o4511785250324480.ingest.us.sentry.io/4511785277063168',
+
+  // Release + environment are what let Sentry answer "did this error appear
+  // after the last deploy, and in which environment?". Undefined release
+  // silently disables that correlation.
+  release: resolveSentryRelease(),
+  environment:
+    process.env.NEXT_PUBLIC_VERCEL_ENV ??
+    (process.env.NODE_ENV === 'production' ? 'production' : 'development'),
 
   // Add optional integrations for additional features
   integrations: [Sentry.replayIntegration()],
 
   // Define how likely traces are sampled. Adjust this value in production, or use tracesSampler for greater control.
   tracesSampleRate: 1,
-  // Enable logs to be sent to Sentry
-  enableLogs: true,
 
   // Define how likely Replay events are sampled.
   // This sets the sample rate to be 10%. You may want this to be 100% while
