@@ -235,3 +235,33 @@ comportamiento sigue igual, no que esté probando el último cambio de código.
 Además, los controles son custom elements de Material Web: el botón se localiza por su
 texto visible ("Al carrito"), no por selector CSS. Si se renombra esa etiqueta, el test
 falla por un motivo que no es una regresión.
+
+## 12. Peso de JavaScript de first-load
+
+Next 16 dejó de imprimir tamaños por ruta en el build y sus chunks son archivos planos con
+hash, así que ni el log ni un glob de rutas pueden decir cuánto JavaScript entrega una ruta.
+`analyze:bundle` era un alias de `next build` y no medía nada.
+
+```bash
+pnpm audit:js --url https://storelite.app
+pnpm audit:js --url https://store-lite-store-cfno.storelite.app --budget-kb 600 --json
+```
+
+El script pide la página, resuelve cada `<script src>` y cada `<link rel="modulepreload">`
+del mismo origen, descarga cada archivo y reporta bytes crudos y gzip. Con `--budget-kb`
+devuelve exit 1 cuando el total gzip supera el presupuesto.
+
+Medición del 2026-11-10 sobre producción:
+
+| objetivo                  | scripts | crudo     | gzip     |
+| ------------------------- | ------- | --------- | -------- |
+| `storelite.app` (landing) | 18      | 1455.5 KB | 448.5 KB |
+| tienda tenant (`/`)       | 26      | 1832.5 KB | 554.8 KB |
+
+**Alcance**: sólo lo que el HTML inicial referencia. PostHog se carga en runtime y queda
+fuera, así que el número NO es comparable con los 655 KB del ADR 0005 (medidos con
+Lighthouse mobile, que incluye todo). Sirve para detectar regresiones entre commits de la
+misma ruta, no como comparación absoluta contra el presupuesto histórico.
+
+No está cableado en CI a propósito: un gate de bytes que nadie calibró falla por ruido. Se
+corre a mano antes de una release que toque el storefront.
