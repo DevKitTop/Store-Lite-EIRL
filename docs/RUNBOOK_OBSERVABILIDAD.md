@@ -287,3 +287,54 @@ npx --yes lighthouse@12 http://localhost:3000 \
 
 Es manual a propósito: los scores varían ±10 entre corridas y un gate de CI con ese
 ruido se termina desactivando.
+
+## 13. Las dos tareas manuales, paso a paso
+
+### 13.1 Crear los tres monitores en UptimeRobot
+
+Por qué a mano: en cuentas Free nuevas la API responde `access_denied` al crear monitores
+(`newMonitor`), así que una API key no ahorra el trabajo. El plan Free alcanza de sobra: 50
+monitores y chequeo cada 5 minutos.
+
+1. Entrar a `uptimerobot.com`, registrarse con el mail del equipo y confirmar ese mail.
+2. Dashboard → **Add New Monitor**.
+3. Por cada fila de la tabla de §10:
+   - **Monitor Type**: `HTTP(s)`
+   - **Friendly Name**: el nombre de la tabla
+   - **URL**: la de la tabla
+   - **Monitoring Interval**: `5 minutes`
+   - En Landing e Ingest: tildar **Keyword**, pegar la keyword y elegir que debe existir
+   - **Alert Contacts**: el mail. Sin esto el monitor cambia de color pero nadie se entera
+4. **Create Monitor** y repetir para las otras dos filas.
+
+Cómo saber que quedó bien: los tres quedan UP. Si Ingest da DOWN mientras Landing sigue UP,
+el bypass del proxy (`src/lib/middleware/proxyBypass.ts`) dejó de aplicar y los eventos se
+están perdiendo.
+
+### 13.2 Por qué el monitor de Ingest lleva keyword
+
+`/ingest/static/array.js` no es una ruta de la aplicación: es un rewrite hacia el CDN de
+PostHog. Si el middleware deja de excluirla, la petición cae en el matcher del tenant, que
+responde la pantalla de login con **200**. Un monitor HTTP simple vería 200 y diría "todo
+bien" mientras el 100% de los eventos se descarta.
+
+La keyword `posthog` distingue el JavaScript real del HTML de login. Es el único de los tres
+que detecta una falla silenciosa; los otros dos sólo detectan caídas visibles.
+
+### 13.3 Verificar PostHog desde un navegador real
+
+`posthog-js` tiene detección de bots y descarta en silencio los eventos de navegadores
+automatizados (`_is_bot()`). Por eso ningún test headless sirve acá: ni un verde ni un rojo
+prueban algo. Se hace a mano, una vez, y de nuevo después de cada deploy que toque analytics.
+
+1. Abrir `https://storelite.app` en una ventana normal, sin bloqueadores.
+2. Aceptar el banner de cookies. Sin consentimiento no se envía nada, por diseño.
+3. Entrar a una tienda y tocar **Al carrito** en un producto.
+4. En PostHog (proyecto 525950, US Cloud) → **Activity → Live events**.
+5. Esperado: `cart_item_added` con la super property `environment: production` —la registra
+   `instrumentation-client.ts` con `posthog.register`— más la URL del producto.
+
+Si no aparece en un par de minutos, revisar en este orden: bloqueador de anuncios,
+consentimiento no aceptado, o un build con el token de otro proyecto. `resolvePostHogKey()`
+prioriza `NEXT_PUBLIC_POSTHOG_KEY` sobre `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`, y los
+`NEXT_PUBLIC_*` se inlinean en build: cambiarlos exige redeploy.
