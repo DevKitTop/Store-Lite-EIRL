@@ -98,6 +98,15 @@ jobs:
     name: Tests & Coverage
     runs-on: ubuntu-latest
     needs: [quality]
+    # Official Playwright image, pinned to the @playwright/test version in
+    # pnpm-lock.yaml. It already ships Chromium and every system library it
+    # needs under /ms-playwright, so no apt, no Ubuntu mirrors and no
+    # `playwright install --with-deps` are required on this path.
+    # --ipc=host keeps Chromium stable: the default container /dev/shm is
+    # too small and crashes the browser.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+      options: --ipc=host
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -122,8 +131,12 @@ jobs:
           path: coverage/
           retention-days: 14
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+      - name: Verify bundled Chromium
+        # Fails fast and explicitly if the image ever stops shipping a browser
+        # that this Playwright version can drive.
+        run: |
+          npx playwright --version
+          node -e "const { chromium } = require('@playwright/test'); chromium.launch().then(async (b) => { console.log('chromium launched:', b.version()); await b.close(); }).catch((e) => { console.error(e); process.exit(1); });"
 
       - name: Run E2E tests
         run: pnpm test:e2e
