@@ -109,6 +109,13 @@ jobs:
       options: --ipc=host
     steps:
       - uses: actions/checkout@v4
+
+      - name: Trust the workspace for git
+        # Inside a container the checkout is owned by the runner user while the
+        # steps run as root, so git refuses the directory as "dubious ownership"
+        # and every test that shells out to git fails. Scoped to the workspace.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -131,10 +138,12 @@ jobs:
           path: coverage/
           retention-days: 14
 
-      - name: Verify bundled Chromium
+      - name: Verify toolchain and bundled Chromium
         # Fails fast and explicitly if the image ever stops shipping a browser
         # that this Playwright version can drive.
         run: |
+          node --version
+          pnpm --version
           npx playwright --version
           node -e "const { chromium } = require('@playwright/test'); chromium.launch().then(async (b) => { console.log('chromium launched:', b.version()); await b.close(); }).catch((e) => { console.error(e); process.exit(1); });"
 
