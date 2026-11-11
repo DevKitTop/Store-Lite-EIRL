@@ -353,14 +353,15 @@ No hubo caída real de producción: lo único que cambió fue la condición del 
 `lastIncident` de la API lo rotula con `reason: "Keyword has been found"`, no con un fallo de
 respuesta. El historial se conserva, así que cuando Landing acumule 24 h de monitorización su
 uptime de 24 h quedará en 99.006 % (14m 19s sobre 1 440 min). Mientras tanto muestra valores
-más bajos (51.054 % a los 29 min, 82.2116 % a la hora y media) porque el denominador todavía es
-su vida corta, no porque el servicio haya estado caído.
+más bajos (51.054 % a los 1 755 s de vida, 82.2116 % a los 4 829 s) porque el denominador todavía
+es su vida corta, no porque el servicio haya estado caído.
 
 #### Cómo se calcula `Overall uptime` (verificado)
 
 Una consulta al agregado de cuenta (`GET /v3/monitors/uptime-stats?timeFrame=DAY`) devolvió
 `overallUptime = 0.9605529022777369` (**96.0552902 %**) el 11/11/2026 a las 14:43:15 UTC. Ese
-valor es la media aritmética **no ponderada** de los cuatro ratios individuales:
+valor es la media aritmética **no ponderada** de los cuatro ratios individuales, cada uno medido
+en esa misma lectura:
 
 | Monitor        | Creado (UTC) | Monitorizado | Downtime | Ratio            |
 | -------------- | ------------ | -----------: | -------: | ---------------- |
@@ -374,22 +375,28 @@ valor es la media aritmética **no ponderada** de los cuatro ratios individuales
 verificadas:
 
 - El denominador de cada ratio es el tiempo que el monitor existió dentro de la ventana pedida,
-  no la ventana completa: `(5444 − 859) / 5444`. El endpoint individual lo confirma al decimal
-  (`1 − 859/4829 = 82.2116380202941 %` contra los `82.21163802029406 %` que reporta).
+  no la ventana completa. Para Landing en el snapshot de las 14:43:15 son 5 444 s:
+  `(5444 − 859) / 5444 = 84.2211609 %`.
+- La confirmación al decimal viene de otra lectura, el snapshot de las **14:33:00**: ahí el
+  denominador de Landing era 4 829 s y el endpoint individual devolvió `82.21163802029406 %`,
+  contra `1 − 859/4829 = 82.2116380203 %`. Son dos instantes distintos —los mismos 859 s de
+  downtime sobre 10m 15s más de vida del monitor—, no dos valores contradictorios.
 - El tiempo previo a la creación de cada monitor queda **fuera** del denominador: no cuenta como
   UP ni como DOWN.
-- El agregado es la media simple de esos ratios y no pondera por tiempo monitorizado; la
-  ponderada habría dado 82.878 % en ese instante.
+- El agregado es la media simple de esos ratios y no pondera por tiempo monitorizado. Ponderando
+  por segundos monitorizados en ese mismo instante el resultado sería 95.656 %
+  (`(5998 + 4585 + 4347 + 3984) / 19773`), no el 96.0552902 % de la API.
 
-De dónde salió el 87.764 % del dashboard: mismo mecanismo, otro instante. A las 13:41:46 UTC
+De dónde salió el 87.764 % del dashboard: mismo mecanismo, tercer instante. A las 13:41:46 UTC
 Landing llevaba 1 755 s de vida con 859 s de downtime → 51.054131 %, y
 `(300 + 51.054131) / 4 = 87.763533 %`, que redondea a 87.764 %. No fue una caída ni una
 agregación distinta: fue un snapshot temprano en el que un monitor recién creado pesaba lo mismo
 que los otros tres. Comparar ese global con tarjetas leídas a las 14:33 (Landing ya en 82.2116 %)
-es comparar dos instantes, y de ahí sale cualquier diferencia aparente.
+o con el agregado de las 14:43:15 (96.0552902 %) es comparar tres instantes distintos, y de ahí
+sale cualquier diferencia aparente.
 
 A medida que cada monitor acumula tiempo su ratio converge y la media sube: 95.553 % a las 14:33
-y 99.7515 % con 24 h de Landing. Es aritmética de arranque, no degradación del servicio.
+y 99.7514 % con 24 h de Landing. Es aritmética de arranque, no degradación del servicio.
 
 Limitación de plan: `timeFrame=CUSTOM` (ventana exacta) responde **403** en Free
 (`003-008`, "Premium timeframes"). Se pueden leer `DAY`/`WEEK`/`MONTH`/`DAYS_30` para el
