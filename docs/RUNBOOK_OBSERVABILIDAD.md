@@ -190,9 +190,9 @@ con keyword son otro tipo (`Keyword`) porque necesitan descargar el cuerpo para 
 **`Overall uptime` es la media no ponderada de los ratios de cada monitor**, y cada ratio se mide
 sobre el tiempo que ese monitor existió dentro de la ventana. Sólo es comparable con las tarjetas
 si ambas lecturas son del **mismo instante**: leer una tarjeta y el global en momentos distintos
-produce discrepancias que no significan nada —pasó el 11/11/2026 con 87.764 % frente a 99.006 %
-(§13.1)—. No se tocan monitores para mover el porcentaje: para un dato reportable se pide la
-ventana concreta a la API y se lee monitor por monitor.
+produce discrepancias que no significan nada —el 11/11/2026 el 87.764 % correspondía al snapshot
+de las 13:41:46 UTC (§13.1)—. No se tocan monitores para mover el porcentaje: para un dato
+reportable se pide la ventana concreta a la API y se lee monitor por monitor.
 
 ### Lo que NO se puede monitorear ahí
 
