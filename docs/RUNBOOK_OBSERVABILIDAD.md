@@ -181,14 +181,12 @@ En el plan Free el método de los monitores `HTTP(s)` queda fijo en **HEAD** y c
 GET exige Premium. Alcanza para Auth, que sólo comprueba el código de estado. Los monitores
 con keyword son otro tipo (`Keyword`) porque necesitan descargar el cuerpo para buscarla.
 
-**`Overall uptime` no es la media de las tarjetas y arrastra una discrepancia abierta.** El
-estadístico de cuenta de UptimeRobot es un promedio no ponderado entre monitores y devuelve un
-porcentaje sin denominador, así que no se puede desagregar desde las tarjetas. Con el selector en
-"Last 24 hours", las tarjetas daban 99.006 % (Landing) y 100 % en las otras tres —media 99.7515 %—
-mientras el global marcaba 87.764 %, con 4 UP y 0 DOWN. Eso descarta que el global sea la media
-aritmética de las tarjetas; qué lo explica está sin demostrar (§13.1). No se tocan monitores para
-mover el porcentaje: para un dato reportable se pide la ventana concreta a la API y se lee monitor
-por monitor.
+**`Overall uptime` es la media no ponderada de los ratios de cada monitor**, y cada ratio se mide
+sobre el tiempo que ese monitor existió dentro de la ventana. Sólo es comparable con las tarjetas
+si ambas lecturas son del **mismo instante**: leer una tarjeta y el global en momentos distintos
+produce discrepancias que no significan nada —pasó el 11/11/2026 con 87.764 % frente a 99.006 %
+(§13.1)—. No se tocan monitores para mover el porcentaje: para un dato reportable se pide la
+ventana concreta a la API y se lee monitor por monitor.
 
 ### Lo que NO se puede monitorear ahí
 
@@ -345,31 +343,51 @@ creación, con el log "Keyword has been found". La condición estaba invertida: 
 cuando la keyword **sí** existía. Se corrigió a "start incident when the keyword does not
 exist" y el monitor volvió a UP.
 
-No hay evidencia de una caída real de producción: lo único que cambió fue la condición del
-monitor. El historial se conserva, y por eso el uptime de 24 h de Landing queda en 99.006 %
-(14m 19s sobre 1 440 min) sin que el servicio haya fallado.
+No hubo caída real de producción: lo único que cambió fue la condición del monitor, y el propio
+`lastIncident` de la API lo rotula con `reason: "Keyword has been found"`, no con un fallo de
+respuesta. El historial se conserva, así que cuando Landing acumule 24 h de monitorización su
+uptime de 24 h quedará en 99.006 % (14m 19s sobre 1 440 min). Mientras tanto muestra valores
+más bajos (51.054 % a los 29 min, 82.2116 % a la hora y media) porque el denominador todavía es
+su vida corta, no porque el servicio haya estado caído.
 
-#### Discrepancia abierta: `Overall uptime` 87.764 %
+#### Cómo se calcula `Overall uptime` (verificado)
 
-Observado el 11/11/2026, con el selector del dashboard en **"Last 24 hours"** y los cuatro
-monitores UP:
+Una consulta al agregado de cuenta (`GET /v3/monitors/uptime-stats?timeFrame=DAY`) devolvió
+`overallUptime = 0.9605529022777369` (**96.0552902 %**) el 11/11/2026 a las 14:43:15 UTC. Ese
+valor es la media aritmética **no ponderada** de los cuatro ratios individuales:
 
-| Medición                     | Valor     |
-| ---------------------------- | --------- |
-| Overall uptime               | 87.764 %  |
-| Landing (24 h)               | 99.006 %  |
-| Ingest, Auth, dominio propio | 100 % c/u |
+| Monitor        | Creado (UTC) | Monitorizado | Downtime | Ratio            |
+| -------------- | ------------ | -----------: | -------: | ---------------- |
+| storelite.app  | 13:03:17     |      5 998 s |      0 s | 100 %            |
+| Landing        | 13:12:31     |      5 444 s |    859 s | 84.2211609 %     |
+| Ingest PostHog | 13:30:48     |      4 347 s |      0 s | 100 %            |
+| Auth           | 13:36:51     |      3 984 s |      0 s | 100 %            |
+| **Media**      |              |              |          | **96.0552902 %** |
 
-El 24 h de Landing cierra exacto con el incidente: `(86400 − 859) / 86400 = 99.0058 %`, o sea
-que no hubo otra caída en esa ventana. La media de las cuatro tarjetas sería 99.7515 %, así que
-el global no es la media aritmética de lo que muestran: difiere en la agregación o en el
-denominador. La diferencia equivale a 2 h 56 m de la ventana.
+`(100 + 100 + 100 + 84.2211609) / 4 = 96.0552902`, idéntico al valor de la API. Reglas
+verificadas:
 
-Qué la produce **no está demostrado**, y no corresponde atribuirla a tiempo sin mediciones sin
-evidencia. Para cerrarlo, sin tocar monitores: pedir a la API de UptimeRobot el estadístico de
-cuenta y el de cada monitor para exactamente la misma ventana (24 h) y compararlos. Si el global
-coincide con la media, la diferencia está en cómo agrega el dashboard; si no coincide, está en el
-denominador del estadístico de cuenta.
+- El denominador de cada ratio es el tiempo que el monitor existió dentro de la ventana pedida,
+  no la ventana completa: `(5444 − 859) / 5444`. El endpoint individual lo confirma al decimal
+  (`1 − 859/4829 = 82.2116380202941 %` contra los `82.21163802029406 %` que reporta).
+- El tiempo previo a la creación de cada monitor queda **fuera** del denominador: no cuenta como
+  UP ni como DOWN.
+- El agregado es la media simple de esos ratios y no pondera por tiempo monitorizado; la
+  ponderada habría dado 82.878 % en ese instante.
+
+De dónde salió el 87.764 % del dashboard: mismo mecanismo, otro instante. A las 13:41:46 UTC
+Landing llevaba 1 755 s de vida con 859 s de downtime → 51.054131 %, y
+`(300 + 51.054131) / 4 = 87.763533 %`, que redondea a 87.764 %. No fue una caída ni una
+agregación distinta: fue un snapshot temprano en el que un monitor recién creado pesaba lo mismo
+que los otros tres. Comparar ese global con tarjetas leídas a las 14:33 (Landing ya en 82.2116 %)
+es comparar dos instantes, y de ahí sale cualquier diferencia aparente.
+
+A medida que cada monitor acumula tiempo su ratio converge y la media sube: 95.553 % a las 14:33
+y 99.7515 % con 24 h de Landing. Es aritmética de arranque, no degradación del servicio.
+
+Limitación de plan: `timeFrame=CUSTOM` (ventana exacta) responde **403** en Free
+(`003-008`, "Premium timeframes"). Se pueden leer `DAY`/`WEEK`/`MONTH`/`DAYS_30` para el
+agregado y `/v3/monitors/{id}/stats/uptime?from=&to=` para cada monitor.
 
 ### 13.2 Por qué el monitor de Ingest lleva keyword
 
