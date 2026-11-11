@@ -153,19 +153,46 @@ servidor para tres pings: no se paga solo.
 **Datos de Kuma:** viven en `~/Documents/store-lite-kuma/data`. Antes estaban en
 `%TEMP%`, que Windows limpia: los monitores podían desaparecer sin aviso.
 
-### Monitores a crear
+### Monitores configurados
 
-Todos con intervalo de 5 minutos y alerta por email.
+Cuatro en el plan Free, todos con intervalo de 5 minutos y alerta por email a
+`devkittopsac@gmail.com`. Estado al 11/11/2026: los cuatro UP.
 
-| Nombre         | URL                                                         | Tipo              | Keyword      |
-| -------------- | ----------------------------------------------------------- | ----------------- | ------------ |
-| Landing        | `https://store-lite-eirl.vercel.app/`                       | HTTP(s) + Keyword | `Store Lite` |
-| Ingest PostHog | `https://store-lite-eirl.vercel.app/ingest/static/array.js` | HTTP(s) + Keyword | `posthog`    |
-| Auth           | `https://store-lite-eirl.vercel.app/auth`                   | HTTP(s)           | —            |
+| Nombre         | URL                                                         | Tipo    | Keyword      |
+| -------------- | ----------------------------------------------------------- | ------- | ------------ |
+| Landing        | `https://store-lite-eirl.vercel.app/`                       | Keyword | `Store Lite` |
+| Ingest PostHog | `https://store-lite-eirl.vercel.app/ingest/static/array.js` | Keyword | `posthog`    |
+| Auth           | `https://store-lite-eirl.vercel.app/auth`                   | HTTP(s) | —            |
+| Dominio propio | `https://storelite.app/`                                    | HTTP(s) | —            |
+
+`Keyword` es un tipo de monitor propio de UptimeRobot, no una opción dentro de `HTTP(s)`: en
+Landing e Ingest se elige `Keyword monitoring` y la URL se descarga para buscar el texto.
+
+`storelite.app` es un monitor adicional, no reemplaza a Landing: cubre el dominio que la gente
+usa de verdad y confirma que responde por HTTPS. No verifica contenido, así que una página de
+error con 200 pasaría, y **tampoco hace las comprobaciones independientes de expiración de
+dominio ni de expiración del certificado SSL**: eso es funcionalidad Premium, y este monitor sólo
+prueba que el handshake TLS y la respuesta funcionan hoy. Un certificado que vence en tres días
+sigue marcando UP hasta el momento en que vence. Landing sigue siendo el que mira el HTML.
 
 El del ingest es el importante: si el bypass del proxy se rompe, esa URL responde la
 pantalla de login (200) en lugar del JavaScript. Sin el chequeo por keyword el monitor
 diría "up" mientras todos los eventos se pierden.
+
+Las dos condiciones de keyword son **"start incident when the keyword does not exist"**: la
+keyword tiene que estar presente. Invertirlas hace lo contrario —el monitor abre incidente
+justo cuando el sitio está bien— y fue el error de la primera configuración (§13.1).
+
+En el plan Free el método de los monitores `HTTP(s)` queda fijo en **HEAD** y cambiarlo a
+GET exige Premium. Alcanza para Auth, que sólo comprueba el código de estado. Los monitores
+con keyword son otro tipo (`Keyword`) porque necesitan descargar el cuerpo para buscarla.
+
+**`Overall uptime` es la media no ponderada de los ratios de cada monitor**, y cada ratio se mide
+sobre el tiempo que ese monitor existió dentro de la ventana. Sólo es comparable con las tarjetas
+si ambas lecturas son del **mismo instante**: leer una tarjeta y el global en momentos distintos
+produce discrepancias que no significan nada —el 11/11/2026 el 87.764 % correspondía al snapshot
+de las 13:41:46 UTC (§13.1)—. No se tocan monitores para mover el porcentaje: para un dato
+reportable se pide la ventana concreta a la API y se lee monitor por monitor.
 
 ### Lo que NO se puede monitorear ahí
 
@@ -288,28 +315,92 @@ npx --yes lighthouse@12 http://localhost:3000 \
 Es manual a propósito: los scores varían ±10 entre corridas y un gate de CI con ese
 ruido se termina desactivando.
 
-## 13. Las dos tareas manuales, paso a paso
+## 13. Tareas manuales, paso a paso
 
-### 13.1 Crear los tres monitores en UptimeRobot
+### 13.1 Los monitores de UptimeRobot (configurado)
+
+Estado al 11/11/2026: cuatro monitores en el plan Free, intervalo de 5 minutos, alertas a
+`devkittopsac@gmail.com`, los cuatro UP. Llegaron los correos de apertura y de resolución de
+incidentes. La receta queda abajo por si hay que recrearlos.
 
 Por qué a mano: en cuentas Free nuevas la API responde `access_denied` al crear monitores
 (`newMonitor`), así que una API key no ahorra el trabajo. El plan Free alcanza de sobra: 50
 monitores y chequeo cada 5 minutos.
 
-1. Entrar a `uptimerobot.com`, registrarse con el mail del equipo y confirmar ese mail.
+1. Entrar a `uptimerobot.com` y confirmar el mail de la cuenta.
 2. Dashboard → **Add New Monitor**.
 3. Por cada fila de la tabla de §10:
-   - **Monitor Type**: `HTTP(s)`
+   - **Monitor Type**: `Keyword` en Landing e Ingest; `HTTP(s)` en Auth y en el dominio propio
    - **Friendly Name**: el nombre de la tabla
    - **URL**: la de la tabla
    - **Monitoring Interval**: `5 minutes`
-   - En Landing e Ingest: tildar **Keyword**, pegar la keyword y elegir que debe existir
-   - **Alert Contacts**: el mail. Sin esto el monitor cambia de color pero nadie se entera
-4. **Create Monitor** y repetir para las otras dos filas.
+   - En Landing e Ingest: pegar la keyword y elegir **"start incident when the keyword does not exist"**
+   - **Alert Contacts**: `devkittopsac@gmail.com`. Sin esto el monitor cambia de color pero nadie se entera
+4. **Create Monitor** y repetir para las otras tres filas.
 
-Cómo saber que quedó bien: los tres quedan UP. Si Ingest da DOWN mientras Landing sigue UP,
+Cómo saber que quedó bien: los cuatro en UP. Si Ingest da DOWN mientras Landing sigue UP,
 el bypass del proxy (`src/lib/middleware/proxyBypass.ts`) dejó de aplicar y los eventos se
 están perdiendo.
+
+#### Incidente del 11/11/2026: falso positivo de configuración
+
+Landing registró un incidente de **14m 19s** (08:13:44–08:28:03 GMT-5) el mismo día de la
+creación, con el log "Keyword has been found". La condición estaba invertida: abría incidente
+cuando la keyword **sí** existía. Se corrigió a "start incident when the keyword does not
+exist" y el monitor volvió a UP.
+
+No hubo caída real de producción: lo único que cambió fue la condición del monitor, y el propio
+`lastIncident` de la API lo rotula con `reason: "Keyword has been found"`, no con un fallo de
+respuesta. El historial se conserva, así que cuando Landing acumule 24 h de monitorización su
+uptime de 24 h quedará en 99.006 % (14m 19s sobre 1 440 min). Mientras tanto muestra valores
+más bajos (51.054 % a los 1 755 s de vida, 82.2116 % a los 4 829 s) porque el denominador todavía
+es su vida corta, no porque el servicio haya estado caído.
+
+#### Cómo se calcula `Overall uptime` (verificado)
+
+Una consulta al agregado de cuenta (`GET /v3/monitors/uptime-stats?timeFrame=DAY`) devolvió
+`overallUptime = 0.9605529022777369` (**96.0552902 %**) el 11/11/2026 a las 14:43:15 UTC. Ese
+valor es la media aritmética **no ponderada** de los cuatro ratios individuales, cada uno medido
+en esa misma lectura:
+
+| Monitor        | Creado (UTC) | Monitorizado | Downtime | Ratio            |
+| -------------- | ------------ | -----------: | -------: | ---------------- |
+| storelite.app  | 13:03:17     |      5 998 s |      0 s | 100 %            |
+| Landing        | 13:12:31     |      5 444 s |    859 s | 84.2211609 %     |
+| Ingest PostHog | 13:30:48     |      4 347 s |      0 s | 100 %            |
+| Auth           | 13:36:51     |      3 984 s |      0 s | 100 %            |
+| **Media**      |              |              |          | **96.0552902 %** |
+
+`(100 + 100 + 100 + 84.2211609) / 4 = 96.0552902`, idéntico al valor de la API. Reglas
+verificadas:
+
+- El denominador de cada ratio es el tiempo que el monitor existió dentro de la ventana pedida,
+  no la ventana completa. Para Landing en el snapshot de las 14:43:15 son 5 444 s:
+  `(5444 − 859) / 5444 = 84.2211609 %`.
+- La confirmación al decimal viene de otra lectura, el snapshot de las **14:33:00**: ahí el
+  denominador de Landing era 4 829 s y el endpoint individual devolvió `82.21163802029406 %`,
+  contra `1 − 859/4829 = 82.2116380203 %`. Son dos instantes distintos —los mismos 859 s de
+  downtime sobre 10m 15s más de vida del monitor—, no dos valores contradictorios.
+- El tiempo previo a la creación de cada monitor queda **fuera** del denominador: no cuenta como
+  UP ni como DOWN.
+- El agregado es la media simple de esos ratios y no pondera por tiempo monitorizado. Ponderando
+  por segundos monitorizados en ese mismo instante el resultado sería 95.656 %
+  (`(5998 + 4585 + 4347 + 3984) / 19773`), no el 96.0552902 % de la API.
+
+De dónde salió el 87.764 % del dashboard: mismo mecanismo, tercer instante. A las 13:41:46 UTC
+Landing llevaba 1 755 s de vida con 859 s de downtime → 51.054131 %, y
+`(300 + 51.054131) / 4 = 87.763533 %`, que redondea a 87.764 %. No fue una caída ni una
+agregación distinta: fue un snapshot temprano en el que un monitor recién creado pesaba lo mismo
+que los otros tres. Comparar ese global con tarjetas leídas a las 14:33 (Landing ya en 82.2116 %)
+o con el agregado de las 14:43:15 (96.0552902 %) es comparar tres instantes distintos, y de ahí
+sale cualquier diferencia aparente.
+
+A medida que cada monitor acumula tiempo su ratio converge y la media sube: 95.553 % a las 14:33
+y 99.7514 % con 24 h de Landing. Es aritmética de arranque, no degradación del servicio.
+
+Limitación de plan: `timeFrame=CUSTOM` (ventana exacta) responde **403** en Free
+(`003-008`, "Premium timeframes"). Se pueden leer `DAY`/`WEEK`/`MONTH`/`DAYS_30` para el
+agregado y `/v3/monitors/{id}/stats/uptime?from=&to=` para cada monitor.
 
 ### 13.2 Por qué el monitor de Ingest lleva keyword
 
@@ -318,8 +409,10 @@ PostHog. Si el middleware deja de excluirla, la petición cae en el matcher del 
 responde la pantalla de login con **200**. Un monitor HTTP simple vería 200 y diría "todo
 bien" mientras el 100% de los eventos se descarta.
 
-La keyword `posthog` distingue el JavaScript real del HTML de login. Es el único de los tres
-que detecta una falla silenciosa; los otros dos sólo detectan caídas visibles.
+La keyword `posthog` distingue el JavaScript real del HTML de login. Es el único que detecta
+la falla silenciosa que importa acá —eventos perdidos con el sitio respondiendo 200—; Auth y
+el dominio propio sólo detectan caídas visibles, y la keyword de Landing detecta una página de
+error servida con 200.
 
 ### 13.3 Verificar PostHog desde un navegador real
 
