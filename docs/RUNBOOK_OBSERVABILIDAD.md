@@ -158,16 +158,22 @@ servidor para tres pings: no se paga solo.
 Cuatro en el plan Free, todos con intervalo de 5 minutos y alerta por email a
 `devkittopsac@gmail.com`. Estado al 11/11/2026: los cuatro UP.
 
-| Nombre         | URL                                                         | Tipo              | Keyword      |
-| -------------- | ----------------------------------------------------------- | ----------------- | ------------ |
-| Landing        | `https://store-lite-eirl.vercel.app/`                       | HTTP(s) + Keyword | `Store Lite` |
-| Ingest PostHog | `https://store-lite-eirl.vercel.app/ingest/static/array.js` | HTTP(s) + Keyword | `posthog`    |
-| Auth           | `https://store-lite-eirl.vercel.app/auth`                   | HTTP(s)           | —            |
-| Dominio propio | `https://storelite.app/`                                    | HTTP(s)           | —            |
+| Nombre         | URL                                                         | Tipo    | Keyword      |
+| -------------- | ----------------------------------------------------------- | ------- | ------------ |
+| Landing        | `https://store-lite-eirl.vercel.app/`                       | Keyword | `Store Lite` |
+| Ingest PostHog | `https://store-lite-eirl.vercel.app/ingest/static/array.js` | Keyword | `posthog`    |
+| Auth           | `https://store-lite-eirl.vercel.app/auth`                   | HTTP(s) | —            |
+| Dominio propio | `https://storelite.app/`                                    | HTTP(s) | —            |
 
-`storelite.app` es un monitor adicional, no reemplaza a Landing: cubre lo que los otros no
-ven (DNS, TLS y el dominio que la gente usa de verdad) pero no verifica contenido, así que
-una página de error con 200 pasaría. Landing sigue siendo el que mira el HTML.
+`Keyword` es un tipo de monitor propio de UptimeRobot, no una opción dentro de `HTTP(s)`: en
+Landing e Ingest se elige `Keyword monitoring` y la URL se descarga para buscar el texto.
+
+`storelite.app` es un monitor adicional, no reemplaza a Landing: cubre el dominio que la gente
+usa de verdad y confirma que responde por HTTPS. No verifica contenido, así que una página de
+error con 200 pasaría, y **tampoco hace las comprobaciones independientes de expiración de
+dominio ni de expiración del certificado SSL**: eso es funcionalidad Premium, y este monitor sólo
+prueba que el handshake TLS y la respuesta funcionan hoy. Un certificado que vence en tres días
+sigue marcando UP hasta el momento en que vence. Landing sigue siendo el que mira el HTML.
 
 El del ingest es el importante: si el bypass del proxy se rompe, esa URL responde la
 pantalla de login (200) en lugar del JavaScript. Sin el chequeo por keyword el monitor
