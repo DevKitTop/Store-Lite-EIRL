@@ -34,7 +34,7 @@
     "culqi:create-test-user": "tsx scripts/create-culqi-test-user.ts"
   },
   "dependencies": {
-    "@material/web": "^2.4.1",
+    "@material/web": "^2.5.0",
     "@react-email/components": "^1.0.12",
     "@sentry/nextjs": "^11.11.0",
     "@supabase/ssr": "^0.8.0",
