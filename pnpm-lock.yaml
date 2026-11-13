@@ -51,8 +51,8 @@ importers:
         specifier: ^3.4.9
         version: 3.4.9
       posthog-js:
-        specifier: ^1.386.8
-        version: 1.386.8
+        specifier: ^1.447.4
+        version: 1.447.4(@types/react@19.2.17)(react@19.2.3)
       posthog-node:
         specifier: ^5.63.2
         version: 5.63.2(@opentelemetry/api@1.9.1)
@@ -1529,14 +1529,11 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@posthog/core@1.32.4':
-    resolution: {integrity: sha512-xmc6JGLS+HK9gG354e3ws8wRQSQFaekI/QC/uwslokfG1csXjxW7xlGGipLS4juDJ1W1fVM6j2MeHyatmvF22w==}
+  '@posthog/browser-common@0.10.7':
+    resolution: {integrity: sha512-1V2SBu7gxVbroZk49YsCM++K9qy3qcrOaylemjkkTPvACgAGwm0Y/AkJN2eRZO1YME0FnagF6QKBaXmq3o0e8g==}
 
   '@posthog/core@1.64.1':
     resolution: {integrity: sha512-2ziryOLWTxftHrTLhGYQzLHDpPughaRRi/+L1vhg4cQFHJfgTevMzAz21R1zR7MKFDkyJ9lCJD/K2jxIkGbnfg==}
-
-  '@posthog/types@1.386.4':
-    resolution: {integrity: sha512-UgE9+5+wkZg7yc2MpW5G32/6zYW8fAbXJkG8WGnrb4X8OKWzNa9cWeNCd82vKok+TSoRpM4qiYQFtBSpJS1dsw==}
 
   '@posthog/types@1.421.1':
     resolution: {integrity: sha512-475eg+usYiQ2m7GfxgylnBTVa3aPsEfaE6gQoDvg5nEkWAjcNiGm1u3WsESOErfrFFUajpYcxc71JCzfdoJ8gg==}
@@ -3041,8 +3038,8 @@ packages:
     resolution: {integrity: sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w==}
     engines: {node: '>= 4'}
 
-  dompurify@3.4.10:
-    resolution: {integrity: sha512-0xzNv0e7oYC6yyuOGZIABPM4qtg3QxLFniDNPP4ZP90wR8Yq3zgwpRbrNiT4N3IKqDbbYFEJLV+JWEs19aZ//w==}
+  dompurify@3.4.17:
+    resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
 
   domutils@3.2.2:
     resolution: {integrity: sha512-6kZKyUajlDuqlHKVX1w7gyslj9MPIXzIFiz/rGu35uC1wMi+kMhQwGhl4lt9unC9Vb9INnY9Z3/ZA3+FhASLaw==}
@@ -4476,8 +4473,16 @@ packages:
     resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
     engines: {node: '>=12'}
 
-  posthog-js@1.386.8:
-    resolution: {integrity: sha512-L4cJD1sleUULE7K4mZQI5wpS24NHGtNmFw1rPHruc579unVzHuooHiVDEHp/qyNnhNxtNE6alBTiVORbYnRTSw==}
+  posthog-js@1.447.4:
+    resolution: {integrity: sha512-TZnQXMpBuOOhH1j7F9BcbTJ9HFTE9uStLeahYeR8C2ZhiqzbX15Eaqln16xVbEC+Fa9g+vSXtt+uhS2V/CyfTQ==}
+    peerDependencies:
+      '@types/react': '>=16.8.0'
+      react: '>=16.8.0'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+      react:
+        optional: true
 
   posthog-node@5.63.2:
     resolution: {integrity: sha512-6BsKi6t1EX7vo8T2KL4MYlTT6pOHeuDD0/7zhLay2cBHOLsow7MEAbCqzhMbMen0PgYR6+X0yRKbvZKEk9NBoQ==}
@@ -4491,8 +4496,13 @@ packages:
       rxjs:
         optional: true
 
-  preact@10.29.2:
-    resolution: {integrity: sha512-7tNmwg/7mzzAoB/8kSg6Hl37JraAZw3Z3A0JSY7VXlZwo82Xn0G7wKbNNs2qoF4ZEEsQGTwDAroNdqKs1ofJxQ==}
+  preact@10.29.8:
+    resolution: {integrity: sha512-ej2aVZ+vZ8WO7tvlQWRM9N63A0KzF9q4mWJfDUHgYaIofWY9hu74QdnQrjoPMmZi2/nZ5gN0bJCQF49xQqx09Q==}
+    peerDependencies:
+      preact-render-to-string: '>=5'
+    peerDependenciesMeta:
+      preact-render-to-string:
+        optional: true
 
   prelude-ls@1.2.1:
     resolution: {integrity: sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g==}
@@ -5196,6 +5206,9 @@ packages:
 
   web-vitals@5.3.0:
     resolution: {integrity: sha512-q6LWsLatGYZp5VGBIOvbTj6JBV2nOmC8KvWztXBmwJcfFAzhwKwbOxhUH306XY3CcaZDUlSmSuNPBsCn0bFu+g==}
+
+  web-vitals@6.2.1:
+    resolution: {integrity: sha512-rLcLXA2sx6+9dE88NHFubwTtGxpK4yYBLj6qHPdFoCaLr0cXGb4efOqtKLlm4loGA4OEKHIQKMKzZkKyOh5ctw==}
 
   web-vitals@6.2.3:
     resolution: {integrity: sha512-Dmy+vdO1UPMqXiAtZSNayhl4f794Bxfd94W4HIj2HlYtczEQfEOon969memlcpcHrTuOKLa5baFjX7WbgmOq+A==}
@@ -6332,15 +6345,18 @@ snapshots:
     dependencies:
       playwright: 1.61.0
 
-  '@posthog/core@1.32.4':
+  '@posthog/browser-common@0.10.7':
     dependencies:
-      '@posthog/types': 1.386.4
+      '@posthog/core': 1.64.1
+      '@posthog/types': 1.421.1
+      dompurify: 3.4.17
+      preact: 10.29.8
+    transitivePeerDependencies:
+      - preact-render-to-string
 
   '@posthog/core@1.64.1':
     dependencies:
       '@posthog/types': 1.421.1
-
-  '@posthog/types@1.386.4': {}
 
   '@posthog/types@1.421.1': {}
 
@@ -7798,7 +7814,7 @@ snapshots:
     dependencies:
       domelementtype: 2.3.0
 
-  dompurify@3.4.10:
+  dompurify@3.4.17:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
@@ -9365,16 +9381,23 @@ snapshots:
 
   postgres@3.4.9: {}
 
-  posthog-js@1.386.8:
+  posthog-js@1.447.4(@types/react@19.2.17)(react@19.2.3):
     dependencies:
-      '@posthog/core': 1.32.4
-      '@posthog/types': 1.386.4
+      '@posthog/browser-common': 0.10.7
+      '@posthog/core': 1.64.1
+      '@posthog/types': 1.421.1
       core-js: 3.49.0
-      dompurify: 3.4.10
+      dompurify: 3.4.17
       fflate: 0.4.8
-      preact: 10.29.2
+      preact: 10.29.8
       query-selector-shadow-dom: 1.0.1
-      web-vitals: 5.3.0
+      web-vitals: 6.2.3
+      web-vitals-soft-navs: web-vitals@6.2.1
+    optionalDependencies:
+      '@types/react': 19.2.17
+      react: 19.2.3
+    transitivePeerDependencies:
+      - preact-render-to-string
 
   posthog-node@5.63.2(@opentelemetry/api@1.9.1):
     dependencies:
@@ -9382,7 +9405,7 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
 
-  preact@10.29.2: {}
+  preact@10.29.8: {}
 
   prelude-ls@1.2.1: {}
 
@@ -10190,6 +10213,8 @@ snapshots:
     optional: true
 
   web-vitals@5.3.0: {}
+
+  web-vitals@6.2.1: {}
 
   web-vitals@6.2.3: {}
 
