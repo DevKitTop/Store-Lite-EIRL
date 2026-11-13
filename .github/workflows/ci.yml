@@ -102,10 +102,13 @@ jobs:
     # pnpm-lock.yaml. It already ships Chromium and every system library it
     # needs under /ms-playwright, so no apt, no Ubuntu mirrors and no
     # `playwright install --with-deps` are required on this path.
+    # Keep this tag in lockstep with @playwright/test: a newer package expects a
+    # Chromium revision this image does not ship, and an older package cannot
+    # find the revision a newer image replaced. Both must move in one change.
     # --ipc=host keeps Chromium stable: the default container /dev/shm is
     # too small and crashes the browser.
     container:
-      image: mcr.microsoft.com/playwright:v1.61.0-noble
+      image: mcr.microsoft.com/playwright:v1.65.0-noble
       options: --ipc=host
     steps:
       - uses: actions/checkout@v4
