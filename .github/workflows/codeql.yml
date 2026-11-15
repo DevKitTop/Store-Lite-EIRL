@@ -12,7 +12,9 @@ permissions:
   contents: read
 
 env:
-  PNPM_VERSION: 10
+  # Must match "packageManager" in package.json and ci.yml exactly, otherwise
+  # pnpm/action-setup@v4 aborts with "Multiple versions of pnpm specified".
+  PNPM_VERSION: 10.34.9
   NODE_VERSION: 20
 
 jobs:

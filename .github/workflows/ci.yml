@@ -8,7 +8,10 @@ on:
   pull_request:
 
 env:
-  PNPM_VERSION: 10
+  # Must match "packageManager" in package.json exactly. pnpm/action-setup@v4
+  # fails when the two disagree, and a major-only pin (10) lets CI and local
+  # drift apart on minor versions.
+  PNPM_VERSION: 10.34.9
   NODE_VERSION: 20
 
 jobs:
