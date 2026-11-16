@@ -51,7 +51,7 @@ export default async function proxy(request: NextRequest) {
   // ── 2. Rate limiting + tenancy ─────────────────────────
   // May mutate request.nextUrl.pathname when a tenant rewrite applies, so the
   // session layer below evaluates the internal /{slug}/... route.
-  const outcome = runProxyPipeline(request);
+  const outcome = await runProxyPipeline(request);
 
   if (outcome.kind === 'rateLimited') {
     return new NextResponse(

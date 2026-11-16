@@ -17,7 +17,7 @@ import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 const mockGetUser = vi.hoisted(() => vi.fn());
-const mockCheckRateLimit = vi.hoisted(() => vi.fn());
+const mockCheckRateLimitAsync = vi.hoisted(() => vi.fn());
 
 vi.mock('@supabase/ssr', () => ({
   createServerClient: vi.fn(() => ({ auth: { getUser: mockGetUser } })),
@@ -27,7 +27,7 @@ vi.mock('@supabase/ssr', () => ({
 // exercised; only the limiter decision is stubbed.
 vi.mock('@/lib/rateLimit', async (importOriginal) => {
   const actual = await importOriginal<RateLimitModule>();
-  return { ...actual, checkRateLimit: mockCheckRateLimit };
+  return { ...actual, checkRateLimitAsync: mockCheckRateLimitAsync };
 });
 
 vi.mock('@/config/env', () => ({
@@ -51,7 +51,7 @@ describe('middleware entry point — layers are reachable', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetUser.mockResolvedValue({ data: { user: null } });
-    mockCheckRateLimit.mockReturnValue({ allowed: true, resetInMs: 60_000 });
+    mockCheckRateLimitAsync.mockResolvedValue({ allowed: true, resetInMs: 60_000 });
   });
 
   describe('tenant subdomain rewrite (the feature that was dead)', () => {
@@ -112,7 +112,7 @@ describe('middleware entry point — layers are reachable', () => {
 
   describe('rate limiting is reachable', () => {
     test('an exhausted auth bucket returns 429 with retry headers', async () => {
-      mockCheckRateLimit.mockReturnValue({ allowed: false, resetInMs: 5_000 });
+      mockCheckRateLimitAsync.mockResolvedValue({ allowed: false, resetInMs: 5_000 });
 
       const response = await proxy(createRequest('/auth/login'));
 
@@ -127,12 +127,12 @@ describe('middleware entry point — layers are reachable', () => {
     test('/api/* is rate limited too, but stays free of CSP and session work', async () => {
       const allowed = await proxy(createRequest('/api/order/lookup'));
 
-      expect(mockCheckRateLimit).toHaveBeenCalled();
+      expect(mockCheckRateLimitAsync).toHaveBeenCalled();
       expect(allowed.status).toBe(200);
       expect(allowed.headers.get('Content-Security-Policy')).toBeNull();
       expect(allowed.headers.get('x-nonce')).toBeNull();
 
-      mockCheckRateLimit.mockReturnValue({ allowed: false, resetInMs: 1_000 });
+      mockCheckRateLimitAsync.mockResolvedValue({ allowed: false, resetInMs: 1_000 });
       const blocked = await proxy(createRequest('/api/order/lookup'));
 
       expect(blocked.status).toBe(429);
