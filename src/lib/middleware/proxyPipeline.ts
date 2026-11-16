@@ -82,17 +82,27 @@ function isSamePathOrSubPath(pathname: string, prefix: string): boolean {
 }
 
 /**
+ * Auth routes that are PAGES a customer opens, not an action that submits a
+ * secret. The auth bucket is 10 requests / 15 minutes, so charging page views
+ * means eleven customers on a shared NAT (office, school, market wifi) get a
+ * 429 on the login screen - the same failure that `/auth` itself used to cause.
+ * Any new auth page must be added here; the default stays limited on purpose.
+ */
+const AUTH_PAGE_PATHS = ['/auth/customer', '/auth/chat-popup'] as const;
+
+/**
  * Maps a pathname to its rate limit bucket.
  *
- * /api (and its sub-paths) is limited at the edge. For auth only the sub-paths
- * are limited: `/auth` itself is the login PAGE, and the auth bucket is a
- * 10-requests-per-15-minutes brute-force budget. Charging a page view against
- * it means ten legitimate visits - a shared office behind one NAT, or the E2E
- * suite - get a 429 on the login screen. If the login form POST needs edge
- * protection it deserves its own, saner bucket, not this one.
+ * /api (and its sub-paths) is limited at the edge. For auth only sub-paths are
+ * limited: `/auth` itself is the login PAGE, and the auth bucket is a
+ * 10-requests-per-15-minutes brute-force budget, so a page view must not spend
+ * it. Auth pages are excluded individually for the same reason.
  */
 export function resolveRateLimitConfig(pathname: string): RateLimitConfig | null {
-  if (pathname.startsWith('/auth/')) return RATE_LIMITS.auth;
+  if (pathname.startsWith('/auth/')) {
+    if (AUTH_PAGE_PATHS.some((page) => isSamePathOrSubPath(pathname, page))) return null;
+    return RATE_LIMITS.auth;
+  }
   if (isSamePathOrSubPath(pathname, '/api')) return RATE_LIMITS.api;
   return null;
 }

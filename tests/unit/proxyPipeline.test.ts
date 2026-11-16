@@ -160,11 +160,23 @@ describe('proxy pipeline — platform routes on tenant subdomains', () => {
   });
 
   describe('rate limiting buckets', () => {
-    test('/auth/* is charged against the auth bucket', async () => {
-      await runProxyPipeline(createRequest('/auth/login'));
+    test('/auth/callback is charged against the auth bucket', async () => {
+      await runProxyPipeline(createRequest('/auth/callback'));
 
       expect(mockCheckRateLimitAsync).toHaveBeenCalledWith('test-client-ip', { bucket: 'auth' });
     });
+
+    test.each(['/auth/customer', '/auth/chat-popup'])(
+      'the auth page %s is not charged against the brute-force bucket',
+      async (path) => {
+        // These are pages a customer opens once, not an auth action. The bucket
+        // is 10 requests / 15 min, so behind a shared NAT (office, school,
+        // market wifi) eleven customers hit a 429 on the login screen.
+        await runProxyPipeline(createRequest(path));
+
+        expect(mockCheckRateLimitAsync).not.toHaveBeenCalled();
+      },
+    );
 
     test('/api/* is charged against the api bucket', async () => {
       await runProxyPipeline(createRequest('/api/products'));
