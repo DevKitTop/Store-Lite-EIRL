@@ -74,12 +74,20 @@ export async function runProxyPipeline(request: NextRequest): Promise<ProxyPipel
 }
 
 /**
+ * True when the pathname is exactly the prefix or a sub-path of it.
+ * `/api` and `/api/products` match `/api`; `/apix` does not.
+ */
+function isSamePathOrSubPath(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
+/**
  * Maps a pathname to its rate limit bucket.
- * Only /auth/* and /api/* are limited at the edge.
+ * Only /auth and /api (and their sub-paths) are limited at the edge.
  */
 export function resolveRateLimitConfig(pathname: string): RateLimitConfig | null {
-  if (pathname.startsWith('/auth/')) return RATE_LIMITS.auth;
-  if (pathname.startsWith('/api/')) return RATE_LIMITS.api;
+  if (isSamePathOrSubPath(pathname, '/auth')) return RATE_LIMITS.auth;
+  if (isSamePathOrSubPath(pathname, '/api')) return RATE_LIMITS.api;
   return null;
 }
 
@@ -112,9 +120,7 @@ const PLATFORM_ONLY_PREFIXES = [
 ] as const;
 
 export function isPlatformOnlyPath(pathname: string): boolean {
-  return PLATFORM_ONLY_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
+  return PLATFORM_ONLY_PREFIXES.some((prefix) => isSamePathOrSubPath(pathname, prefix));
 }
 
 /**
@@ -155,8 +161,8 @@ function getStorefrontRewriteUrl(request: NextRequest): URL | null {
   if (!slug || !isTenantHost(hostname)) return null;
 
   // /api/* routes live in app/api/... and must resolve at their canonical
-  // path, not at /{slug}/api/... — rewriting them yields 404.
-  if (request.nextUrl.pathname.startsWith('/api/')) return null;
+  // path, not at /{slug}/api/... - rewriting them yields 404.
+  if (isSamePathOrSubPath(request.nextUrl.pathname, '/api')) return null;
 
   // Guard against double rewrite when the slug is already in the path.
   if (request.nextUrl.pathname.startsWith(`/${slug}`)) return null;

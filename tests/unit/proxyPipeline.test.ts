@@ -149,6 +149,14 @@ describe('proxy pipeline — platform routes on tenant subdomains', () => {
       if (outcome.kind !== 'proceed') return;
       expect(outcome.rewriteUrl).toBeNull();
     });
+
+    test('the bare /api path is not rewritten to /{slug}/api either', async () => {
+      const outcome = await runProxyPipeline(createRequest('/api'));
+
+      expect(outcome.kind).toBe('proceed');
+      if (outcome.kind !== 'proceed') return;
+      expect(outcome.rewriteUrl).toBeNull();
+    });
   });
 
   describe('rate limiting buckets', () => {
@@ -162,6 +170,25 @@ describe('proxy pipeline — platform routes on tenant subdomains', () => {
       await runProxyPipeline(createRequest('/api/products'));
 
       expect(mockCheckRateLimitAsync).toHaveBeenCalledWith('test-client-ip', { bucket: 'api' });
+    });
+
+    test('the bare /auth path is charged against the auth bucket', async () => {
+      await runProxyPipeline(createRequest('/auth'));
+
+      expect(mockCheckRateLimitAsync).toHaveBeenCalledWith('test-client-ip', { bucket: 'auth' });
+    });
+
+    test('the bare /api path is charged against the api bucket', async () => {
+      await runProxyPipeline(createRequest('/api'));
+
+      expect(mockCheckRateLimitAsync).toHaveBeenCalledWith('test-client-ip', { bucket: 'api' });
+    });
+
+    test('lookalike prefixes are not a separate bucket', async () => {
+      await runProxyPipeline(createRequest('/apix'));
+      await runProxyPipeline(createRequest('/authz'));
+
+      expect(mockCheckRateLimitAsync).not.toHaveBeenCalled();
     });
 
     test('the storefront is not rate limited at the edge', async () => {
