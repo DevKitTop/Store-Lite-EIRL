@@ -17,6 +17,19 @@ import React from 'react';
 const BUCKET_NAME = 'tickets';
 
 /**
+ * The one refusal this route gives for a missing order OR a proof that does not
+ * match. Both cases answer with the same status and bytes on purpose: a
+ * distinct response for "order exists" would turn `orderNumber` into an
+ * enumeration oracle. Matches the neutral response `/api/order/lookup` uses.
+ */
+function neutralTicketNotFound() {
+  return NextResponse.json(
+    { success: false, error: 'No encontramos esa orden.', reason: 'order_not_found' },
+    { status: 404 },
+  );
+}
+
+/**
  * Creates a Supabase admin client (service role) for server-only uploads.
  */
 function createAdminClient() {
@@ -90,7 +103,7 @@ export async function POST(req: Request) {
       .limit(1);
 
     if (!payment) {
-      return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+      return neutralTicketNotFound();
     }
 
     // ── 1b. Access proof (design D4) ──────────────────────────────────
@@ -113,7 +126,9 @@ export async function POST(req: Request) {
       // rejected here: an absent token is not a proof, and a row without a
       // stored token is not claimable at all.
       if (!presentedToken || !storedToken || !safeTokenEqual(presentedToken, storedToken)) {
-        return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+        // Same refusal as "no such order": a distinct one would confirm that
+        // this order number exists.
+        return neutralTicketNotFound();
       }
 
       effectiveForceRegenerate = false;
