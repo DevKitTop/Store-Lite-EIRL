@@ -35,15 +35,12 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
 const isTestEnv = () => process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
 
 async function getShared() {
-  try {
-    const mod = await import('@/core/payments/rateLimitShared');
-    return mod;
-  } catch {
-    return {
-      checkRateLimitShared: async () => ({ allowed: true, remaining: 100, resetInMs: 60000 }),
-      resetRateLimitShared: async () => {},
-    };
-  }
+  // Fail LOUD, not open: returning an `allowed: true` stub here silently
+  // disabled every limit when the shared module could not be evaluated (for
+  // example a missing DATABASE_URL at import time). Throwing lets each caller
+  // fall back to its own in-memory window, which still counts.
+  const mod = await import('@/core/payments/rateLimitShared');
+  return mod;
 }
 
 // In-memory store (fallback)

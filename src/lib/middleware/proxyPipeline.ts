@@ -11,14 +11,15 @@
 // response construction) and the Supabase session layer.
 //
 // Pipeline order (matches the order in the entry point):
-// 1. Edge rate limiting for /auth/* and /api/*
+// 1. Rate limiting for /auth/* and /api/* (shared store, so the ceiling holds
+//    across middleware instances)
 // 2. Platform-only routes arriving on a tenant subdomain -> 302 redirect
 // 3. Subdomain storefront rewrite (Phase 2)
 // =====================================
 
 import { env } from '@/config/env';
 import {
-  checkRateLimit,
+  checkRateLimitAsync,
   getClientIdentifier,
   RATE_LIMITS,
   type RateLimitConfig,
@@ -45,13 +46,16 @@ export type ProxyPipelineOutcome =
  * `NextResponse.rewrite()` — `NextResponse.next()` is not enough, because
  * mutating `request.nextUrl` alone does not change what the App Router resolves.
  */
-export function runProxyPipeline(request: NextRequest): ProxyPipelineOutcome {
+export async function runProxyPipeline(request: NextRequest): Promise<ProxyPipelineOutcome> {
   // ── 1. Rate limiting ──────────────────────────────────
   // Auth and API routes are rate-limited; the storefront is not.
   const rateLimitConfig = resolveRateLimitConfig(request.nextUrl.pathname);
 
   if (rateLimitConfig) {
-    const result = checkRateLimit(getClientIdentifier(request), rateLimitConfig);
+    // Shared store: the sync limiter only counts per instance, so N middleware
+    // instances would allow N x the configured budget. Falls back to the
+    // per-instance window when the store cannot answer.
+    const result = await checkRateLimitAsync(getClientIdentifier(request), rateLimitConfig);
 
     if (!result.allowed) {
       const resetAfterSeconds = Math.ceil(result.resetInMs / 1000);
