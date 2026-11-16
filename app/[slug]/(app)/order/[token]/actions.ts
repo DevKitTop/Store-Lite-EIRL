@@ -12,8 +12,8 @@ import {
   type OrderAccessRefusalReason,
 } from '@/lib/orderAccessGate';
 import {
-  checkOrderAccessRateLimitFor,
-  resetOrderAccessRateLimit,
+  checkOrderAccessRateLimitForAsync,
+  resetOrderAccessRateLimitAsync,
 } from '@/lib/orderAccessRateLimit';
 import { getClientIdentifierFromHeaders } from '@/lib/rateLimit';
 import { and, desc, eq, isNull } from 'drizzle-orm';
@@ -152,7 +152,7 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
     // the same primitive POST /api/order/lookup uses. Runs BEFORE the payment
     // lookup so a refused caller cannot learn whether the order exists.
     const clientId = getClientIdentifierFromHeaders(await headers());
-    const rateLimit = checkOrderAccessRateLimitFor(clientId, { dni });
+    const rateLimit = await checkOrderAccessRateLimitForAsync(clientId, { dni });
     if (!rateLimit.allowed) {
       return {
         success: false,
@@ -181,7 +181,7 @@ export async function verifyOrderAccess(trackingToken: string, dni: string, orde
 
     // Success — refund this caller's own (client, dni) budget, scoped so no
     // sibling dni is handed a fresh window it has not paid for.
-    resetOrderAccessRateLimit(clientId, { dni });
+    await resetOrderAccessRateLimitAsync(clientId, { dni });
 
     await setOrderAccessCookie(trackingToken);
 

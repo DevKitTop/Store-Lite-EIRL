@@ -19,32 +19,39 @@
 // =====================================================
 
 import { POST } from '@/app/api/order/lookup/route';
-import { buildOrderAccessIdentifier } from '@/lib/orderAccessRateLimit';
-import { RATE_LIMITS, type checkRateLimit as CheckRateLimit } from '@/lib/rateLimit';
+import {
+  buildOrderAccessIdentifier,
+  checkOrderVerifyRateLimitsAsync,
+} from '@/lib/orderAccessRateLimit';
+import { RATE_LIMITS, type checkRateLimitAsync as CheckRateLimitAsync } from '@/lib/rateLimit';
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // ── Mocks ────────────────────────────────────────────
 // 3 module-level doubles, all of them preserving the real logic that matters:
 //   * `@/lib/rateLimit` keeps RATE_LIMITS, getClientIdentifier AND the sliding
-//     window store real; only `checkRateLimit` is swapped for a spy, so the
-//     bucket assertions run against the REAL limiter instead of a fake.
+//     window store real; only `checkRateLimitAsync` is swapped for a spy, so the
+//     bucket assertions run against the REAL limiter instead of a fake. The
+//     route MUST use the async (shared-store) variant: the sync one only
+//     enforces a per-instance Map, which serverless bypasses by hitting another
+//     instance.
 //   * `@/core/database/client` exposes the route's own queries so "did we reach
 //     the database" is observable (repo pattern: penaltyStatusRoute.test.ts:31).
 //   * `@/lib/supabase/server` answers the seller self-confirmation probe with an
 //     anonymous session — the storefront case under test.
 
-const { mockCheckRateLimit, realLimiter, mockPaymentsFindFirst, mockGetUser } = vi.hoisted(() => ({
-  mockCheckRateLimit: vi.fn(),
-  realLimiter: { current: null as null | typeof CheckRateLimit },
-  mockPaymentsFindFirst: vi.fn(),
-  mockGetUser: vi.fn(),
-}));
+const { mockCheckRateLimitAsync, realLimiterAsync, mockPaymentsFindFirst, mockGetUser } =
+  vi.hoisted(() => ({
+    mockCheckRateLimitAsync: vi.fn(),
+    realLimiterAsync: { current: null as null | typeof CheckRateLimitAsync },
+    mockPaymentsFindFirst: vi.fn(),
+    mockGetUser: vi.fn(),
+  }));
 
 vi.mock('@/lib/rateLimit', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  realLimiter.current = actual.checkRateLimit as typeof CheckRateLimit;
-  return { ...actual, checkRateLimit: mockCheckRateLimit };
+  realLimiterAsync.current = actual.checkRateLimitAsync as typeof CheckRateLimitAsync;
+  return { ...actual, checkRateLimitAsync: mockCheckRateLimitAsync };
 });
 
 vi.mock('@/core/database/client', () => ({
@@ -159,7 +166,7 @@ describe('buildOrderAccessIdentifier', () => {
 
 describe('POST /api/order/lookup — 429 response contract', () => {
   beforeEach(() => {
-    mockCheckRateLimit.mockReturnValue({ allowed: false, remaining: 0, resetInMs: 30_500 });
+    mockCheckRateLimitAsync.mockResolvedValue({ allowed: false, remaining: 0, resetInMs: 30_500 });
     mockGetUser.mockResolvedValue({ data: { user: null } });
     mockPaymentsFindFirst.mockResolvedValue(PAYMENT);
   });
@@ -176,7 +183,7 @@ describe('POST /api/order/lookup — 429 response contract', () => {
     expect(await res.json()).toEqual({ error: 'Too many requests. Please try again later.' });
 
     // Keyed (IP, dni) and reusing the existing RATE_LIMITS.auth primitive.
-    expect(mockCheckRateLimit).toHaveBeenCalledWith(`${IP}:dni:${DNI}`, AUTH_LIMIT);
+    expect(mockCheckRateLimitAsync).toHaveBeenCalledWith(`${IP}:dni:${DNI}`, AUTH_LIMIT);
     // A refused request must not reveal whether the order exists.
     expect(mockPaymentsFindFirst).not.toHaveBeenCalled();
   });
@@ -185,7 +192,7 @@ describe('POST /api/order/lookup — 429 response contract', () => {
 describe('POST /api/order/lookup — pre-zod auth-intent limit', () => {
   beforeEach(() => {
     // Real limiter by default: these tests must exercise the actual bucket.
-    mockCheckRateLimit.mockImplementation(realLimiter.current!);
+    mockCheckRateLimitAsync.mockImplementation(realLimiterAsync.current!);
     mockGetUser.mockResolvedValue({ data: { user: null } });
     mockPaymentsFindFirst.mockResolvedValue(PAYMENT);
   });
@@ -222,7 +229,10 @@ describe('POST /api/order/lookup — pre-zod auth-intent limit', () => {
 
     expect(statuses.slice(0, AUTH_MAX)).toEqual(Array(AUTH_MAX).fill(400));
     expect(statuses.at(-1)).toBe(429);
-    expect(mockCheckRateLimit).toHaveBeenCalledWith(`${IP_NO_DNI}:dni:__missing__`, AUTH_LIMIT);
+    expect(mockCheckRateLimitAsync).toHaveBeenCalledWith(
+      `${IP_NO_DNI}:dni:__missing__`,
+      AUTH_LIMIT,
+    );
   });
 
   test('a different dni from the same ip is unaffected by the exhausted bucket', async () => {
@@ -235,7 +245,10 @@ describe('POST /api/order/lookup — pre-zod auth-intent limit', () => {
     const otherDni = await POST(lookupRequest(validBody('87654321'), IP_OTHER_DNI));
 
     expect(otherDni.status).toBe(200);
-    expect(mockCheckRateLimit).toHaveBeenLastCalledWith(`${IP_OTHER_DNI}:dni:87654321`, AUTH_LIMIT);
+    expect(mockCheckRateLimitAsync).toHaveBeenLastCalledWith(
+      `${IP_OTHER_DNI}:dni:87654321`,
+      AUTH_LIMIT,
+    );
   });
 
   test('a different ip with the same dni is unaffected by the exhausted bucket', async () => {
@@ -246,6 +259,54 @@ describe('POST /api/order/lookup — pre-zod auth-intent limit', () => {
     const otherIp = await POST(lookupRequest(validBody(), '198.51.100.77'));
 
     expect(otherIp.status).toBe(200);
-    expect(mockCheckRateLimit).toHaveBeenLastCalledWith('198.51.100.77:dni:' + DNI, AUTH_LIMIT);
+    expect(mockCheckRateLimitAsync).toHaveBeenLastCalledWith(
+      '198.51.100.77:dni:' + DNI,
+      AUTH_LIMIT,
+    );
+  });
+});
+
+// ── Suite: order-verification page uses the shared limiter ──
+//
+// The page is a Server Component, so it can await. It MUST charge both buckets
+// through the async (shared-store) variant; the sync one only enforces a
+// per-instance Map that serverless bypasses.
+
+describe('checkOrderVerifyRateLimitsAsync', () => {
+  beforeEach(() => {
+    mockCheckRateLimitAsync.mockReset();
+  });
+
+  test('charges the coarse per-ip bucket first, then the fine (ip, order) bucket', async () => {
+    mockCheckRateLimitAsync
+      .mockResolvedValueOnce({ allowed: true, remaining: 5, resetInMs: 1_000 })
+      .mockResolvedValueOnce({ allowed: true, remaining: 9, resetInMs: 2_000 });
+
+    const result = await checkOrderVerifyRateLimitsAsync(IP, '#1001');
+
+    expect(mockCheckRateLimitAsync).toHaveBeenNthCalledWith(
+      1,
+      `${IP}:verify:__ip__`,
+      RATE_LIMITS.orderVerifyIp,
+    );
+    expect(mockCheckRateLimitAsync).toHaveBeenNthCalledWith(
+      2,
+      `${IP}:verify:#1001`,
+      RATE_LIMITS.storefront,
+    );
+    expect(result).toEqual({ allowed: true, remaining: 5, resetInMs: 1_000 });
+  });
+
+  test('short-circuits when the coarse bucket denies, so the fine bucket is not charged', async () => {
+    mockCheckRateLimitAsync.mockResolvedValueOnce({
+      allowed: false,
+      remaining: 0,
+      resetInMs: 30_500,
+    });
+
+    const result = await checkOrderVerifyRateLimitsAsync(IP, '#1001');
+
+    expect(mockCheckRateLimitAsync).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ allowed: false, remaining: 0, resetInMs: 30_500 });
   });
 });

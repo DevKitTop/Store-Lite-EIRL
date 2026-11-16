@@ -14,7 +14,14 @@
 // only pay for well-formed guesses and the limit would never bite.
 // =====================================================
 
-import { checkRateLimit, getClientIdentifier, RATE_LIMITS, resetRateLimit } from '@/lib/rateLimit';
+import {
+  checkRateLimit,
+  checkRateLimitAsync,
+  getClientIdentifier,
+  RATE_LIMITS,
+  resetRateLimit,
+  resetRateLimitAsync,
+} from '@/lib/rateLimit';
 import { type NextRequest } from 'next/server';
 
 /** Bucket segment used when the body carries no usable `dni`. */
@@ -52,12 +59,31 @@ export function buildOrderAccessIdentifier(clientIp: string, rawBody: unknown): 
  * `RATE_LIMITS.auth` primitive (src/lib/rateLimit.ts:25,53).
  * `checkRateLimit` appends `:${windowMs}` internally, so composite keys compose
  * safely.
+ *
+ * PER-INSTANCE ONLY: this sync variant enforces just the in-memory Map, so N
+ * serverless instances each get their own budget. Production callers MUST use
+ * `checkOrderAccessRateLimitAsync`.
  */
 export function checkOrderAccessRateLimit(
   request: NextRequest,
   rawBody: unknown,
 ): { allowed: boolean; remaining: number; resetInMs: number } {
   return checkRateLimit(
+    buildOrderAccessIdentifier(getClientIdentifier(request), rawBody),
+    RATE_LIMITS.auth,
+  );
+}
+
+/**
+ * Serverless-safe variant of `checkOrderAccessRateLimit`: charges the shared
+ * Postgres window (atomic across instances) and falls back to the per-instance
+ * window when the store cannot answer.
+ */
+export async function checkOrderAccessRateLimitAsync(
+  request: NextRequest,
+  rawBody: unknown,
+): Promise<{ allowed: boolean; remaining: number; resetInMs: number }> {
+  return checkRateLimitAsync(
     buildOrderAccessIdentifier(getClientIdentifier(request), rawBody),
     RATE_LIMITS.auth,
   );
@@ -71,6 +97,9 @@ export function checkOrderAccessRateLimit(
  *
  * `dni` is preferred; `orderNumber` is the fallback so a caller that supplies
  * only one of the two still lands in a deterministic bucket.
+ *
+ * PER-INSTANCE ONLY: production callers MUST use
+ * `checkOrderAccessRateLimitForAsync`.
  */
 export function checkOrderAccessRateLimitFor(
   clientId: string,
@@ -78,6 +107,15 @@ export function checkOrderAccessRateLimitFor(
 ): { allowed: boolean; remaining: number; resetInMs: number } {
   const identifier = params.dni ?? params.orderNumber;
   return checkRateLimit(`${clientId}:dni:${normalizeSegment(identifier)}`, RATE_LIMITS.auth);
+}
+
+/** Serverless-safe variant of `checkOrderAccessRateLimitFor`. */
+export async function checkOrderAccessRateLimitForAsync(
+  clientId: string,
+  params: { dni?: string | null; orderNumber?: string | null } = {},
+): Promise<{ allowed: boolean; remaining: number; resetInMs: number }> {
+  const identifier = params.dni ?? params.orderNumber;
+  return checkRateLimitAsync(`${clientId}:dni:${normalizeSegment(identifier)}`, RATE_LIMITS.auth);
 }
 
 /**
@@ -93,6 +131,18 @@ export function resetOrderAccessRateLimit(
 ): void {
   const identifier = params.dni ?? params.orderNumber;
   resetRateLimit(`${clientId}:dni:${normalizeSegment(identifier)}`, RATE_LIMITS.auth);
+}
+
+/**
+ * Serverless-safe variant of `resetOrderAccessRateLimit`: clears the shared
+ * window too, so a refund on one instance is visible to the others.
+ */
+export async function resetOrderAccessRateLimitAsync(
+  clientId: string,
+  params: { dni?: string | null; orderNumber?: string | null } = {},
+): Promise<void> {
+  const identifier = params.dni ?? params.orderNumber;
+  await resetRateLimitAsync(`${clientId}:dni:${normalizeSegment(identifier)}`, RATE_LIMITS.auth);
 }
 
 /**
@@ -129,6 +179,39 @@ export function checkOrderVerifyRateLimits(
   }
 
   const fine = checkRateLimit(
+    buildOrderVerifyIdentifier(clientIp, orderNumber),
+    RATE_LIMITS.storefront,
+  );
+  if (!fine.allowed) {
+    return { allowed: false, remaining: 0, resetInMs: fine.resetInMs };
+  }
+
+  return {
+    allowed: true,
+    remaining: Math.min(coarse.remaining, fine.remaining),
+    resetInMs: Math.min(coarse.resetInMs, fine.resetInMs),
+  };
+}
+
+/**
+ * Serverless-safe variant of `checkOrderVerifyRateLimits`. Same dual-key order
+ * and short-circuit (coarse first, fine only if the coarse bucket allowed), but
+ * each bucket is charged in the shared store so the ceiling holds across
+ * instances.
+ */
+export async function checkOrderVerifyRateLimitsAsync(
+  clientIp: string,
+  orderNumber: string,
+): Promise<{ allowed: boolean; remaining: number; resetInMs: number }> {
+  const coarse = await checkRateLimitAsync(
+    buildOrderVerifyIpIdentifier(clientIp),
+    RATE_LIMITS.orderVerifyIp,
+  );
+  if (!coarse.allowed) {
+    return { allowed: false, remaining: 0, resetInMs: coarse.resetInMs };
+  }
+
+  const fine = await checkRateLimitAsync(
     buildOrderVerifyIdentifier(clientIp, orderNumber),
     RATE_LIMITS.storefront,
   );

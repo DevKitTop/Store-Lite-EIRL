@@ -4,8 +4,8 @@ import { isBusinessSeller } from '@/core/orders/sellerAccess';
 import { logger, toErrorDetail } from '@/lib/logger';
 import { verifyOrderAccessCookie } from '@/lib/orderAccessCookie';
 import { ORDER_ACCESS_DENIED_ERROR } from '@/lib/orderAccessGate';
-import { checkOrderAccessRateLimit } from '@/lib/orderAccessRateLimit';
-import { checkRateLimit } from '@/lib/rateLimit';
+import { checkOrderAccessRateLimitAsync } from '@/lib/orderAccessRateLimit';
+import { checkRateLimitAsync } from '@/lib/rateLimit';
 import { createClient } from '@/lib/supabase/server';
 import { and, eq } from 'drizzle-orm';
 import { NextResponse, type NextRequest } from 'next/server';
@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
       });
       if (!payment || !payment.trackingToken) return neutralOrderNotFound();
 
-      const rateLimit = await checkRateLimit(
+      const rateLimit = await checkRateLimitAsync(
         `${cookieOrder.id}:${business.id}`,
         COOKIE_LOOKUP_RATE_LIMIT,
       );
@@ -148,7 +148,7 @@ export async function POST(request: NextRequest) {
 
     // ── Path 2 — legacy unauthenticated lookup (C11 / D2) ─
     // 0. Rate limit BEFORE validation and before any database access.
-    const rateLimit = checkOrderAccessRateLimit(request, rawBody);
+    const rateLimit = await checkOrderAccessRateLimitAsync(request, rawBody);
     if (!rateLimit.allowed) {
       const retryAfter = String(Math.ceil(rateLimit.resetInMs / 1000));
       return NextResponse.json(

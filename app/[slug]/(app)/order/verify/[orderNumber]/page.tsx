@@ -1,6 +1,6 @@
 import { db } from '@/core/database/client';
 import { businesses, payments, products } from '@/core/database/schema';
-import { checkOrderVerifyRateLimits } from '@/lib/orderAccessRateLimit';
+import { checkOrderVerifyRateLimitsAsync } from '@/lib/orderAccessRateLimit';
 import { resolveOrderVerificationAccess } from '@/lib/orderVerificationAccess';
 import { getClientIdentifierFromHeaders } from '@/lib/rateLimit';
 import { and, eq, inArray } from 'drizzle-orm';
@@ -106,7 +106,7 @@ export default async function OrderVerificationPage({
   // mints a fresh fine bucket every request, which measured 200/200 served. The
   // RAW ip is passed here — this call composes the key itself.
   const clientIp = getClientIdentifierFromHeaders(await headers());
-  const rateLimit = checkOrderVerifyRateLimits(clientIp, cleanOrderNumber);
+  const rateLimit = await checkOrderVerifyRateLimitsAsync(clientIp, cleanOrderNumber);
   if (!rateLimit.allowed) {
     // Render neutral throttled state instead of 429 to preserve printed-ticket UX
     return renderThrottledState();
