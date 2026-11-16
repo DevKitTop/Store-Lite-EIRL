@@ -1,17 +1,17 @@
 'use client';
 
+import {
+  deleteChatSession,
+  fetchChatSessions,
+  fetchMessages,
+  sendMessage,
+} from '@/features/chat/actions/chatActions';
 import { WhatsAppConnectModal } from '@/features/whatsapp/components/WhatsAppConnectModal';
 import { WhatsAppTemplateManager } from '@/features/whatsapp/components/WhatsAppTemplateManager';
 import { createClient } from '@/lib/supabase/client';
 import { AlertSnackbar } from '@/shared/components/ui/feedback/AlertSnackbar';
 import type { RealtimePostgresInsertPayload } from '@supabase/supabase-js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  deleteChatSession,
-  fetchChatSessions,
-  fetchMessages,
-  sendMessage,
-} from '../actions/chatActions';
 import {
   fetchWhatsAppConversations,
   fetchWhatsAppMessages,
