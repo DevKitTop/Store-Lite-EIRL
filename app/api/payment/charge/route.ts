@@ -296,7 +296,7 @@ export async function POST(request: Request) {
     }
 
     // ─── Rate Limit Check ──────────────────────────────────────────
-    if (!paymentRateLimiter.check(`${businessId}:${productId}`)) {
+    if (!(await paymentRateLimiter.checkAsync(`${businessId}:${productId}`))) {
       return NextResponse.json(
         { error: 'Demasiados intentos. Esperá unos segundos antes de reintentar.' },
         { status: 429 },
@@ -314,7 +314,7 @@ export async function POST(request: Request) {
       dni: rawShipping.dni,
       authId: customerAuth?.authId,
     });
-    if (buyerRateLimitKey && !paymentRateLimiter.check(buyerRateLimitKey)) {
+    if (buyerRateLimitKey && !(await paymentRateLimiter.checkAsync(buyerRateLimitKey))) {
       return NextResponse.json(
         { error: 'Demasiados intentos. Esperá unos segundos antes de reintentar.' },
         { status: 429 },

@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+const { mockCheckRateLimitShared } = vi.hoisted(() => ({
+  mockCheckRateLimitShared: vi.fn(),
+}));
+
+vi.mock('@/core/payments/rateLimitShared', () => ({
+  checkRateLimitShared: mockCheckRateLimitShared,
+}));
+
 describe('RateLimiter', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -109,6 +117,64 @@ describe('RateLimiter', () => {
 
       expect(clearSpy).toHaveBeenCalledTimes(1);
       clearSpy.mockRestore();
+    });
+  });
+
+  describe('checkAsync()', () => {
+    beforeEach(() => {
+      mockCheckRateLimitShared.mockReset();
+    });
+
+    test('denies without charging the local window when the shared store denies', async () => {
+      const { RateLimiter } = await import('@/core/payments/rateLimiter');
+      const limiter = new RateLimiter(30_000, 3);
+      const memoryCheck = vi.spyOn(limiter, 'check');
+      mockCheckRateLimitShared.mockResolvedValue({
+        allowed: false,
+        remaining: 0,
+        resetInMs: 1_000,
+      });
+
+      await expect(limiter.checkAsync('shared-key')).resolves.toBe(false);
+      expect(mockCheckRateLimitShared).toHaveBeenCalledWith('shared-key', {
+        windowMs: 30_000,
+        maxRequests: 3,
+      });
+      expect(memoryCheck).not.toHaveBeenCalled();
+    });
+
+    test('allows when the shared store allows and the local window has room', async () => {
+      const { RateLimiter } = await import('@/core/payments/rateLimiter');
+      const limiter = new RateLimiter(30_000, 3);
+      mockCheckRateLimitShared.mockResolvedValue({
+        allowed: true,
+        remaining: 2,
+        resetInMs: 1_000,
+      });
+
+      await expect(limiter.checkAsync('shared-key-2')).resolves.toBe(true);
+    });
+
+    test('enforces the per-instance backstop even when the shared store always allows', async () => {
+      const { RateLimiter } = await import('@/core/payments/rateLimiter');
+      const limiter = new RateLimiter(30_000, 1);
+      mockCheckRateLimitShared.mockResolvedValue({
+        allowed: true,
+        remaining: 1,
+        resetInMs: 1_000,
+      });
+
+      await expect(limiter.checkAsync('backstop-key')).resolves.toBe(true);
+      await expect(limiter.checkAsync('backstop-key')).resolves.toBe(false);
+    });
+
+    test('falls back to the per-instance limiter when the shared store throws', async () => {
+      const { RateLimiter } = await import('@/core/payments/rateLimiter');
+      const limiter = new RateLimiter(30_000, 1);
+      mockCheckRateLimitShared.mockRejectedValue(new Error('db down'));
+
+      await expect(limiter.checkAsync('fallback-key')).resolves.toBe(true);
+      await expect(limiter.checkAsync('fallback-key')).resolves.toBe(false);
     });
   });
 });
