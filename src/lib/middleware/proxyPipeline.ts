@@ -83,10 +83,16 @@ function isSamePathOrSubPath(pathname: string, prefix: string): boolean {
 
 /**
  * Maps a pathname to its rate limit bucket.
- * Only /auth and /api (and their sub-paths) are limited at the edge.
+ *
+ * /api (and its sub-paths) is limited at the edge. For auth only the sub-paths
+ * are limited: `/auth` itself is the login PAGE, and the auth bucket is a
+ * 10-requests-per-15-minutes brute-force budget. Charging a page view against
+ * it means ten legitimate visits - a shared office behind one NAT, or the E2E
+ * suite - get a 429 on the login screen. If the login form POST needs edge
+ * protection it deserves its own, saner bucket, not this one.
  */
 export function resolveRateLimitConfig(pathname: string): RateLimitConfig | null {
-  if (isSamePathOrSubPath(pathname, '/auth')) return RATE_LIMITS.auth;
+  if (pathname.startsWith('/auth/')) return RATE_LIMITS.auth;
   if (isSamePathOrSubPath(pathname, '/api')) return RATE_LIMITS.api;
   return null;
 }

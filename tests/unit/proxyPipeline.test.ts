@@ -172,10 +172,13 @@ describe('proxy pipeline — platform routes on tenant subdomains', () => {
       expect(mockCheckRateLimitAsync).toHaveBeenCalledWith('test-client-ip', { bucket: 'api' });
     });
 
-    test('the bare /auth path is charged against the auth bucket', async () => {
+    test('the bare /auth page is not charged against the brute-force bucket', async () => {
+      // `/auth` is the login PAGE. The auth bucket is 10 requests / 15 min, so
+      // charging page views makes ten legitimate visits (shared office NAT, the
+      // E2E suite) hit a 429 on the login screen. Sub-paths stay limited.
       await runProxyPipeline(createRequest('/auth'));
 
-      expect(mockCheckRateLimitAsync).toHaveBeenCalledWith('test-client-ip', { bucket: 'auth' });
+      expect(mockCheckRateLimitAsync).not.toHaveBeenCalled();
     });
 
     test('the bare /api path is charged against the api bucket', async () => {
