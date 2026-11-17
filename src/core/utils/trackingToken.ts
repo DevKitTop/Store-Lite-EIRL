@@ -5,8 +5,10 @@
  * confusing characters (I, l, 1, O, 0) for easy reading
  * and dictation over the phone.
  *
- * Entropy: 30^8 ≈ 6.5 billion combinations — sufficient for
- * order tracking where access is further protected by DNI.
+ * Entropy: 32^8 = 1.1 trillion combinations (40 bits). That is what protects
+ * the order: access is granted by presenting this token, or by a session that
+ * owns the business. The old "30^8 ≈ 6.5 billion" figure was off by ~170x and
+ * understated the real strength.
  *
  * @returns An 8-character alphanumeric string
  *

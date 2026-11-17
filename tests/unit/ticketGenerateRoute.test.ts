@@ -10,7 +10,7 @@
 //            to false so a buyer can never overwrite an existing ticket.
 //
 // `db.update` and the Supabase Storage `upload` are the "did we write?"
-// probes: every 401 must leave both untouched.
+// probes: every refusal must leave both untouched.
 // =====================================================
 
 import { POST } from '@/app/api/ticket/generate/route';
@@ -214,6 +214,24 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
     expectNoWrites();
   });
 
+  test('a wrong token is indistinguishable from an order that does not exist', async () => {
+    // The gate must not tell the caller whether an order number is real. Both
+    // refusals answer with the same status and the same bytes, matching the
+    // neutral response `/api/order/lookup` already uses.
+    mockSelect.mockResolvedValueOnce([]);
+    const missing = await POST(generateRequest({ orderNumber: 'ORD-NONEXISTENT' }));
+
+    refuseOwnership();
+    mockSelect.mockResolvedValueOnce([paymentRow({ ticketUrl: EXISTING_TICKET_URL })]);
+    const wrongToken = await POST(
+      generateRequest({ orderNumber: ORDER_NUMBER, trackingToken: WRONG_TOKEN }),
+    );
+
+    expect(wrongToken.status).toBe(missing.status);
+    expect(await wrongToken.json()).toEqual(await missing.json());
+    expectNoWrites();
+  });
+
   // ── The lookup must carry the buyer proof ────────────────────────────
 
   test('the payment lookup reads payments.trackingToken', async () => {
@@ -328,7 +346,7 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
 
   // ── Refusals ─────────────────────────────────────────────────────────
 
-  test('401 for a wrong token, without touching storage or the payment row', async () => {
+  test('404 for a wrong token, without touching storage or the payment row', async () => {
     refuseOwnership();
     mockSelect.mockResolvedValueOnce([paymentRow({ ticketUrl: EXISTING_TICKET_URL })]);
 
@@ -340,12 +358,16 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
       }),
     );
 
-    expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe('No autorizado');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      success: false,
+      error: 'No encontramos esa orden.',
+      reason: 'order_not_found',
+    });
     expectNoWrites();
   });
 
-  test('401 for a wrong token of a different length — the whole value is compared', async () => {
+  test('404 for a wrong token of a different length — the whole value is compared', async () => {
     refuseOwnership();
     mockSelect.mockResolvedValueOnce([paymentRow({ ticketUrl: EXISTING_TICKET_URL })]);
 
@@ -353,34 +375,46 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
       generateRequest({ orderNumber: ORDER_NUMBER, trackingToken: `${TRACKING_TOKEN}x` }),
     );
 
-    expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe('No autorizado');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      success: false,
+      error: 'No encontramos esa orden.',
+      reason: 'order_not_found',
+    });
     expectNoWrites();
   });
 
-  test('401 when no proof is presented at all', async () => {
+  test('404 when no proof is presented at all', async () => {
     refuseOwnership();
     mockSelect.mockResolvedValueOnce([paymentRow({ ticketUrl: EXISTING_TICKET_URL })]);
 
     const res = await POST(generateRequest({ orderNumber: ORDER_NUMBER }));
 
-    expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe('No autorizado');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      success: false,
+      error: 'No encontramos esa orden.',
+      reason: 'order_not_found',
+    });
     expectNoWrites();
   });
 
-  test('401 when the body token is not a usable string', async () => {
+  test('404 when the body token is not a usable string', async () => {
     refuseOwnership();
     mockSelect.mockResolvedValueOnce([paymentRow({ ticketUrl: EXISTING_TICKET_URL })]);
 
     const res = await POST(generateRequest({ orderNumber: ORDER_NUMBER, trackingToken: '' }));
 
-    expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe('No autorizado');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      success: false,
+      error: 'No encontramos esa orden.',
+      reason: 'order_not_found',
+    });
     expectNoWrites();
   });
 
-  test('401 when the row has no stored token, so an empty body token cannot claim it', async () => {
+  test('404 when the row has no stored token, so an empty body token cannot claim it', async () => {
     // `safeTokenEqual('', '')` is true by contract (two identical digests), so
     // the gate must not rely on the comparison to reject blank proofs — a row
     // without a token is not claimable by anybody.
@@ -389,12 +423,16 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
 
     const res = await POST(generateRequest({ orderNumber: ORDER_NUMBER, trackingToken: '' }));
 
-    expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe('No autorizado');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      success: false,
+      error: 'No encontramos esa orden.',
+      reason: 'order_not_found',
+    });
     expectNoWrites();
   });
 
-  test("401 for a foreign order: another business' ticket is never exposed or rewritten", async () => {
+  test("404 for a foreign order: another business' ticket is never exposed or rewritten", async () => {
     refuseOwnership();
     mockSelect.mockResolvedValueOnce([
       paymentRow({
@@ -407,7 +445,7 @@ describe('POST /api/ticket/generate — owner-or-buyer gate', () => {
     // The caller has no proof for B's order: no session, and no token at all.
     const res = await POST(generateRequest({ orderNumber: ORDER_NUMBER, forceRegenerate: true }));
 
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(404);
     expect(await res.json()).not.toHaveProperty('signedUrl');
     expectNoWrites();
   });
