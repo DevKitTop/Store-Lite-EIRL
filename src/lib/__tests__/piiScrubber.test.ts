@@ -102,4 +102,55 @@ describe('scrubPII', () => {
       expect(result).toBe('Not an email: @broken');
     });
   });
+
+  describe('identifier preservation (B-07)', () => {
+    it('does not corrupt a UUID', () => {
+      const uuid = '650e8400-e29b-41d4-a716-446655440001';
+      expect(scrubPII(`sale ${uuid} fulfilled`)).toBe(`sale ${uuid} fulfilled`);
+    });
+
+    it('keeps a UUID while still redacting a phone in the same message', () => {
+      const uuid = '44665544-0001-4000-8000-000000000000';
+      expect(scrubPII(`biz ${uuid} call 123-456-7890`)).toBe(`biz ${uuid} call [REDACTED_PHONE]`);
+    });
+
+    it('keeps multiple UUIDs distinct and ordered', () => {
+      const a = '11111111-1111-4111-8111-111111111111';
+      const b = '22222222-2222-4222-8222-222222222222';
+      expect(scrubPII(`${a} / ${b}`)).toBe(`${a} / ${b}`);
+    });
+
+    it('preserves UUIDs inside object values', () => {
+      const uuid = '9f8e7d6c-5b4a-4321-8100-123456789abc';
+      const result = scrubPII({ businessId: uuid, email: 'a@b.com' });
+      expect(result).toEqual({ businessId: uuid, email: '[REDACTED_EMAIL]' });
+    });
+
+    // Regression: protecting a UUID BEFORE scrubbing emails broke EMAIL_REGEX
+    // because the placeholder's `<`/`>` are not local-part legal, so an email
+    // whose local part embedded a UUID leaked verbatim. Order is now
+    // email-first, and these pin it.
+    describe('does not under-redact emails that embed a UUID', () => {
+      const uuid = '650e8400-e29b-41d4-a716-446655440001';
+
+      it('redacts an email whose local part is a UUID', () => {
+        expect(scrubPII(`${uuid}@example.com`)).toBe('[REDACTED_EMAIL]');
+      });
+
+      it('redacts ticket-<uuid>@domain and support+<uuid>@domain', () => {
+        expect(scrubPII(`ticket-${uuid}@example.com`)).toBe('[REDACTED_EMAIL]');
+        expect(scrubPII(`support+${uuid}@example.com`)).toBe('[REDACTED_EMAIL]');
+      });
+
+      it('redacts a UUID-local email inside object values', () => {
+        expect(scrubPII({ contact: `${uuid}@example.com` })).toEqual({
+          contact: '[REDACTED_EMAIL]',
+        });
+      });
+
+      it('preserves a literal placeholder-looking token instead of deleting it', () => {
+        expect(scrubPII('note <<<UUID_0>>> here')).toBe('note <<<UUID_0>>> here');
+      });
+    });
+  });
 });

@@ -21,6 +21,7 @@
 
 import { POST } from '@/app/api/webhooks/culqi/route';
 import type * as StockFulfillmentModule from '@/core/payments/stockFulfillment';
+import * as webhookDedup from '@/core/payments/webhookDedup';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -495,5 +496,27 @@ describe('POST /api/webhooks/culqi — charge.paid / charge.failed (design D13/D
     expect(secondBody).toEqual({ received: true, duplicate: true });
     // Only the first delivery ran the update.
     expect(mockSet).toHaveBeenCalledTimes(1);
+  });
+
+  // ============================================================
+  // Fail CLOSED when the durable claim is unavailable
+  // ============================================================
+
+  test('returns a retryable 503 when the dedup claim fails, without writing', async () => {
+    // Force the durable claim to blow up so the route must answer 5xx and let
+    // Culqi redeliver, instead of processing on a degraded store.
+    const spy = vi
+      .spyOn(webhookDedup, 'claimWebhookEvent')
+      .mockRejectedValueOnce(new Error('db down'));
+
+    const response = await POST(createWebhookRequest(createChargeEvent('charge.paid')));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'webhook dedup unavailable' });
+    // Fail closed: no payment write and no stock fulfilment happened.
+    expect(mockSet).not.toHaveBeenCalled();
+    expect(mockFulfillPaidSale).not.toHaveBeenCalled();
+
+    spy.mockRestore();
   });
 });
