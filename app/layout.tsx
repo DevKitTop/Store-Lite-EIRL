@@ -92,8 +92,15 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
   },
+  applicationName: SITE_NAME,
   icons: {
     icon: '/img/icon.png',
+    apple: '/img/apple-touch-icon.png',
+  },
+  appleWebApp: {
+    capable: true,
+    title: SITE_NAME,
+    statusBarStyle: 'default',
   },
 };
 
