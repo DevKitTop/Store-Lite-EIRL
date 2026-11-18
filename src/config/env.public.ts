@@ -28,4 +28,9 @@ export const publicEnv = {
   ycloudFbAppId: process.env.NEXT_PUBLIC_YCLOUD_FB_APP_ID || '',
   ycloudFbConfigId: process.env.NEXT_PUBLIC_YCLOUD_FB_CONFIG_ID || '',
   ycloudFbSolutionId: process.env.NEXT_PUBLIC_YCLOUD_FB_SOLUTION_ID || '',
+  // Seller PWA install guidance (T1.5). Off by default; when enabled the
+  // prompt only appears after the browser fires `beforeinstallprompt`.
+  get pwaInstallPrompt() {
+    return process.env.NEXT_PUBLIC_PWA_INSTALL_PROMPT === 'true';
+  },
 } as const;

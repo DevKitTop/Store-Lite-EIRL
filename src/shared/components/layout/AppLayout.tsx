@@ -4,6 +4,7 @@ import { clearBusinessSessionData, useBusinessSession } from '@/hooks/useBusines
 import { useSidebarState } from '@/hooks/useSidebarState';
 import { Sidebar } from '@/shared/components/navigation';
 import Navbar from '@/shared/components/navigation/Navbar';
+import PwaInstallPrompt from '@/shared/components/pwa/PwaInstallPrompt';
 import { CircularProgress } from '@/shared/components/ui/feedback/Progress';
 import '@/styles/components/layout.css';
 import '@/styles/components/navbar.css';
@@ -249,6 +250,8 @@ export default function AppLayout({
             <p className="loadingText">Cargando...</p>
           </div>
         )}
+
+        {showNavbar && <PwaInstallPrompt />}
       </div>
     </>
   );
