@@ -710,7 +710,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ received: true });
   }
 
-  const dedupId = event.id ?? `${eventType}:${chargeId}`;
+  // A retry of the same delivery must dedupe, but two DISTINCT transitions of
+  // one order must not collapse when Culqi omits a top-level event id: every
+  // order lifecycle change shares the single `order.status.changed` type, so the
+  // transition state is part of the fallback key. Charge/refund events already
+  // encode the transition in `eventType`; their key stays unchanged.
+  const orderTransition = eventType.startsWith('order.')
+    ? (event.data?.state ?? event.data?.status)
+    : undefined;
+  const dedupId =
+    event.id ??
+    (orderTransition ? `${eventType}:${chargeId}:${orderTransition}` : `${eventType}:${chargeId}`);
   let claimed: boolean;
   try {
     claimed = await claimWebhookEvent(dedupId, eventType);

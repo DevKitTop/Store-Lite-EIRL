@@ -506,4 +506,47 @@ describe('POST /api/webhooks/culqi — order.status.changed', () => {
     expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
     expect(mockWhere).toHaveBeenCalledTimes(2);
   });
+
+  // ============================================================
+  // Dedup fallback: order transitions must not collapse without `id`
+  // ============================================================
+  // `order.status.changed` is ONE event type for every lifecycle change. When
+  // Culqi omits the top-level event id, a key of `${type}:${orderId}` would make
+  // a second DISTINCT transition (e.g. paid -> expired) look like a retry and
+  // be dropped as a duplicate. The state must be part of the fallback key.
+
+  test('processes distinct transitions of one order when the event has no top-level id', async () => {
+    const orderId = 'ord_dedup_two_states';
+
+    const first = await POST(
+      createWebhookRequest({ type: 'order.status.changed', data: { id: orderId, state: 'paid' } }),
+    );
+    const second = await POST(
+      createWebhookRequest({
+        type: 'order.status.changed',
+        data: { id: orderId, state: 'expired' },
+      }),
+    );
+
+    expect(await first.json()).toEqual({ received: true });
+    // The second transition must NOT be dropped as a duplicate delivery.
+    expect(await second.json()).toEqual({ received: true });
+    expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({ status: 'paid' }));
+    expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({ status: 'expired' }));
+  });
+
+  test('still dedupes a retry of the same order transition without a top-level id', async () => {
+    const paidEvent = {
+      type: 'order.status.changed',
+      data: { id: 'ord_dedup_retry', state: 'paid' },
+    };
+
+    const first = await POST(createWebhookRequest(paidEvent));
+    const retry = await POST(createWebhookRequest(paidEvent));
+
+    expect(await first.json()).toEqual({ received: true });
+    expect(await retry.json()).toEqual({ received: true, duplicate: true });
+    // Only the first delivery flips; the retry performs no write.
+    expect(mockSet).toHaveBeenCalledTimes(1);
+  });
 });
