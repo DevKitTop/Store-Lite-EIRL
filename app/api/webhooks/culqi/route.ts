@@ -710,17 +710,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ received: true });
   }
 
-  const dedupId = event.id ?? `${eventType}:${chargeId}`;
+  // A retry of the same delivery must dedupe, but two DISTINCT transitions of
+  // one order must not collapse when Culqi omits a top-level event id: every
+  // order lifecycle change shares the single `order.status.changed` type, so the
+  // transition state is part of the fallback key. Charge/refund events already
+  // encode the transition in `eventType`; their key stays unchanged.
+  const orderTransition = eventType.startsWith('order.')
+    ? (event.data?.state ?? event.data?.status)
+    : undefined;
+  const dedupId =
+    event.id ??
+    (orderTransition ? `${eventType}:${chargeId}:${orderTransition}` : `${eventType}:${chargeId}`);
+  let claimed: boolean;
   try {
-    const claimed = await claimWebhookEvent(dedupId, eventType);
-    if (!claimed) {
-      return NextResponse.json({ received: true, duplicate: true });
-    }
+    claimed = await claimWebhookEvent(dedupId, eventType);
   } catch (err) {
-    logger.error('Failed to claim webhook event', {
+    logger.error('Failed to claim webhook event; answering retryable so the provider redelivers', {
       error: err instanceof Error ? err.message : String(err),
     });
-    // Fail open to avoid blocking on DB issues, but prefer to dedup
+    // Fail CLOSED. Without a durable claim we must not process on this instance
+    // while another instance may process the same delivery. A 5xx makes Culqi
+    // redeliver once the store is healthy; the charge-level dedup by
+    // culqi_charge_id keeps a redelivery idempotent.
+    return NextResponse.json({ error: 'webhook dedup unavailable' }, { status: 503 });
+  }
+  if (!claimed) {
+    return NextResponse.json({ received: true, duplicate: true });
   }
 
   try {

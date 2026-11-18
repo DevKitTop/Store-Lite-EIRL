@@ -574,11 +574,14 @@ describe('fulfillPaidSale', () => {
 });
 
 // ============================================================
-// emitFulfillmentAlerts — console.error only, identifiers intact (B-07)
+// emitFulfillmentAlerts — routed through logger.error (reaches Sentry) with
+// identifiers intact. B-07 fixed: scrubPII preserves UUIDs. In tests the
+// logger's console branch still writes to console.error, which is what these
+// assertions observe.
 // ============================================================
 
 describe('emitFulfillmentAlerts', () => {
-  test('emits oversold alerts through console.error, never the structured logger', () => {
+  test('emits oversold alerts with the business and product identifiers intact', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     emitFulfillmentAlerts('charge', tokenAnchor(), {

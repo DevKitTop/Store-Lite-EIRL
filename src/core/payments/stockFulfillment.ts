@@ -25,6 +25,7 @@ import type * as schema from '@/core/database/schema';
 import { products, stockMovements } from '@/core/database/schema';
 import type { SaleClaimKey, SaleIdentity } from '@/core/payments/saleIdentity';
 import { resolveClaimKeys, saleAlertScope } from '@/core/payments/saleIdentity';
+import { logger } from '@/lib/logger';
 
 // The claim-key contract lives with the sale identity (design D4/D14): every
 // trigger derives its key set from the SAME canonical identity, so two
@@ -439,11 +440,11 @@ export async function fulfillPaidSale(
  * Emit the observable fulfillment alerts. Call this AFTER the transaction
  * commits — a rolled-back sale must never raise an incident.
  *
- * Deliberately `console.error`, NEVER `logger`/Sentry: the structured logger
- * runs `scrubPII`, whose PHONE_REGEX matches any 6-11 digit run and therefore
- * mangles UUIDs ("...446655440001" -> "...44665[REDACTED_PHONE]"), destroying
- * the businessId/productId that make these alerts actionable. Do NOT "upgrade"
- * this call until the scrubber stops corrupting identifiers (B-07).
+ * Routed through `logger.error` so the alert reaches Sentry, not just the
+ * process console. This depends on B-07 being fixed: `scrubPII` used to match
+ * the digit runs inside a UUID and destroy the businessId/productId that make
+ * these alerts actionable. `piiScrubber` now preserves UUIDs, so the
+ * identifier survives scrubbing and the alert is usable.
  */
 export function emitFulfillmentAlerts(
   channel: 'charge' | 'culqi-webhook' | 'reconcile',
@@ -459,7 +460,7 @@ export function emitFulfillmentAlerts(
   };
 
   for (const oversold of result.oversold) {
-    console.error('[stockFulfillment] oversold: conditional stock decrement matched no row', {
+    logger.error('[stockFulfillment] oversold: conditional stock decrement matched no row', {
       ...scope,
       productId: oversold.productId,
       requested: oversold.requested,
@@ -467,7 +468,7 @@ export function emitFulfillmentAlerts(
   }
 
   if (result.b1) {
-    console.error('[stockFulfillment] B1: no recoverable snapshot, decremented qty = 1', {
+    logger.error('[stockFulfillment] B1: no recoverable snapshot, decremented qty = 1', {
       ...scope,
       productId: result.items[0]?.productId ?? null,
     });
