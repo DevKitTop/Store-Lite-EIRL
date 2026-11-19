@@ -14,6 +14,7 @@ export * from './orders';
 export * from './penalties';
 export * from './products';
 export * from './profiles';
+export * from './pushSubscriptions';
 export * from './relations';
 export * from './types';
 export * from './verification';

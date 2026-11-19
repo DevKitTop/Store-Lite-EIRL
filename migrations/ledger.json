@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-29T13:20:17.625Z",
+  "generatedAt": "2026-11-19T14:21:51.073Z",
   "counts": {
-    "sql": 84,
+    "sql": 85,
     "journal": 24,
-    "unjournaled": 60
+    "unjournaled": 61
   },
   "files": [
     {
@@ -425,6 +425,11 @@
     {
       "file": "0056_reconcile_pricing_webhooks_and_deactivation.sql",
       "prefix": "0056",
+      "method": "manual"
+    },
+    {
+      "file": "0057_push_subscriptions.sql",
+      "prefix": "0057",
       "method": "manual"
     }
   ],
