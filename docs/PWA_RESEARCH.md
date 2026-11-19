@@ -1,4 +1,4 @@
-# Store Lite PWA, Web Push, and Offline Research
+﻿# Store Lite PWA, Web Push, and Offline Research
 
 **Status:** Research, implementation planning, and task breakdown; no product behavior has been changed.  
 **Reviewed:** 2026-11-18  
@@ -322,7 +322,7 @@ Every task below is gated by the decisions above and must preserve the existing 
 | T2.6 | Implement generic payloads and preferences     | Frontend + Backend  | Producer call sites, settings surface                                                            | T0.3, T2.5 | 0.5–1 d | Payload is generic; preferences map to the existing category enum; inbox unchanged                                      |
 | T2.7 | Handle the subscription lifecycle              | Backend             | Subscription API, sign-out hook                                                                  | T0.4       | 0.5–1 d | Logout and membership revocation stop delivery; devices tracked separately                                              |
 | T2.8 | Harden the notification creation endpoint      | Backend             | `app/api/notifications/route.ts`                                                                 | T2.5       | 0.5 d   | Untrusted callers cannot trigger fan-out; limits and dedupe documented                                                  |
-| T2.9 | Add tests and execute the P2 device matrix     | QA + Backend        | `tests/unit`, `tests/e2e`                                                                        | T2.1–T2.8  | 1–1.5 d | Planned coverage passes; Android/iOS push, click-through, revoke, reinstall recorded                                    |
+| T2.9 | Add tests and execute the P2 device matrix     | QA + Backend        | `tests/unit`, `tests/e2e`, [design](PWA_T2_9_TESTS_DEVICE_MATRIX.md)                             | T2.1–T2.8  | 1–1.5 d | Planned coverage passes; Android/iOS push, click-through, revoke, reinstall recorded                                    |
 | T3.1 | Define the static cache policy                 | Frontend            | `public/sw.js`                                                                                   | T2.3       | 1 d     | Only versioned static assets cached; versioning and expiry documented                                                   |
 | T3.2 | Add worker update UX                           | Frontend            | Registration/update component                                                                    | T3.1       | 0.5–1 d | New worker activates safely with old tabs open                                                                          |
 | T3.3 | Evaluate a public read-only shell              | Product + Frontend  | Decision-gated                                                                                   | T0.5       | 1–2 d   | Stale content clearly labeled; no private data; dropped if T0.5 says no                                                 |
