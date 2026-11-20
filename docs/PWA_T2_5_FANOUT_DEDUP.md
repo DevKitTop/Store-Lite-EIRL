@@ -1,6 +1,6 @@
 ﻿# T2.5 - Fan-out and deduplication (design)
 
-**Status:** Proposed design for P2 (Web Push). Not implemented.  
+**Status:** Implemented for P2 (Web Push). Physical device verification remains tracked by T2.9.  
 **Task:** `T2.5 Wire fan-out and deduplication` (`docs/PWA_RESEARCH.md`)  
 **Depends on:** T2.4 (sender delivery primitive / per-endpoint outcomes). Coordinates with T2.1 (subscription targets/lifecycle), T2.3 (worker/click semantics), T2.6 (generic payloads/preferences), T2.7 (eligibility/lifecycle), T2.8 (`POST /api/notifications` hardening).  
 **Gate:** Do not implement before P2 is unblocked and T2.4 sender behavior is aligned (T0.6 legal approval/publication before launch, T2.1 migration applied/available, `web-push` dependency explicitly approved at implementation, trusted-producer hardening per T2.8). This design must not introduce a push-provider dependency in payment/order/inbox-creation paths.
@@ -88,3 +88,14 @@ Indexes should support polling pending/ready rows and lookups by notification/su
 - Finalize max attempts/backoff/window and alignment with T2.4 per-send retry limits and provider TTL.
 - Define how "recipient" is expanded for a business notification (all eligible members vs targeted recipients) consistent with T0.1/T2.6/T2.7.
 - Tests at implementation: unit-test dedupe key enforcement, state transitions, bounded retry scheduling, and "durable notification required" behavior with mocked sender/DB; assert no push call in payment/order success paths where applicable. Real delivery remains physical-device/manual.
+
+## Implementation decisions (2026-11-20)
+
+- Chosen mechanism: durable outbox table `push_notification_deliveries` plus a protected reconciler route; inline enqueue is best-effort after the inbox insert and never throws into business flows.
+- Manual-operator migration: `migrations/0058_push_notification_deliveries.sql`; RLS enabled with no client policies and no anon/public grants. The reconciler uses privileged server DB access only.
+- Dedupe key: `UNIQUE (notification_id, recipient_user_id, push_subscription_id)`; enqueue also dedupes repeated subscription IDs and uses `ON CONFLICT DO NOTHING`.
+- Recipient expansion: all active subscription owners that still pass `getMemberPermissions` for `dashboard.view` and `notifications.view`; send-time eligibility is revalidated before every send.
+- Scope: `pedidos` notifications only in the PWA MVP. Payloads are generic and never copy notification title/message, customer data, endpoints, keys, or VAPID secrets.
+- Retry policy: 3 outbox attempts, 60s fixed scheduling interval on retry, 60s lease, batch cap 100. T2.4 still owns its bounded per-send retry window.
+- Worker route: `GET /api/cron/push-fanout`, fail-closed timing-safe `CRON_SECRET` check via `x-cron-secret` or Bearer. The route is not scheduled in `vercel.json`; deployment scheduling remains an operator decision.
+- Source changes: `src/lib/push/pushFanout.ts`, `src/lib/push/pushFanoutWorker.ts`, `src/lib/notifications.ts`, `app/api/cron/push-fanout/route.ts`.
