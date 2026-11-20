@@ -1,6 +1,6 @@
 ﻿# T2.4 — Web Push sender (design)
 
-**Status:** Proposed design for P2 (Web Push). Not implemented.  
+**Status:** Implemented for P2 (Web Push); launch still gated by T0.6 legal approval, VAPID keys in Vercel, migration 0057, and T2.5/T2.8/T2.9.  
 **Task:** `T2.4 Implement the sender` (`docs/PWA_RESEARCH.md`)  
 **Depends on:** T0.7 (sender `web-push`/VAPID, owner decided), T2.1 (subscription schema/RLS, delivery targets/lifecycle fields). Coordinates with T2.3 (worker payload handling), T2.5 (fan-out/dedup/outbox), T2.6 (generic payloads/preferences), T2.7 (eligibility/lifecycle).  
 **Gate:** Do not implement before P2 is unblocked (T0.6 legal approval/publication before launch, T2.1 migration applied/available, `web-push` dependency explicitly approved at implementation, T2.5/T2.8 hardening aligned). **Do not** add VAPID secrets to the repo or to `NEXT_PUBLIC_*`; keys are generated/stored by the project owner in Vercel server env vars at implementation time.
@@ -54,10 +54,18 @@ Proposed server module (e.g. `src/lib/push/webPushSender.ts` or equivalent, impl
 - **410 cleanup:** invalidated/removed from active delivery on 410 Gone (and 404 where appropriate).
 - **Bounded retries:** finite retry attempts/backoff and failure accounting; no infinite retries, no blocking of source operations.
 
-## Open items / implementation notes
+## Implementation notes
 
-- Finalize exact TTL/urgency values and retry/backoff policy with T2.5.
-- Finalize failure-state reset semantics on success/re-subscribe (with T2.1/T2.2/T2.7).
-- Decide cron vs outbox vs inline background job mechanism in T2.5 (Vercel/Next runtime constraints); reuse existing cron/route patterns where suitable.
-- Add `web-push` types/dependency only at implementation with approval; extend env validation/tests (`tests/unit/envProdGuards.test.ts` baselines if public env exposure changes — note: VAPID private key must remain non-public).
-- Tests at implementation: unit-test sender with mocked `web-push` transport for 2xx/410/429/5xx paths and eligibility filtering; real delivery remains physical-device/manual verification.
+- Implemented in `src/lib/push/webPushSender.ts` with injected dependencies for transport/DB/clock/sleep, so unit tests never contact a push service or database.
+- `GET /api/push/config` returns only `VAPID_PUBLIC_KEY` with `Cache-Control: no-store`; missing config returns `503`.
+- Category options: `pedidos` → `ttl: 60`, `urgency: high`; default → `ttl: 300`, `urgency: normal`.
+- Retry policy: at most 3 attempts for `429`, `5xx` and network errors with bounded 100/200 ms backoff; `401/403` is a configuration error; `404/410` marks the subscription invalid without retry.
+- Active subscriptions are loaded with revoked/invalidated/expired rows excluded and capped at 200 per run; eligibility rechecks `dashboard.view` and `notifications.view` at send time.
+- Success resets failure counters; failed sends increment `failureCount`; no endpoint, key or payload contents are logged.
+- `web-push@4` and `@types/web-push` were added; env keys are server-only in `src/config/env.ts`, with placeholders in `.env.example` and baseline coverage in `tests/unit/envProdGuards.test.ts`.
+
+## Open items for later tasks
+
+- Finalize failure-state reset semantics on success/re-subscribe with T2.1/T2.2/T2.7.
+- Decide cron vs outbox vs inline background job mechanism in T2.5; wire fan-out/dedupe and notification outcome writes there.
+- Real-device delivery verification remains part of T2.9/T1.6.
