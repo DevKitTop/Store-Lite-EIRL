@@ -118,4 +118,25 @@ describe('PwaInstallPrompt', () => {
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
+
+  it('registers the root service worker independently of the install flag', async () => {
+    vi.stubEnv('NEXT_PUBLIC_PWA_INSTALL_PROMPT', 'false');
+    const register = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: { register },
+    });
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true });
+
+    render(<PwaInstallPrompt />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(register).toHaveBeenCalledWith('/sw.js', { scope: '/' });
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+
+    Reflect.deleteProperty(navigator, 'serviceWorker');
+    Reflect.deleteProperty(window, 'isSecureContext');
+  });
 });

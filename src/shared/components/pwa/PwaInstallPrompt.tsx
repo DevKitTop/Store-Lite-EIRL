@@ -51,6 +51,20 @@ export default function PwaInstallPrompt() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+    if (!window.isSecureContext) return;
+
+    const register = () => {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => undefined);
+    };
+
+    if (document.readyState === 'complete') register();
+    else window.addEventListener('load', register, { once: true });
+
+    return () => window.removeEventListener('load', register);
+  }, []);
+
+  useEffect(() => {
     if (!enabled || typeof window === 'undefined') return;
     if (isStandaloneDisplay() || isDismissed()) return;
 

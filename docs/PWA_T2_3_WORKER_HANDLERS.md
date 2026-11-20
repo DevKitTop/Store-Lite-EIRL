@@ -1,6 +1,6 @@
 ﻿# T2.3 — Service worker event handlers (design)
 
-**Status:** Proposed design for P2 (Web Push). Not implemented.  
+**Status:** Implemented for P2 (Web Push). Not launched; P2 gates still apply.  
 **Task:** `T2.3 Implement worker event handlers` (`docs/PWA_RESEARCH.md`)  
 **Depends on:** T1.1 (manifest/scope `/`, installed shell), T2.1/T2.2 (subscription storage/API, for `pushsubscriptionchange` rotation). Coordinates with T2.4–T2.7 (sender payloads, preferences, lifecycle).  
 **Gate:** Do not implement before P2 is unblocked as applicable (T0.6 legal approval/publication before launch for push, T2.1 migration/API available for rotation flows). No app-content/static-asset offline caching (T0.5). No change to tenant routing, checkout, or payment/order success paths.
