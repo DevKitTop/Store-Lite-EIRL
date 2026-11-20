@@ -206,12 +206,18 @@ function defaultDeps(): PushSendDeps {
   };
 }
 
+interface RetryContext {
+  payload: string;
+  options: SendOptions;
+  deps: PushSendDeps;
+}
+
 async function deliverWithRetry(
   subscription: PushSubscriptionRecord,
-  payload: string,
-  options: SendOptions,
-  deps: PushSendDeps,
+  context: RetryContext,
 ): Promise<Omit<PushDeliveryOutcome, 'subscriptionId'>> {
+  const { payload, options, deps } = context;
+
   for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt += 1) {
     try {
       await deps.send(subscription, payload, options);
@@ -244,18 +250,12 @@ async function mapWithConcurrency<T, R>(
   limit: number,
   worker: (item: T) => Promise<R>,
 ): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
+  const results: R[] = [];
 
-  async function runner(): Promise<void> {
-    while (cursor < items.length) {
-      const index = cursor;
-      cursor += 1;
-      results[index] = await worker(items[index]);
-    }
+  for (let offset = 0; offset < items.length; offset += limit) {
+    const batch = items.slice(offset, offset + limit);
+    results.push(...(await Promise.all(batch.map(worker))));
   }
-
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => runner()));
 
   return results;
 }
@@ -342,7 +342,7 @@ export async function sendPushNotifications(
   const options = CATEGORY_DELIVERY[intent.category] ?? DEFAULT_DELIVERY;
 
   const outcomes = await mapWithConcurrency(deliverable, MAX_CONCURRENCY, async (subscription) => {
-    const delivery = await deliverWithRetry(subscription, payload, options, deps);
+    const delivery = await deliverWithRetry(subscription, { payload, options, deps });
     const patch = patchForOutcome(delivery, subscription, now);
     if (patch) {
       await deps.updateSubscription(subscription.id, patch);
