@@ -12,6 +12,8 @@ import {
   notificationTypeEnum,
   type NewNotification,
 } from '@/core/database/schema';
+import { logger } from '@/lib/logger';
+import { enqueuePushFanout } from '@/lib/push/pushFanout';
 
 /**
  * Parameters for creating a business notification
@@ -70,6 +72,17 @@ export async function createBusinessNotification(
   };
 
   const [created] = await db.insert(notifications).values(notificationData).returning();
+
+  // T2.5: best-effort fan-out only after the inbox row is durable. Enqueue
+  // failures are isolated: payment/order/inbox success never depends on push.
+  try {
+    await enqueuePushFanout(created);
+  } catch (error) {
+    logger.error('[push] fan-out enqueue hook failed', {
+      notificationId: created?.id,
+      errorClass: error instanceof Error ? error.name : 'UnknownError',
+    });
+  }
 
   return created;
 }
