@@ -37,6 +37,10 @@ Subí tus cambios y abrí un PR contra `develop`.
   - **Build Check**: Verifica que la app compile.
   - **Quality**: Corre el linter y type-check.
   - **Tests**: Corre Vitest y Playwright.
+- **Título del PR = mensaje del squash commit**: Al mergear con squash, GitHub usa el **título del PR** como subject del commit en `develop`, y Commit Lint lo valida en ese push. El subject **debe arrancar en minúscula** después de `tipo(scope):`.
+  - Correcto: `feat(pwa): implement fan-out/dedup`
+  - Incorrecto: `feat: PWA fan-out/dedup` (arranca con mayúscula → `subject-case` falla)
+  - El acrónimo puede ir después de la primera palabra: `feat: add PWA fan-out/dedup` sí pasa.
 - **Regla de Oro**: Si algo está en rojo, **no se mergea**. Se arregla en la rama y se vuelve a subir.
 
 ## 5. Producción y Observabilidad (El Radar)
