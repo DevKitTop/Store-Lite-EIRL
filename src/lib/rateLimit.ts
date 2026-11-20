@@ -30,6 +30,11 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
    * that segment mints a fresh budget every request.
    */
   orderVerifyIp: { windowMs: 60 * 1000, maxRequests: 30 }, // 30 requests per minute
+  /**
+   * Route-level backstop for authenticated inbox creation (PWA T2.8). Charged
+   * per user + business; the edge `api` bucket remains the coarse IP ceiling.
+   */
+  notificationCreate: { windowMs: 60 * 1000, maxRequests: 10 }, // 10 per user/business per minute
 };
 
 const isTestEnv = () => process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
