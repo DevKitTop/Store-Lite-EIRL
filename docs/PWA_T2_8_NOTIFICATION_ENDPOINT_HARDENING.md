@@ -1,6 +1,6 @@
 ﻿# T2.8 - Notification creation endpoint hardening (design)
 
-**Status:** Proposed design for P2 (Web Push). Not implemented.  
+**Status:** Implemented for P2 (Web Push). The HTTP create path is inbox-record-only and never triggers push fan-out.  
 **Task:** `T2.8 Harden the notification creation endpoint` (`docs/PWA_RESEARCH.md`)  
 **Depends on:** T2.5 (fan-out/dedup design; hardening must prevent untrusted fan-out triggers). Coordinates with T2.1/T2.2 (subscription ownership), T2.4 (sender), T2.6 (payload/preferences), `POST /api/notifications` consumers.  
 **Gate:** Do not wire push fan-out to an untrusted/public path. Any implementation changes must preserve existing authenticated business-member flows unless explicitly tightened with coordinated client/producer updates.
@@ -67,3 +67,13 @@
 - Choose rate-limit mechanism consistent with existing app patterns/infrastructure.
 - Finalize idempotency mechanism for source notifications (if any) and align with T2.5 delivery dedupe/outbox.
 - Add/update tests at implementation (authz, CSRF/origin as applicable, validation/size limits, rate limiting behavior, and “no push fan-out from public POST” invariant where wired).
+
+## Implementation notes (T2.8)
+
+- `POST /api/notifications` now reuses `isSameOriginRequest` and `isJsonRequest` from `src/lib/security/csrf.ts`, matching the T2.2 subscription route.
+- Body validation lives in `src/lib/notifications/createValidation.ts`: UUID `businessId`, enum `type`/`category`, trimmed `title` (1–120 chars), trimmed `message` (1–500 chars), no unexpected top-level fields, and a bounded `data` object (4 KiB JSON, depth 3, 100 nodes, 40 keys/object, 50 items/array, 500 chars/string, 64 chars/key, primitive/nested object/array values only, `__proto__`/`constructor`/`prototype` rejected).
+- Rate limiting uses `RATE_LIMITS.notificationCreate` (10 requests per 60 s per `userId:businessId`) via `checkRateLimitAsync`; the edge `api` bucket remains a separate coarse IP ceiling. Exhaustion returns `429` with `Retry-After` and no internal detail.
+- Authorization is unchanged: authenticated owner/admin membership for the resolved `businessId` is still required, and cross-tenant access remains denied.
+- The route has no sender/fan-out import. Push fan-out remains owned by trusted server-side producers under T2.5; HTTP-created inbox rows do not automatically send push notifications.
+- Source-notification idempotency is still a producer responsibility: `src/lib/notifications.ts` inserts one row per call and trusted producers must derive a stable key. Delivery-level dedupe stays in T2.5.
+- Coverage: `tests/unit/notificationsRouteHardening.test.ts` exercises CSRF/origin, content type, UUID, length/data bounds, unexpected fields, rate limiting, owner happy path, cross-tenant denial, no fan-out and unchanged GET auth.
