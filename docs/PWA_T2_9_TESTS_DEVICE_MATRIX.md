@@ -1,6 +1,6 @@
 ﻿# T2.9 - P2 tests and device matrix (design)
 
-**Status:** Proposed design for P2 (Web Push). Not implemented.  
+**Status:** Design implemented for feasible automated coverage; physical-device matrix pending. Evidence template: `docs/PWA_T2_9_DEVICE_MATRIX_RESULTS.md`.  
 **Task:** `T2.9 Add tests and execute the P2 device matrix` (`docs/PWA_RESEARCH.md`)  
 **Depends on:** T2.1-T2.8 (subscription schema/RLS, subscription API, worker handlers, sender, fan-out/dedup, payloads/preferences, lifecycle, endpoint hardening). Gated by T0.1-T0.7 decisions and P2 launch gates (notably T0.6 legal approval/publication before push launch, T2.1 migration reviewed/applied, `web-push` dependency approval at implementation).  
 **Gate:** Do not implement P2 runtime behavior before required approvals/gates are satisfied. Real Web Push delivery cannot be fully asserted in CI; physical-device/manual verification is required.
@@ -30,7 +30,7 @@ Run per task/change: `pnpm test:unit`, `pnpm type-check`, `pnpm lint`, `pnpm bui
 
 ### E2E / browser automation (feasible subset)
 
-- Manifest/installability shell behavior and service-worker registration/update basics (Playwright `serviceWorkers` support where applicable) for P1/P2 shell aspects that do not require real push delivery.
+- Manifest/installability shell behavior and service-worker registration/update basics (Playwright `serviceWorkers` support where applicable) for P1/P2 shell aspects that do not require real push delivery. Implemented in `tests/e2e/pwaShell.spec.ts`.
 - Authenticated navigation from notification-click target routes (simulated) enforces access control and does not leak tenant data.
 - **Not CI-assertable:** real OS/browser push receipt, background delivery timing, iOS Home Screen push behavior, and provider network behavior - covered by device matrix.
 
@@ -59,8 +59,8 @@ Record results per device/build/date/tester with: OS/browser/app-install state, 
 
 ## Acceptance mapping (T2.9)
 
-- **Planned coverage passes:** unit/integration/E2E tests added per areas above pass in CI/local verification for implemented slices.
-- **Android/iOS push, click-through, revoke, reinstall recorded:** physical-device matrix executed and documented with outcomes (including iOS Home Screen constraints).
+- **Planned coverage passes:** feasible shell/service-worker E2E coverage added in `tests/e2e/pwaShell.spec.ts` and verified locally; unit/integration coverage for T2.5/T2.6/T2.7 remains future work because those slices are not implemented.
+- **Android/iOS push, click-through, revoke, reinstall recorded:** pending; record sanitized outcomes in `docs/PWA_T2_9_DEVICE_MATRIX_RESULTS.md` (including iOS Home Screen constraints) before marking T2.9 complete.
 
 ## Open items
 
