@@ -55,7 +55,7 @@
     "react": "19.2.3",
     "react-barcode": "^1.6.1",
     "react-dom": "19.2.3",
-    "resend": "^6.17.1",
+    "resend": "^6.38.1",
     "twilio": "^6.0.2",
     "web-push": "^4.0.0",
     "web-vitals": "^6.2.3",
