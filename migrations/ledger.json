@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-20T15:23:17.357Z",
+  "generatedAt": "2026-11-21T23:34:29.666Z",
   "counts": {
-    "sql": 86,
+    "sql": 87,
     "journal": 24,
-    "unjournaled": 62
+    "unjournaled": 63
   },
   "files": [
     {
@@ -435,6 +435,11 @@
     {
       "file": "0058_push_notification_deliveries.sql",
       "prefix": "0058",
+      "method": "manual"
+    },
+    {
+      "file": "0059_promotions_and_redemptions.sql",
+      "prefix": "0059",
       "method": "manual"
     }
   ],
