@@ -85,6 +85,10 @@ class PromotionAlreadyRedeemedError extends Error {
   }
 }
 
+function normalizePromotionCode(code: string | null | undefined): string {
+  return (code ?? '').trim().toLowerCase();
+}
+
 interface ResolvePurchasePromotionParams {
   ownerId: string;
   planType: 'lite_pago' | 'lite_plus';
@@ -109,7 +113,10 @@ async function resolvePurchasePromotion({
   });
   const promotion = selectPurchasePromotion(candidates);
 
-  if (providedCode && !promotion) {
+  if (
+    providedCode &&
+    (!promotion || normalizePromotionCode(promotion.code) !== normalizePromotionCode(providedCode))
+  ) {
     return { ok: false, error: 'Código de descuento inválido o no aplicable' };
   }
 

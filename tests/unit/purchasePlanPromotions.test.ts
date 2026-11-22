@@ -252,4 +252,29 @@ describe('purchase-plan promotion wiring', () => {
     expect(mockFetch).not.toHaveBeenCalled();
     expect(mockValues).not.toHaveBeenCalled();
   });
+
+  test('rejects an explicit code that does not match an auto-applicable campaign', async () => {
+    const evaluation = eligiblePromotion({ code: 'AUTO10', promotionId: 'promo-auto' });
+    mockGetPromotionCandidates.mockResolvedValue({
+      best: evaluation,
+      candidates: [
+        {
+          promotion: promotionDefinition({
+            id: 'promo-auto',
+            code: 'AUTO10',
+            eligibility: 'all_users',
+          }),
+          evaluation,
+        },
+      ],
+    });
+
+    const response = await POST(post({ promotionCode: 'BOGUS' }));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain('Código de descuento');
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockValues).not.toHaveBeenCalled();
+  });
 });
