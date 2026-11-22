@@ -7,7 +7,8 @@
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import type { NotificationType } from '@/core/database/schema';
-import { businessSubscriptions, notifications } from '@/core/database/schema';
+import { businesses, businessSubscriptions, notifications } from '@/core/database/schema';
+import { sendPromotionReminderEmail } from '@/lib/email/promotionEmails';
 import { logger, toErrorDetail } from '@/lib/logger';
 import { notifyPlanExpired, notifyPlanExpiring } from '@/lib/notifications';
 import { and, eq, gte, sql } from 'drizzle-orm';
@@ -42,8 +43,12 @@ export async function GET(request: Request) {
         businessId: businessSubscriptions.businessId,
         planType: businessSubscriptions.planType,
         planEndDate: businessSubscriptions.planEndDate,
+        ownerId: businesses.ownerId,
+        businessName: businesses.name,
+        slug: businesses.slug,
       })
       .from(businessSubscriptions)
+      .innerJoin(businesses, eq(businesses.id, businessSubscriptions.businessId))
       .where(
         and(
           eq(businessSubscriptions.planStatus, 'active'),
@@ -72,7 +77,23 @@ export async function GET(request: Request) {
           daysRemaining: diffDays,
         };
 
-        if (diffDays === 7) {
+        if (diffDays === 5) {
+          // ── D-5: promotional free-period reminder ──
+          if (await alreadyNotified(sub.businessId, 'plan_expiring', 5)) {
+            skipped++;
+            continue;
+          }
+          await notifyPlanExpiring(sub.businessId, planExpiringData);
+          await sendPromotionReminderEmail({
+            businessId: sub.businessId,
+            ownerId: sub.ownerId,
+            businessName: sub.businessName,
+            slug: sub.slug,
+            planEndDate: endDate,
+            now,
+          });
+          notified++;
+        } else if (diffDays === 7) {
           // ── D-7: "Plan expira en 7 días" ──
           if (await alreadyNotified(sub.businessId, 'plan_expiring', 7)) {
             skipped++;

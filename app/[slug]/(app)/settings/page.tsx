@@ -11,13 +11,17 @@ import {
   getStorefrontThemeFromPreferences,
   hasCustomStorefrontTheme,
 } from '@/core/storefront';
+import { resolvePromotionOffer } from '@/features/promotions/discoveryRules';
+import { getPromotionCandidates } from '@/features/promotions/getApplicablePromotion';
 import { getMemberPermissions } from '@/lib/permissions/checkPermission';
+import { PLAN_PRICES } from '@/shared/billing/planPrices';
 import { createServerClient } from '@supabase/ssr';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
 import { SettingsClient, type SettingsBusiness } from './components/SettingsClient';
+import type { PromotionOffer } from './constants';
 
 interface SettingsPageProps {
   params: Promise<{ slug: string }>;
@@ -103,6 +107,23 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
     .from(businessTeamMembers)
     .where(eq(businessTeamMembers.businessId, business.id));
 
+  // Oferta de bienvenida para dueños (S9, S10, S13).
+  let promotionOffer: PromotionOffer | null = null;
+  if (isOwner) {
+    const { candidates } = await getPromotionCandidates({
+      ownerId: user.id,
+      planType: 'lite_pago',
+      period: 'monthly',
+      listPriceCents: PLAN_PRICES.lite_pago.monthly,
+    });
+    promotionOffer = resolvePromotionOffer({
+      candidates,
+      plan: entitlements.plan,
+      isActive: entitlements.isActive,
+      planEndDate: subscription?.planEndDate ?? entitlements.planEndDate,
+    });
+  }
+
   return (
     <SettingsClient
       business={
@@ -132,6 +153,7 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
       role={role}
       permissions={permissions}
       isOwner={isOwner}
+      promotionOffer={promotionOffer}
     />
   );
 }
