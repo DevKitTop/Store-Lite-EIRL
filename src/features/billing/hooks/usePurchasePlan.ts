@@ -22,6 +22,8 @@ export interface PurchasePlanData {
   buyerDocumentType: 'DNI' | 'RUC';
   buyerDocumentNumber: string;
   buyerAddress?: string;
+  /** Server-resolved campaign code; the amount is always recomputed server-side. */
+  promotionCode?: string | null;
 }
 
 export interface PurchasePlanIssuer {

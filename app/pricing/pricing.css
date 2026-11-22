@@ -95,6 +95,63 @@
   }
 }
 
+.pricing-promotion-form {
+  max-width: 560px;
+  margin: 0 auto 1.5rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--md-sys-color-surface-container) 70%, transparent);
+  font-size: 0.875rem;
+}
+
+.pricing-promotion-form label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.pricing-promotion-form-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pricing-promotion-form input {
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: 0.75rem;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+}
+
+.pricing-promotion-form button {
+  padding: 0.625rem 1rem;
+  border: none;
+  border-radius: 0.75rem;
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pricing-promotion-form a {
+  color: var(--md-sys-color-primary);
+  text-decoration: underline;
+}
+
+.pricing-promotion-error,
+.pricing-promotion-success {
+  margin: 0.75rem 0 0;
+}
+
+.pricing-promotion-error {
+  color: var(--md-sys-color-error);
+}
+
 .pricing-card {
   display: flex;
   flex-direction: column;

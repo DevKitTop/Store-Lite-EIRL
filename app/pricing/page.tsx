@@ -1,6 +1,11 @@
 import { env } from '@/config/env';
 import { db } from '@/core/database/client';
 import { businesses } from '@/core/database/schema';
+import { getPromotionCandidates } from '@/features/promotions/getApplicablePromotion';
+import {
+  resolvePricingPromotion,
+  type PricingPromotionSummary,
+} from '@/features/promotions/pricingPromotions';
 import { formatSoles, PLAN_PRICES } from '@/shared/billing/planPrices';
 import { Icon } from '@/shared/components/ui/data-display';
 import { createServerClient } from '@supabase/ssr';
@@ -28,6 +33,11 @@ export default async function PricingPage({
   const cookieStore = await cookies();
   const searchParamsAwaited = await searchParams;
   const slug = searchParamsAwaited.slug as string;
+  const rawPromotionCode = searchParamsAwaited.promotionCode;
+  const providedPromotionCode =
+    typeof rawPromotionCode === 'string' && rawPromotionCode.trim()
+      ? rawPromotionCode.trim()
+      : null;
 
   const supabase = createServerClient(env.supabaseUrl, env.supabaseAnonKey, {
     cookies: {
@@ -62,20 +72,63 @@ export default async function PricingPage({
 
   const preselectedBusinessId = myBusinesses.find((b) => b.slug === slug)?.id;
 
+  let monthlyPromotion: PricingPromotionSummary | null = null;
+  let annualPromotion: PricingPromotionSummary | null = null;
+  let promotionCodeError = false;
+
+  if (user) {
+    const [monthlyCandidates, annualCandidates] = await Promise.all([
+      getPromotionCandidates({
+        ownerId: user.id,
+        planType: 'lite_pago',
+        period: 'monthly',
+        listPriceCents: PLAN_PRICES.lite_pago.monthly,
+        providedCode: providedPromotionCode,
+      }),
+      getPromotionCandidates({
+        ownerId: user.id,
+        planType: 'lite_pago',
+        period: 'annual',
+        listPriceCents: PLAN_PRICES.lite_pago.annual,
+        providedCode: providedPromotionCode,
+      }),
+    ]);
+
+    const monthlyResolved = resolvePricingPromotion(
+      monthlyCandidates,
+      PLAN_PRICES.lite_pago.monthly,
+      providedPromotionCode,
+    );
+    const annualResolved = resolvePricingPromotion(
+      annualCandidates,
+      PLAN_PRICES.lite_pago.annual,
+      providedPromotionCode,
+    );
+
+    monthlyPromotion = monthlyResolved.promotion;
+    annualPromotion = annualResolved.promotion;
+    promotionCodeError = monthlyResolved.invalidCode || annualResolved.invalidCode;
+  }
+
   const plans: PricingCardProps[] = [
     {
       title: 'Lite Pago',
       description:
         'La base sólida e inteligente para formalizar y despegar tu primer gran proyecto.',
-      price: formatSoles(PLAN_PRICES.lite_pago.monthly),
-      annualPrice: formatSoles(PLAN_PRICES.lite_pago.annual),
-      marketingNote: 'Ahorra 2 meses con pago anual',
+      price: formatSoles(monthlyPromotion?.finalPriceCents ?? PLAN_PRICES.lite_pago.monthly),
+      annualPrice: formatSoles(annualPromotion?.finalPriceCents ?? PLAN_PRICES.lite_pago.annual),
+      originalPrice: monthlyPromotion ? formatSoles(PLAN_PRICES.lite_pago.monthly) : undefined,
+      annualOriginalPrice: annualPromotion ? formatSoles(PLAN_PRICES.lite_pago.annual) : undefined,
+      marketingNote: monthlyPromotion
+        ? `Código ${monthlyPromotion.code} aplicado`
+        : 'Ahorra 2 meses con pago anual',
       period: 'mes',
       buttonText: 'Comenzar ahora',
       buttonVariant: 'filled',
       isHighlighted: true,
-      badgeText: 'Más popular',
+      badgeText: monthlyPromotion?.name ?? 'Más popular',
       badgeType: 'primary',
+      promotionCode: monthlyPromotion?.code,
       features: [
         { text: 'Pasarela completa: Pagos digitales y tarjetas bancarias' },
         { text: 'Almacenamiento premium para 300 productos' },
@@ -140,6 +193,39 @@ export default async function PricingPage({
               cancela en cualquier momento.
             </p>
           </div>
+
+          {user ? (
+            <form className="pricing-promotion-form" action="/pricing" method="get">
+              {slug ? <input type="hidden" name="slug" value={slug} /> : null}
+              <label htmlFor="promotionCode">¿Tienes un código de descuento?</label>
+              <div className="pricing-promotion-form-row">
+                <input
+                  id="promotionCode"
+                  name="promotionCode"
+                  defaultValue={providedPromotionCode ?? ''}
+                  placeholder="Ingresa tu código"
+                  autoComplete="off"
+                />
+                <button type="submit">Aplicar</button>
+                {providedPromotionCode ? (
+                  <a href={slug ? `/pricing?slug=${encodeURIComponent(slug)}` : '/pricing'}>
+                    Quitar
+                  </a>
+                ) : null}
+              </div>
+              {promotionCodeError ? (
+                <p className="pricing-promotion-error" role="alert">
+                  El código de descuento no es válido o no aplica a este plan.
+                </p>
+              ) : null}
+              {monthlyPromotion && !promotionCodeError ? (
+                <p className="pricing-promotion-success" role="status">
+                  Código {monthlyPromotion.code} aplicado: pagas S/{' '}
+                  {formatSoles(monthlyPromotion.finalPriceCents)} al mes.
+                </p>
+              ) : null}
+            </form>
+          ) : null}
 
           <div className="pricing-grid">
             {plans.map((plan, index) => (
