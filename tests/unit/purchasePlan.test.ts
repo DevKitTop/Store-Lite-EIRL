@@ -14,12 +14,12 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 const {
   mockSaasIssuerFindFirst,
-  mockSubscriptionFindFirst,
   mockReturning,
   mockOnConflict,
   mockValues,
   mockInsert,
   mockTransaction,
+  mockGetPromotionCandidates,
 } = vi.hoisted(() => {
   const mockSaasIssuerFindFirst = vi.fn();
   const mockSubscriptionFindFirst = vi.fn();
@@ -30,6 +30,7 @@ const {
     onConflictDoUpdate: mockOnConflict,
   }));
   const mockInsert = vi.fn(() => ({ values: mockValues }));
+  const mockGetPromotionCandidates = vi.fn(async () => ({ best: null, candidates: [] }));
 
   // db.transaction executes the callback with a tx that delegates
   // to the same mocks — existing tests still work because
@@ -46,12 +47,12 @@ const {
 
   return {
     mockSaasIssuerFindFirst,
-    mockSubscriptionFindFirst,
     mockReturning,
     mockOnConflict,
     mockValues,
     mockInsert,
     mockTransaction,
+    mockGetPromotionCandidates,
   };
 });
 
@@ -70,6 +71,10 @@ vi.mock('@/features/storage/actions/authz', () => ({
     ownerId: 'test-user-id',
     slug: 'test-business',
   })),
+}));
+
+vi.mock('@/features/promotions/getApplicablePromotion', () => ({
+  getPromotionCandidates: mockGetPromotionCandidates,
 }));
 
 vi.mock('@/core/database/client', () => ({

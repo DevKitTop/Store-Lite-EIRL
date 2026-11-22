@@ -5,13 +5,14 @@
  * =====================================================
  *
  * Flujo:
- *  1. Valida request
- *  2. Calcula montos: total (INCLUYE IGV) y desglosa subtotal + IGV 18%
- *  3. Cobra en Culqi (claves del SaaS, no del merchant)
- *  4. INSERT plan_payments (correlativo B001 automático por secuencia)
- *  5. UPSERT business_subscriptions (activa/renueva el plan)
- *  6. Dispara generación del PNG de boleta (async, no bloqueante)
- *  7. Retorna { success, planPaymentId, ticketNumber, planActivatedUntil }
+ *  1. Valida request y propiedad del negocio
+ *  2. Reevalúa la promoción en servidor; el cliente sólo sugiere un código
+ *  3. Calcula montos: total final (INCLUYE IGV) y desglosa subtotal + IGV 18%
+ *  4. Cobra en Culqi (claves del SaaS, no del merchant)
+ *  5. INSERT plan_payments (correlativo B001 automático por secuencia)
+ *  6. UPSERT business_subscriptions (activa/renueva el plan)
+ *  7. Consume la promoción en la misma transacción del pago
+ *  8. Retorna { success, planPaymentId, ticketNumber, planActivatedUntil }
  */
 
 import { db } from '@/core/database/client';
@@ -19,8 +20,12 @@ import {
   businessSubscriptions,
   formatTicketNumber,
   planPayments,
+  promotionRedemptions,
   type SubscriptionPlan,
 } from '@/core/database/schema';
+import { getPromotionCandidates } from '@/features/promotions/getApplicablePromotion';
+import { selectPurchasePromotion } from '@/features/promotions/purchaseRules';
+import type { EligiblePromotionEvaluation } from '@/features/promotions/types';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
 import { getConsentState } from '@/lib/consent/consentServer';
 import { logger, toErrorDetail } from '@/lib/logger';
@@ -50,6 +55,7 @@ interface PurchasePlanBody {
   buyerDocumentType: 'DNI' | 'RUC';
   buyerDocumentNumber: string;
   buyerAddress?: string;
+  promotionCode?: string | null;
 }
 
 interface CulqiChargeResponse {
@@ -64,6 +70,95 @@ interface CulqiChargeResponse {
   outcome?: { type: string; user_message: string; merchant_message: string };
   reference_code?: string;
   creation_date?: number;
+}
+
+type TransactionClient = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+type PromotionResolution =
+  | { ok: true; promotion: EligiblePromotionEvaluation | null }
+  | { ok: false; error: string };
+
+class PromotionAlreadyRedeemedError extends Error {
+  constructor() {
+    super('PROMOTION_ALREADY_REDEEMED');
+    this.name = 'PromotionAlreadyRedeemedError';
+  }
+}
+
+interface ResolvePurchasePromotionParams {
+  ownerId: string;
+  planType: 'lite_pago' | 'lite_plus';
+  period: 'monthly' | 'annual';
+  listPriceCents: number;
+  providedCode: string | null;
+}
+
+async function resolvePurchasePromotion({
+  ownerId,
+  planType,
+  period,
+  listPriceCents,
+  providedCode,
+}: ResolvePurchasePromotionParams): Promise<PromotionResolution> {
+  const candidates = await getPromotionCandidates({
+    ownerId,
+    planType,
+    period,
+    listPriceCents,
+    providedCode,
+  });
+  const promotion = selectPurchasePromotion(candidates);
+
+  if (providedCode && !promotion) {
+    return { ok: false, error: 'Código de descuento inválido o no aplicable' };
+  }
+
+  return { ok: true, promotion };
+}
+
+interface RecordPromotionRedemptionParams {
+  tx: TransactionClient;
+  promotion: EligiblePromotionEvaluation;
+  businessId: string;
+  ownerId: string;
+  planPaymentId: string;
+  listPriceCents: number;
+  chargeCents: number;
+  now: Date;
+}
+
+async function recordPromotionRedemption({
+  tx,
+  promotion,
+  businessId,
+  ownerId,
+  planPaymentId,
+  listPriceCents,
+  chargeCents,
+  now,
+}: RecordPromotionRedemptionParams): Promise<void> {
+  // The unique (promotion_id, owner_id) constraint is the final guard. A
+  // conflict rolls the whole payment/subscription write back so no discounted
+  // charge can leave a half-activated plan behind.
+  const [redemption] = await tx
+    .insert(promotionRedemptions)
+    .values({
+      promotionId: promotion.promotionId,
+      businessId,
+      ownerId,
+      planPaymentId,
+      originalAmountCents: listPriceCents,
+      discountAmountCents: promotion.discountCents,
+      finalAmountCents: chargeCents,
+      status: 'consumed',
+      redeemedAt: now,
+    })
+    .onConflictDoNothing({
+      target: [promotionRedemptions.promotionId, promotionRedemptions.ownerId],
+    })
+    .returning({ id: promotionRedemptions.id });
+
+  if (!redemption) throw new PromotionAlreadyRedeemedError();
 }
 
 export async function POST(request: Request) {
@@ -89,16 +184,21 @@ export async function POST(request: Request) {
       buyerDocumentType,
       buyerDocumentNumber,
       buyerAddress,
+      promotionCode,
     } = body;
 
     // ── Auth: verify ownership ────────────────────────────────────────────────
+    let ownerId: string | null = null;
     try {
-      await requireOwnedBusinessById(businessId);
+      ownerId = (await requireOwnedBusinessById(businessId)).ownerId;
     } catch (err) {
       return NextResponse.json(
         { success: false, error: err instanceof Error ? err.message : 'No autorizado' },
         { status: 401 },
       );
+    }
+    if (!ownerId) {
+      return NextResponse.json({ success: false, error: 'No autorizado' }, { status: 401 });
     }
 
     // ── Validación ────────────────────────────────────────────────────────────
@@ -125,12 +225,29 @@ export async function POST(request: Request) {
       );
     }
 
+    // ── Resolver promoción (siempre en servidor) ─────────────────────────────
+    // El cliente sólo puede sugerir un código. El monto final y la campaña
+    // elegida se recalculan aquí; free_period no aplica a una compra.
+    const providedCode = typeof promotionCode === 'string' ? promotionCode.trim() || null : null;
+    const resolution = await resolvePurchasePromotion({
+      ownerId,
+      planType: planType === 'lite_plus' ? 'lite_plus' : 'lite_pago',
+      period,
+      listPriceCents: priceInCentimos,
+      providedCode,
+    });
+    if (!resolution.ok) {
+      return NextResponse.json({ success: false, error: resolution.error }, { status: 400 });
+    }
+    const promotion = resolution.promotion;
+
     // ── Calcular montos (en soles, con 2 decimales) ───────────────────────────
-    // El precio en céntimos es el TOTAL FINAL que se cobra (incluye IGV).
-    // Desglosamos subtotal e IGV para la boleta SUNAT.
-    const totalSoles = priceInCentimos / 100;
+    // El monto final es el TOTAL que se cobra (incluye IGV). Nunca se toma del
+    // cliente; desglosamos subtotal e IGV para la boleta SUNAT sobre ese total.
+    const chargeCents = promotion?.finalPriceCents ?? priceInCentimos;
+    const totalSoles = chargeCents / 100;
     const { subtotalSoles, igvSoles } = splitIgv(totalSoles);
-    const totalCentimos = priceInCentimos; // Para Culqi — sin agregar IGV encima
+    const totalCentimos = chargeCents; // Para Culqi — sin agregar IGV encima
 
     // ── Obtener datos del emisor ──────────────────────────────────────────────
     const issuer = await db.query.saasIssuerConfig.findFirst();
@@ -176,6 +293,8 @@ export async function POST(request: Request) {
             planType,
             period,
             platform: 'store-lite-saas',
+            promotionCode: promotion?.code ?? null,
+            promotionId: promotion?.promotionId ?? null,
           },
         }),
       });
@@ -276,6 +395,14 @@ export async function POST(request: Request) {
             },
             ip: request.headers.get('x-forwarded-for'),
             userAgent: request.headers.get('user-agent'),
+            ...(promotion
+              ? {
+                  promotionCode: promotion.code,
+                  promotionId: promotion.promotionId,
+                  originalAmountCents: priceInCentimos,
+                  discountAmountCents: promotion.discountCents,
+                }
+              : {}),
           },
         })
         .returning();
@@ -300,6 +427,20 @@ export async function POST(request: Request) {
             updatedAt: new Date(),
           },
         });
+
+      // ── Consumir promoción en la MISMA transacción del cobro ──────────────
+      if (promotion) {
+        await recordPromotionRedemption({
+          tx,
+          promotion,
+          businessId,
+          ownerId,
+          planPaymentId: planPayment.id,
+          listPriceCents: priceInCentimos,
+          chargeCents,
+          now,
+        });
+      }
 
       return { planPayment, planEndDate };
     });
@@ -359,6 +500,16 @@ export async function POST(request: Request) {
       ticketNumber,
       planActivatedUntil: planEndDate.toISOString(),
       amountTotal: totalSoles,
+      ...(promotion
+        ? {
+            promotion: {
+              code: promotion.code,
+              type: promotion.type,
+              discountCents: promotion.discountCents,
+              finalAmountCents: promotion.finalPriceCents,
+            },
+          }
+        : {}),
       ...(eventId ? { eventId } : {}),
       issuer: {
         ruc: issuer.ruc,
@@ -370,6 +521,16 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    if (error instanceof PromotionAlreadyRedeemedError) {
+      logger.error('[purchase-plan] Promoción ya redimida durante el cobro', {
+        error: toErrorDetail(error),
+      });
+      return NextResponse.json(
+        { error: 'Esta promoción ya fue utilizada para este plan' },
+        { status: 409 },
+      );
+    }
+
     logger.error('[purchase-plan] Error inesperado:', { error: toErrorDetail(error) });
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
