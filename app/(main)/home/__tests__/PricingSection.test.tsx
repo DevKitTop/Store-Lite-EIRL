@@ -1,8 +1,34 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { PublicLandingPromotion } from '@/features/promotions/publicPromotionResolver';
 
 import PricingSection from '../PricingSection';
+
+const NAVIDAD_PROMOTION: PublicLandingPromotion = {
+  code: 'navidad-2026',
+  name: 'Navidad 2026 — 20% Lite Pago',
+  percentOff: 20,
+  originalMonthlyPriceCents: 3900,
+  finalMonthlyPriceCents: 3120,
+  originalAnnualMonthlyPriceCents: 3250,
+  finalAnnualMonthlyPriceCents: 2600,
+};
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ promotion: null }),
+    }),
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('PricingSection — pricing plans with toggle', () => {
   it('renders the section with id="pricing" as the scroll-spy target', () => {
@@ -162,5 +188,43 @@ describe('PricingSection — pricing plans with toggle', () => {
     render(<PricingSection />);
 
     expect(screen.getByText(/Todos los planes incluyen dominio gratis/)).toBeInTheDocument();
+  });
+
+  it('does not show a promotion banner by default', () => {
+    render(<PricingSection />);
+
+    expect(screen.queryByText(/20% OFF en Lite Pago/)).not.toBeInTheDocument();
+    expect(screen.queryByText('S/ 31.2')).not.toBeInTheDocument();
+  });
+
+  it('shows the active promotion banner and discounted Lite Pago prices', async () => {
+    const user = userEvent.setup();
+    render(<PricingSection promotion={NAVIDAD_PROMOTION} />);
+
+    expect(screen.getByText(/20% OFF en Lite Pago/)).toBeInTheDocument();
+    expect(screen.getByText('S/ 31.2')).toBeInTheDocument();
+    expect(screen.getByText('S/ 39')).toBeInTheDocument();
+    expect(screen.getByText('S/ 79')).toBeInTheDocument();
+    expect(screen.queryByText('S/ 63.2')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /anual/i }));
+
+    expect(screen.getByText('S/ 26')).toBeInTheDocument();
+    expect(screen.getByText('S/ 32.5')).toBeInTheDocument();
+  });
+
+  it('applies a promotion returned by the public endpoint', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ promotion: NAVIDAD_PROMOTION }),
+      }),
+    );
+
+    render(<PricingSection />);
+
+    expect(await screen.findByText(/20% OFF en Lite Pago/)).toBeInTheDocument();
+    expect(screen.getByText('S/ 31.2')).toBeInTheDocument();
   });
 });

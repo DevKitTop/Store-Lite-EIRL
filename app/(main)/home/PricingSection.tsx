@@ -1,7 +1,9 @@
 'use client';
 
+import type { PublicLandingPromotion } from '@/features/promotions/publicPromotionResolver';
+import { centimosToSoles } from '@/shared/billing/planPrices';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import styles from './PricingSection.module.css';
 
 type BillingPeriod = 'monthly' | 'annual';
@@ -65,8 +67,64 @@ function periodLabel(period: BillingPeriod): string {
   return period === 'annual' ? '/mes facturado anual' : '/mes';
 }
 
-export default function PricingSection() {
+function discountedPriceFor(
+  plan: Plan,
+  period: BillingPeriod,
+  promotion: PublicLandingPromotion | null,
+): string | null {
+  if (!promotion || plan.name !== 'Lite Pago') return null;
+
+  return `S/ ${centimosToSoles(
+    period === 'monthly'
+      ? promotion.finalMonthlyPriceCents
+      : promotion.finalAnnualMonthlyPriceCents,
+  )}`;
+}
+
+function originalPriceFor(
+  plan: Plan,
+  period: BillingPeriod,
+  promotion: PublicLandingPromotion | null,
+): string | null {
+  if (!promotion || plan.name !== 'Lite Pago') return null;
+
+  return `S/ ${centimosToSoles(
+    period === 'monthly'
+      ? promotion.originalMonthlyPriceCents
+      : promotion.originalAnnualMonthlyPriceCents,
+  )}`;
+}
+
+interface PricingSectionProps {
+  promotion?: PublicLandingPromotion | null;
+}
+
+export default function PricingSection({ promotion }: PricingSectionProps) {
   const [period, setPeriod] = useState<BillingPeriod>('monthly');
+  const [fetchedPromotion, setFetchedPromotion] = useState<PublicLandingPromotion | null>(null);
+
+  useEffect(() => {
+    if (promotion !== undefined) return;
+
+    let cancelled = false;
+    const loadPromotion = async () => {
+      try {
+        const response = await fetch('/api/promotions/public-landing');
+        if (!response.ok) return;
+        const data: { promotion?: PublicLandingPromotion | null } = await response.json();
+        if (!cancelled) setFetchedPromotion(data.promotion ?? null);
+      } catch {
+        if (!cancelled) setFetchedPromotion(null);
+      }
+    };
+
+    void loadPromotion();
+    return () => {
+      cancelled = true;
+    };
+  }, [promotion]);
+
+  const activePromotion = promotion !== undefined ? promotion : fetchedPromotion;
 
   return (
     <section className={styles.section} id="pricing">
@@ -80,6 +138,18 @@ export default function PricingSection() {
           </h2>
           <p>Precios claros. Sin letras chiquitas. Empieza gratis y escala cuando quieras.</p>
         </div>
+
+        {activePromotion && (
+          <p className={styles.promotionBanner} role="status">
+            <span className="material-symbols-rounded" aria-hidden="true">
+              local_offer
+            </span>
+            <span>
+              <strong>{activePromotion.name}</strong> — {activePromotion.percentOff}% OFF en Lite
+              Pago
+            </span>
+          </p>
+        )}
 
         <div className={styles.pricingToggle} role="group" aria-label="Período de facturación">
           <button
@@ -113,7 +183,13 @@ export default function PricingSection() {
               {plan.tag && <span className={styles.planTag}>{plan.tag}</span>}
               <h3>{plan.name}</h3>
               <p className={styles.price}>
-                {`S/ ${period === 'monthly' ? plan.monthly : plan.annual}`}
+                {discountedPriceFor(plan, period, activePromotion) ??
+                  `S/ ${period === 'monthly' ? plan.monthly : plan.annual}`}
+                {originalPriceFor(plan, period, activePromotion) && (
+                  <span className={styles.originalPrice}>
+                    {originalPriceFor(plan, period, activePromotion)}
+                  </span>
+                )}
                 <span>{periodLabel(period)}</span>
               </p>
               <p className={styles.desc}>{plan.description}</p>
