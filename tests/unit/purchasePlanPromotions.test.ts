@@ -12,6 +12,10 @@ const {
   mockValues,
   mockInsert,
   mockTransaction,
+  mockUpdateReturning,
+  mockUpdateSet,
+  mockDeleteWhere,
+  mockDelete,
   mockGetPromotionCandidates,
   mockCaptureEvent,
 } = vi.hoisted(() => {
@@ -27,9 +31,16 @@ const {
     onConflictDoNothing: mockOnConflictDoNothing,
   }));
   const mockInsert = vi.fn(() => ({ values: mockValues }));
+  const mockUpdateReturning = vi.fn();
+  const mockUpdateWhere = vi.fn(() => ({ returning: mockUpdateReturning }));
+  const mockUpdateSet = vi.fn(() => ({ where: mockUpdateWhere }));
+  const mockUpdate = vi.fn(() => ({ set: mockUpdateSet }));
+  const mockDeleteWhere = vi.fn().mockResolvedValue(undefined);
+  const mockDelete = vi.fn(() => ({ where: mockDeleteWhere }));
   const mockTransaction = vi.fn((callback) =>
     callback({
       insert: mockInsert,
+      update: mockUpdate,
       query: {
         businessSubscriptions: { findFirst: mockSubscriptionFindFirst },
       },
@@ -47,6 +58,10 @@ const {
     mockValues,
     mockInsert,
     mockTransaction,
+    mockUpdateReturning,
+    mockUpdateSet,
+    mockDeleteWhere,
+    mockDelete,
     mockGetPromotionCandidates,
     mockCaptureEvent,
   };
@@ -79,6 +94,7 @@ vi.mock('@/lib/analytics/capture', () => ({
 vi.mock('@/core/database/client', () => ({
   db: {
     insert: mockInsert,
+    delete: mockDelete,
     transaction: mockTransaction,
     query: {
       saasIssuerConfig: { findFirst: mockSaasIssuerFindFirst },
@@ -181,6 +197,7 @@ describe('purchase-plan promotion wiring', () => {
     ]);
     mockOnConflictDoUpdate.mockResolvedValue(undefined);
     mockRedemptionReturning.mockResolvedValue([{ id: 'redemption_001' }]);
+    mockUpdateReturning.mockResolvedValue([{ id: 'redemption_001' }]);
     mockGetPromotionCandidates.mockResolvedValue({ best: null, candidates: [] });
 
     vi.stubEnv('CULQI_SK', 'sk_test_culqi_key');
@@ -214,21 +231,68 @@ describe('purchase-plan promotion wiring', () => {
       }),
     );
 
-    const planPaymentValues = mockValues.mock.calls[0][0];
-    expect(planPaymentValues.amountTotal).toBe('27.3');
-    expect((planPaymentValues.metadata as Record<string, unknown>).promotionCode).toBe('SAVE30');
-
-    const redemptionValues = mockValues.mock.calls[2][0];
-    expect(redemptionValues).toMatchObject({
+    const reservationValues = mockValues.mock.calls[0][0];
+    expect(reservationValues).toMatchObject({
       promotionId: 'promo-30',
       businessId: 'biz_123',
       ownerId: 'test-user-id',
-      planPaymentId: 'payment_001',
+      planPaymentId: null,
       originalAmountCents: 3900,
       discountAmountCents: 1170,
       finalAmountCents: 2730,
-      status: 'consumed',
+      status: 'granted',
     });
+
+    const planPaymentValues = mockValues.mock.calls[1][0];
+    expect(planPaymentValues.amountTotal).toBe('27.3');
+    expect((planPaymentValues.metadata as Record<string, unknown>).promotionCode).toBe('SAVE30');
+
+    expect(mockUpdateSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planPaymentId: 'payment_001',
+        status: 'consumed',
+      }),
+    );
+  });
+
+  test('reserves the promotion before contacting Culqi and rejects conflicts without charging', async () => {
+    const evaluation = eligiblePromotion();
+    mockGetPromotionCandidates.mockResolvedValue({
+      best: evaluation,
+      candidates: [{ promotion: promotionDefinition(), evaluation }],
+    });
+    mockRedemptionReturning.mockResolvedValue([]);
+
+    const response = await POST(post({ promotionCode: 'SAVE30' }));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toContain('promoción ya fue utilizada');
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockValues).toHaveBeenCalledTimes(1);
+    expect(mockValues.mock.calls[0][0]).toMatchObject({
+      status: 'granted',
+      planPaymentId: null,
+    });
+  });
+
+  test('releases the promotion reservation when Culqi declines the charge', async () => {
+    const evaluation = eligiblePromotion();
+    mockGetPromotionCandidates.mockResolvedValue({
+      best: evaluation,
+      candidates: [{ promotion: promotionDefinition(), evaluation }],
+    });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 402,
+      json: async () => ({ user_message: 'Pago declinado' }),
+    } as unknown as Response);
+
+    const response = await POST(post({ promotionCode: 'SAVE30' }));
+
+    expect(response.status).toBe(402);
+    expect(mockDeleteWhere).toHaveBeenCalledTimes(1);
+    expect(mockUpdateSet).not.toHaveBeenCalled();
   });
 
   test('captures plan purchase and promotion analytics events without storing buyer PII', async () => {

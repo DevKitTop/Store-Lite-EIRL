@@ -11,7 +11,7 @@
  *  4. Cobra en Culqi (claves del SaaS, no del merchant)
  *  5. INSERT plan_payments (correlativo B001 automático por secuencia)
  *  6. UPSERT business_subscriptions (activa/renueva el plan)
- *  7. Consume la promoción en la misma transacción del pago
+ *  7. Confirma la reserva de la promoción en la misma transacción del pago
  *  8. Retorna { success, planPaymentId, ticketNumber, planActivatedUntil }
  */
 
@@ -125,41 +125,39 @@ async function resolvePurchasePromotion({
   return { ok: true, promotion };
 }
 
-interface RecordPromotionRedemptionParams {
-  tx: TransactionClient;
+interface PromotionRedemptionParams {
   promotion: EligiblePromotionEvaluation;
   businessId: string;
   ownerId: string;
-  planPaymentId: string;
   listPriceCents: number;
   chargeCents: number;
   now: Date;
 }
 
-async function recordPromotionRedemption({
-  tx,
+/**
+ * Claims the one-redemption-per-owner slot BEFORE any external charge. The
+ * unique (promotion_id, owner_id) constraint remains the final guard; losing
+ * the claim now returns 409 while no money has moved.
+ */
+async function reservePromotionRedemption({
   promotion,
   businessId,
   ownerId,
-  planPaymentId,
   listPriceCents,
   chargeCents,
   now,
-}: RecordPromotionRedemptionParams): Promise<void> {
-  // The unique (promotion_id, owner_id) constraint is the final guard. A
-  // conflict rolls the whole payment/subscription write back so no discounted
-  // charge can leave a half-activated plan behind.
-  const [redemption] = await tx
+}: PromotionRedemptionParams): Promise<string> {
+  const [redemption] = await db
     .insert(promotionRedemptions)
     .values({
       promotionId: promotion.promotionId,
       businessId,
       ownerId,
-      planPaymentId,
+      planPaymentId: null,
       originalAmountCents: listPriceCents,
       discountAmountCents: promotion.discountCents,
       finalAmountCents: chargeCents,
-      status: 'consumed',
+      status: 'granted',
       redeemedAt: now,
     })
     .onConflictDoNothing({
@@ -168,6 +166,47 @@ async function recordPromotionRedemption({
     .returning({ id: promotionRedemptions.id });
 
   if (!redemption) throw new PromotionAlreadyRedeemedError();
+  return redemption.id;
+}
+
+interface ConsumePromotionReservationParams {
+  tx: TransactionClient;
+  reservationId: string;
+  planPaymentId: string;
+  now: Date;
+}
+
+async function consumePromotionReservation({
+  tx,
+  reservationId,
+  planPaymentId,
+  now,
+}: ConsumePromotionReservationParams): Promise<void> {
+  const [updated] = await tx
+    .update(promotionRedemptions)
+    .set({ planPaymentId, status: 'consumed', redeemedAt: now })
+    .where(
+      and(eq(promotionRedemptions.id, reservationId), eq(promotionRedemptions.status, 'granted')),
+    )
+    .returning({ id: promotionRedemptions.id });
+
+  if (!updated) throw new Error('PROMOTION_RESERVATION_LOST');
+}
+
+/** Releases a reservation that never reached a successful paid plan. */
+async function releasePromotionReservation(reservationId: string): Promise<void> {
+  try {
+    await db
+      .delete(promotionRedemptions)
+      .where(
+        and(eq(promotionRedemptions.id, reservationId), eq(promotionRedemptions.status, 'granted')),
+      );
+  } catch (error) {
+    logger.error('[purchase-plan] No se pudo liberar la reserva de promoción', {
+      reservationId,
+      error: toErrorDetail(error),
+    });
+  }
 }
 
 export async function POST(request: Request) {
@@ -179,6 +218,9 @@ export async function POST(request: Request) {
   if (!user) {
     return NextResponse.json({ success: false, error: 'No autorizado' }, { status: 401 });
   }
+
+  const now = new Date();
+  let promotionReservationId: string | null = null;
 
   try {
     const body: PurchasePlanBody = await request.json();
@@ -283,6 +325,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Pasarela de pagos no configurada' }, { status: 500 });
     }
 
+    // ── Reservar la redención ANTES de cobrar ───────────────────────────────
+    // Un conflicto aquí devuelve 409 sin tocar Culqi. La fila `granted` se
+    // libera si el cobro falla y se confirma como `consumed` en la transacción.
+    if (promotion) {
+      promotionReservationId = await reservePromotionRedemption({
+        promotion,
+        businessId,
+        ownerId,
+        listPriceCents: priceInCentimos,
+        chargeCents,
+        now,
+      });
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
 
@@ -320,6 +376,10 @@ export async function POST(request: Request) {
 
       const isSuccess = culqiData.outcome?.type === 'venta_exitosa' || culqiData.paid === true;
       if (!culqiResponse.ok || !isSuccess) {
+        if (promotionReservationId) {
+          await releasePromotionReservation(promotionReservationId);
+          promotionReservationId = null;
+        }
         return NextResponse.json(
           {
             error: 'Error al procesar el pago',
@@ -333,6 +393,10 @@ export async function POST(request: Request) {
       }
     } catch (err) {
       clearTimeout(timeout);
+      if (promotionReservationId) {
+        await releasePromotionReservation(promotionReservationId);
+        promotionReservationId = null;
+      }
       const isAbort = err instanceof Error && err.name === 'AbortError';
       return NextResponse.json(
         { error: isAbort ? 'Timeout al procesar el pago' : 'Error de conexión con la pasarela' },
@@ -355,7 +419,6 @@ export async function POST(request: Request) {
       });
 
       // Calcular fechas con prorrateo
-      const now = new Date();
       let planStartDate: Date;
       let planEndDate: Date;
 
@@ -445,22 +508,21 @@ export async function POST(request: Request) {
           },
         });
 
-      // ── Consumir promoción en la MISMA transacción del cobro ──────────────
-      if (promotion) {
-        await recordPromotionRedemption({
+      // ── Confirmar la reserva en la MISMA transacción del cobro ───────────
+      if (promotion && promotionReservationId) {
+        await consumePromotionReservation({
           tx,
-          promotion,
-          businessId,
-          ownerId,
+          reservationId: promotionReservationId,
           planPaymentId: planPayment.id,
-          listPriceCents: priceInCentimos,
-          chargeCents,
           now,
         });
       }
 
       return { planPayment, planEndDate };
     });
+
+    // Payment + redemption are committed: do not release the reservation.
+    promotionReservationId = null;
 
     const ticketNumber = formatTicketNumber(
       planPayment.ticketSeries,
@@ -561,8 +623,13 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    if (promotionReservationId) {
+      await releasePromotionReservation(promotionReservationId);
+      promotionReservationId = null;
+    }
+
     if (error instanceof PromotionAlreadyRedeemedError) {
-      logger.error('[purchase-plan] Promoción ya redimida durante el cobro', {
+      logger.error('[purchase-plan] Promoción ya redimida antes del cobro', {
         error: toErrorDetail(error),
       });
       return NextResponse.json(
