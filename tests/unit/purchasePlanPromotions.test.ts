@@ -1,5 +1,6 @@
 import { POST } from '@/app/api/billing/purchase-plan/route';
 import type { EligiblePromotionEvaluation, PromotionDefinition } from '@/features/promotions/types';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 const {
@@ -12,6 +13,7 @@ const {
   mockInsert,
   mockTransaction,
   mockGetPromotionCandidates,
+  mockCaptureEvent,
 } = vi.hoisted(() => {
   const mockSaasIssuerFindFirst = vi.fn();
   const mockSubscriptionFindFirst = vi.fn();
@@ -34,6 +36,7 @@ const {
     }),
   );
   const mockGetPromotionCandidates = vi.fn();
+  const mockCaptureEvent = vi.fn().mockResolvedValue(undefined);
 
   return {
     mockSaasIssuerFindFirst,
@@ -45,6 +48,7 @@ const {
     mockInsert,
     mockTransaction,
     mockGetPromotionCandidates,
+    mockCaptureEvent,
   };
 });
 
@@ -66,6 +70,10 @@ vi.mock('@/features/storage/actions/authz', () => ({
 
 vi.mock('@/features/promotions/getApplicablePromotion', () => ({
   getPromotionCandidates: mockGetPromotionCandidates,
+}));
+
+vi.mock('@/lib/analytics/capture', () => ({
+  captureEvent: mockCaptureEvent,
 }));
 
 vi.mock('@/core/database/client', () => ({
@@ -221,6 +229,49 @@ describe('purchase-plan promotion wiring', () => {
       finalAmountCents: 2730,
       status: 'consumed',
     });
+  });
+
+  test('captures plan purchase and promotion analytics events without storing buyer PII', async () => {
+    const evaluation = eligiblePromotion();
+    mockGetPromotionCandidates.mockResolvedValue({
+      best: evaluation,
+      candidates: [{ promotion: promotionDefinition(), evaluation }],
+    });
+
+    const response = await POST(post({ promotionCode: 'SAVE30' }));
+
+    expect(response.status).toBe(200);
+    expect(mockCaptureEvent).toHaveBeenCalledWith(
+      AnalyticsEvents.PLAN_PURCHASE_STARTED,
+      expect.objectContaining({
+        plan: 'lite_pago',
+        period: 'monthly',
+        business_id: 'biz_123',
+        promotion_code: 'SAVE30',
+      }),
+    );
+    expect(mockCaptureEvent).toHaveBeenCalledWith(
+      AnalyticsEvents.PROMOTION_APPLIED,
+      expect.objectContaining({
+        promotion_code: 'SAVE30',
+        discount_cents: 1170,
+        final_amount_cents: 2730,
+      }),
+    );
+    expect(mockCaptureEvent).toHaveBeenCalledWith(
+      AnalyticsEvents.PLAN_PURCHASED,
+      expect.objectContaining({
+        plan: 'lite_pago',
+        period: 'monthly',
+        business_id: 'biz_123',
+        amount_total_cents: 2730,
+      }),
+    );
+
+    const serializedCalls = JSON.stringify(mockCaptureEvent.mock.calls);
+    expect(serializedCalls).not.toContain('test@example.com');
+    expect(serializedCalls).not.toContain('Test User');
+    expect(serializedCalls).not.toContain('12345678');
   });
 
   test('ignores untrusted client amounts and charges the authoritative list price', async () => {

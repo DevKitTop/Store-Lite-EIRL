@@ -11,6 +11,8 @@
 import { db } from '@/core/database/client';
 import { businessSubscriptions, promotionRedemptions } from '@/core/database/schema';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
+import { captureEvent } from '@/lib/analytics/capture';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { logger, toErrorDetail } from '@/lib/logger';
 import { PLAN_PRICES } from '@/shared/billing/planPrices';
 import type { ActionState } from '@/types/actions';
@@ -136,6 +138,17 @@ export async function claimPromotionAction(input: {
     revalidatePath(`/${slug}/settings`);
     revalidatePath(`/${slug}/dashboard`);
     revalidatePath('/pricing');
+
+    captureEvent(AnalyticsEvents.PROMOTION_CLAIMED, {
+      promotion_id: best.promotionId,
+      promotion_code: best.code,
+      promotion_type: best.type,
+      business_id: businessId,
+      plan: 'lite_pago',
+      period: 'monthly',
+      granted_days: best.grantedDays,
+      plan_end_date: planEndDate.toISOString(),
+    }).catch(() => {});
 
     return {
       success: true,

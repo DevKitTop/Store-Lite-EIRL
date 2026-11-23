@@ -27,6 +27,8 @@ import { getPromotionCandidates } from '@/features/promotions/getApplicablePromo
 import { selectPurchasePromotion } from '@/features/promotions/purchaseRules';
 import type { EligiblePromotionEvaluation } from '@/features/promotions/types';
 import { requireOwnedBusinessById } from '@/features/storage/actions/authz';
+import { captureEvent } from '@/lib/analytics/capture';
+import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { getConsentState } from '@/lib/consent/consentServer';
 import { logger, toErrorDetail } from '@/lib/logger';
 import { fireEvent } from '@/lib/meta/capi';
@@ -248,6 +250,14 @@ export async function POST(request: Request) {
     }
     const promotion = resolution.promotion;
 
+    captureEvent(AnalyticsEvents.PLAN_PURCHASE_STARTED, {
+      plan: planType,
+      period,
+      business_id: businessId,
+      promotion_code: promotion?.code ?? providedCode ?? undefined,
+      amount_total_cents: promotion?.finalPriceCents ?? priceInCentimos,
+    }).catch(() => {});
+
     // ── Calcular montos (en soles, con 2 decimales) ───────────────────────────
     // El monto final es el TOTAL que se cobra (incluye IGV). Nunca se toma del
     // cliente; desglosamos subtotal e IGV para la boleta SUNAT sobre ese total.
@@ -456,6 +466,29 @@ export async function POST(request: Request) {
       planPayment.ticketSeries,
       planPayment.ticketCorrelative,
     );
+
+    captureEvent(AnalyticsEvents.PLAN_PURCHASED, {
+      plan: planType,
+      period,
+      business_id: businessId,
+      amount_total_cents: chargeCents,
+      payment_method: paymentMethod,
+      culqi_charge_id: culqiData.id,
+      plan_payment_id: planPayment.id,
+    }).catch(() => {});
+
+    if (promotion) {
+      captureEvent(AnalyticsEvents.PROMOTION_APPLIED, {
+        promotion_id: promotion.promotionId,
+        promotion_code: promotion.code,
+        promotion_type: promotion.type,
+        discount_cents: promotion.discountCents,
+        final_amount_cents: promotion.finalPriceCents,
+        plan: planType,
+        period,
+        business_id: businessId,
+      }).catch(() => {});
+    }
 
     // ── Meta CAPI: fire-and-forget Purchase ──────────────────────────────────
     // Marketing attribution must NEVER slow down or break the purchase (design
