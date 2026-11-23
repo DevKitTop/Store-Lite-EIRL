@@ -7,6 +7,7 @@ import {
   type ProductGridSection,
   type StorefrontLayout,
 } from '@/core/storefront';
+import { claimPromotionAction } from '@/features/promotions/actions';
 import type { Permission } from '@/lib/permissions/definitions';
 import {
   AlertSnackbar,
@@ -60,6 +61,7 @@ import {
   TABLET_COLUMN_OPTIONS,
   updateSection,
   type Entitlements,
+  type PromotionOffer,
   type SettingsBusiness,
   type SettingsClientProps,
 } from '../constants';
@@ -558,11 +560,17 @@ function BusinessSection({
 }
 
 function PlanSection({
+  businessId,
+  promotionOffer,
   entitlements,
-  isOwner: _isOwner,
+  isOwner,
+  onOpenPayments,
 }: {
+  businessId: string;
+  promotionOffer: PromotionOffer | null;
   entitlements: Entitlements;
   isOwner: boolean;
+  onOpenPayments: () => void;
 }) {
   const router = useRouter();
   const params = useParams();
@@ -570,6 +578,27 @@ function PlanSection({
   const planKey = entitlements.plan;
   const config = PLAN_CONFIG[planKey as keyof typeof PLAN_CONFIG] ?? PLAN_CONFIG.lite;
   const remainingTime = getRemainingTime(entitlements.planEndDate);
+  const offerEndDate = promotionOffer?.planEndDate
+    ? new Date(promotionOffer.planEndDate).toLocaleDateString('es-PE', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      })
+    : null;
+  const [isClaiming, startClaimTransition] = useTransition();
+  const { feedback, showSuccess, showError, close: closeFeedback } = useSnackbarFeedback();
+
+  const handleClaimPromotion = () => {
+    startClaimTransition(async () => {
+      const result = await claimPromotionAction({ businessId });
+      if (result.success) {
+        showSuccess('¡Listo! Tu período gratis de Lite Pago ya está activo.');
+        router.refresh();
+      } else {
+        showError(result.error ?? 'No se pudo reclamar la oferta.');
+      }
+    });
+  };
 
   const features = [
     {
@@ -689,6 +718,68 @@ function PlanSection({
         </span>
       </div>
 
+      {promotionOffer && isOwner && (
+        <Card variant="elevated" className={styles.planFeaturesCard}>
+          <div style={{ padding: '20px 24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Icon size={22}>card_giftcard</Icon>
+              <h3 style={{ margin: 0, fontSize: '16px' }}>{promotionOffer.name}</h3>
+            </div>
+
+            {promotionOffer.state === 'available' && (
+              <>
+                <p style={{ margin: '12px 0 0', fontSize: '14px', lineHeight: 1.6 }}>
+                  Tenés {promotionOffer.durationDays} días de Lite Pago sin cobro ni tarjeta.
+                  Reclamalo cuando quieras.
+                </p>
+                <p style={{ margin: '8px 0 0', fontSize: '12px', lineHeight: 1.6, opacity: 0.8 }}>
+                  Al vencer volvés a Lite: el catálogo queda en 50 productos, los excedentes se
+                  ocultan (no se borran) y el dashboard se desactiva. Te avisamos 5 días antes.
+                </p>
+                <div style={{ marginTop: '16px' }}>
+                  <Button variant="filled" disabled={isClaiming} onClick={handleClaimPromotion}>
+                    <Icon slot="icon" size={20}>
+                      redeem
+                    </Icon>
+                    {isClaiming ? 'Reclamando…' : 'Reclamar ahora'}
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {promotionOffer.state === 'active' && (
+              <>
+                <p style={{ margin: '12px 0 0', fontSize: '14px', lineHeight: 1.6 }}>
+                  Te quedan {promotionOffer.daysRemaining ?? 0} días de Lite Pago. Terminá el
+                  checkout en Pagos para activar tu gateway de Cobros.
+                </p>
+                <p style={{ margin: '8px 0 0', fontSize: '12px', lineHeight: 1.6, opacity: 0.8 }}>
+                  Período gratis hasta {offerEndDate ?? 'la fecha de vencimiento'}. Revisá el
+                  checklist de Culqi en Pagos. Al vencer volvés a Lite: el catálogo queda en 50
+                  productos, los excedentes se ocultan (no se borran) y el dashboard se desactiva.
+                  Te avisamos 5 días antes.
+                </p>
+                <div style={{ marginTop: '12px' }}>
+                  <Button variant="text" onClick={onOpenPayments}>
+                    <Icon slot="icon" size={20}>
+                      payments
+                    </Icon>
+                    Ir a Pagos y ver checklist de Culqi
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {promotionOffer.state === 'used' && (
+              <p style={{ margin: '12px 0 0', fontSize: '14px', lineHeight: 1.6 }}>
+                Ya usaste esta oferta de bienvenida. Si querés seguir con Lite Pago, elegí un plan
+                en Cambiar plan.
+              </p>
+            )}
+          </div>
+        </Card>
+      )}
+
       {/* Features — layout limpio sin chips/buttons */}
       <Card variant="elevated" className={styles.planFeaturesCard}>
         <div className={styles.teamMembersHeader}>
@@ -756,6 +847,14 @@ function PlanSection({
           Cambiar plan
         </Button>
       </div>
+
+      <AlertSnackbar
+        open={feedback.open}
+        description={feedback.description}
+        color={feedback.color}
+        icon={feedback.icon}
+        onClose={closeFeedback}
+      />
     </div>
   );
 }
@@ -1507,6 +1606,7 @@ export type { SettingsBusiness } from '../constants';
 export function SettingsClient({
   business,
   entitlements,
+  promotionOffer,
   initialStorefrontLayout,
   initialStorefrontTheme,
   initialHasCustomTheme = false,
@@ -1662,7 +1762,15 @@ export function SettingsClient({
                     permissions={permissions}
                   />
                 )}
-                {active === 'plan' && <PlanSection entitlements={entitlements} isOwner={isOwner} />}
+                {active === 'plan' && (
+                  <PlanSection
+                    businessId={business.id}
+                    promotionOffer={promotionOffer ?? null}
+                    entitlements={entitlements}
+                    isOwner={isOwner}
+                    onOpenPayments={() => setActive('payments')}
+                  />
+                )}
                 {active === 'team' && (
                   <TeamManagementPanel
                     business={business}

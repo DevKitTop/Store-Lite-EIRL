@@ -39,6 +39,7 @@ export interface PricingCardProps {
   /** Precio anual (un mes de contrato anual) — si se pasa, se muestra el toggle Mensual/Anual. */
   annualPrice?: string;
   originalPrice?: string;
+  annualOriginalPrice?: string;
   marketingNote?: string;
   period: string;
   features: PricingFeature[];
@@ -49,6 +50,7 @@ export interface PricingCardProps {
   buttonVariant?: 'filled' | 'outlined' | 'tonal' | 'elevated' | 'text';
   businesses?: BusinessPlanOption[];
   preselectedBusinessId?: string;
+  promotionCode?: string | null;
 }
 
 type PaymentStep = 'select' | 'billing' | 'payment' | 'success';
@@ -65,6 +67,7 @@ export function PricingCard({
   price,
   annualPrice,
   originalPrice,
+  annualOriginalPrice,
   marketingNote,
   period,
   features,
@@ -75,6 +78,7 @@ export function PricingCard({
   buttonVariant = 'outlined',
   businesses = [],
   preselectedBusinessId,
+  promotionCode,
 }: PricingCardProps) {
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = React.useState(false);
   const [step, setStep] = React.useState<PaymentStep>('select');
@@ -187,6 +191,7 @@ export function PricingCard({
       buyerDocumentType,
       buyerDocumentNumber,
       buyerAddress,
+      promotionCode,
     });
 
     if (res) {
@@ -219,7 +224,7 @@ export function PricingCard({
           period={displayPeriod}
           originalPrice={
             isAnnual && annualPrice
-              ? price // Tachado: precio mensual cuando se ve el anual
+              ? (annualOriginalPrice ?? price) // Tachado: precio anual cuando se ve el anual
               : originalPrice
           }
           marketingNote={marketingNote}

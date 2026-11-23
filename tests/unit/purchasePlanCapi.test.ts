@@ -14,12 +14,11 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 const {
   mockSaasIssuerFindFirst,
-  mockSubscriptionFindFirst,
   mockReturning,
   mockOnConflict,
-  mockValues,
   mockInsert,
   mockTransaction,
+  mockGetPromotionCandidates,
 } = vi.hoisted(() => {
   const mockSaasIssuerFindFirst = vi.fn();
   const mockSubscriptionFindFirst = vi.fn();
@@ -30,6 +29,7 @@ const {
     onConflictDoUpdate: mockOnConflict,
   }));
   const mockInsert = vi.fn(() => ({ values: mockValues }));
+  const mockGetPromotionCandidates = vi.fn(async () => ({ best: null, candidates: [] }));
   const mockTransaction = vi.fn((callback) =>
     callback({
       insert: mockInsert,
@@ -42,12 +42,11 @@ const {
 
   return {
     mockSaasIssuerFindFirst,
-    mockSubscriptionFindFirst,
     mockReturning,
     mockOnConflict,
-    mockValues,
     mockInsert,
     mockTransaction,
+    mockGetPromotionCandidates,
   };
 });
 
@@ -61,7 +60,15 @@ vi.mock('@/lib/supabase/server', () => ({
 
 vi.mock('@/features/storage/actions/authz', () => ({
   // original-impl form so restoreMocks keeps this resolved value across tests
-  requireOwnedBusinessById: vi.fn(async () => ({ businessId: 'biz_123' })),
+  requireOwnedBusinessById: vi.fn(async () => ({
+    businessId: 'biz_123',
+    ownerId: 'test-user-id',
+    slug: 'test-business',
+  })),
+}));
+
+vi.mock('@/features/promotions/getApplicablePromotion', () => ({
+  getPromotionCandidates: mockGetPromotionCandidates,
 }));
 
 vi.mock('@/core/database/client', () => ({

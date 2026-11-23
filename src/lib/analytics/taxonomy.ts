@@ -40,6 +40,12 @@ export const AnalyticsEvents = {
   ORDER_COMPLETED: 'order_completed',
   PAYMENT_COMPLETED: 'payment_completed',
 
+  // Promotions and plan purchase funnel
+  PROMOTION_CLAIMED: 'promotion_claimed',
+  PROMOTION_APPLIED: 'promotion_applied',
+  PLAN_PURCHASE_STARTED: 'plan_purchase_started',
+  PLAN_PURCHASED: 'plan_purchased',
+
   // Identity verification (OTP)
   OTP_REQUESTED: 'otp_requested',
   OTP_VERIFIED: 'otp_verified',

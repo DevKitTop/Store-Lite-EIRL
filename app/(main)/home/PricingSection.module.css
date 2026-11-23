@@ -65,6 +65,28 @@
   color: var(--color-text-muted);
 }
 
+/* ---------- Active campaign banner ---------- */
+.promotionBanner {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 20px 0 0;
+  padding: 12px 18px;
+  border-radius: var(--radius-m);
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  box-shadow: var(--shadow-glow);
+  font-family: var(--font-plain);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+.promotionBanner .material-symbols-rounded {
+  color: var(--color-primary);
+  font-size: 20px;
+}
+
 /* ---------- Billing toggle ---------- */
 .pricingToggle {
   display: inline-flex;
@@ -175,6 +197,13 @@
   font-family: var(--font-plain);
   font-size: 15px;
   font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.price .originalPrice {
+  margin-left: 12px;
+  font-size: 18px;
+  text-decoration: line-through;
   color: var(--color-text-muted);
 }
 

@@ -35,6 +35,13 @@ describe('AnalyticsEvents', () => {
     expect(AnalyticsEvents.PLATFORM_COMPLAINT_SUBMITTED).toBe('platform_complaint_submitted');
   });
 
+  it('covers promotion and plan purchase events', () => {
+    expect(AnalyticsEvents.PROMOTION_CLAIMED).toBe('promotion_claimed');
+    expect(AnalyticsEvents.PROMOTION_APPLIED).toBe('promotion_applied');
+    expect(AnalyticsEvents.PLAN_PURCHASE_STARTED).toBe('plan_purchase_started');
+    expect(AnalyticsEvents.PLAN_PURCHASED).toBe('plan_purchased');
+  });
+
   it('covers identity verification and WhatsApp messaging', () => {
     expect(AnalyticsEvents.OTP_REQUESTED).toBe('otp_requested');
     expect(AnalyticsEvents.OTP_VERIFIED).toBe('otp_verified');
@@ -44,8 +51,8 @@ describe('AnalyticsEvents', () => {
     expect(AnalyticsEvents.WHATSAPP_TEMPLATE_MESSAGE_SENT).toBe('whatsapp_template_message_sent');
   });
 
-  it('has exactly 26 events (no extra, no missing)', () => {
-    expect(Object.keys(AnalyticsEvents)).toHaveLength(26);
+  it('has exactly 30 events (no extra, no missing)', () => {
+    expect(Object.keys(AnalyticsEvents)).toHaveLength(30);
   });
 
   it('uses constant values that are unique', () => {

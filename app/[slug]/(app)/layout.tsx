@@ -1,11 +1,15 @@
+import { DiscoveryBanner } from '@/components/DiscoveryBanner';
 import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { productCategories, products } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
+import { resolvePromotionOffer } from '@/features/promotions/discoveryRules';
+import { getPromotionCandidates } from '@/features/promotions/getApplicablePromotion';
 import type { Product } from '@/features/storage/data';
 import { getMemberPermissions } from '@/lib/permissions/checkPermission';
 import { applySentryContext } from '@/lib/sentryContext';
 import { createClient } from '@/lib/supabase/server';
+import { PLAN_PRICES } from '@/shared/billing/planPrices';
 import AppLayout from '@/shared/components/layout/AppLayout';
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
@@ -47,6 +51,24 @@ export default async function AppGroupLayout({ children, modal, params }: AppLay
   // Calcular entitlements del negocio según su plan de suscripción activo
   const entitlements = await getBusinessEntitlements(business.id);
   const navbarPlanName = entitlements.plan;
+
+  // Owner-only discovery nudge. The server resolves eligibility so a team
+  // member or a stale client cache cannot surface an unavailable offer.
+  let promotionOffer = null;
+  if (isOwner && user) {
+    const { candidates } = await getPromotionCandidates({
+      ownerId: user.id,
+      planType: 'lite_pago',
+      period: 'monthly',
+      listPriceCents: PLAN_PRICES.lite_pago.monthly,
+    });
+    promotionOffer = resolvePromotionOffer({
+      candidates,
+      plan: entitlements.plan,
+      isActive: entitlements.isActive,
+      planEndDate: entitlements.planEndDate,
+    });
+  }
 
   // Every authenticated page render tags its Sentry scope, so an error report
   // answers "which business and which plan" without a manual lookup.
@@ -120,6 +142,7 @@ export default async function AppGroupLayout({ children, modal, params }: AppLay
         navbarBusinessLogoUrl={business.logoUrl ?? undefined}
         navbarBusinessCoverUrl={business.coverImageUrl ?? undefined}
       >
+        <DiscoveryBanner slug={business.slug} offer={promotionOffer} isOwner={isOwner} />
         {children}
         {modal}
       </AppLayout>
