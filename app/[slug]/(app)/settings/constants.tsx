@@ -75,9 +75,22 @@ export interface Entitlements {
   memberCount: number;
 }
 
+export interface PromotionOffer {
+  code: string;
+  name: string;
+  durationDays: number;
+  state: 'available' | 'active' | 'used';
+  /** End of the granted period, only for the `active` state. */
+  planEndDate: string | null;
+  /** Days left in the grant, computed on the server. */
+  daysRemaining: number | null;
+}
+
 export interface SettingsClientProps {
   business: SettingsBusiness;
   entitlements: Entitlements;
+  /** Free-period offer for the owner, already resolved on the server. */
+  promotionOffer?: PromotionOffer | null;
   initialStorefrontLayout: StorefrontLayout;
   initialStorefrontTheme: StorefrontTheme;
   initialHasCustomTheme?: boolean;

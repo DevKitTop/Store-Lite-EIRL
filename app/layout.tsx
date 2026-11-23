@@ -10,7 +10,7 @@ import { ThemeProvider } from '@/shared/context/ThemeContext';
 import { CSPostHogProvider } from '@/shared/providers/PostHogProvider';
 import { toSafeJsonLd } from '@/shared/utils/safeJsonLd';
 import { buildSiteJsonLd, SITE_DESCRIPTION, SITE_NAME } from '@/shared/utils/siteJsonLd';
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import localFont from 'next/font/local';
 import './globals.css';
 
@@ -92,9 +92,25 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
   },
+  applicationName: SITE_NAME,
   icons: {
     icon: '/img/icon.png',
+    apple: '/img/apple-touch-icon.png',
   },
+  appleWebApp: {
+    capable: true,
+    title: SITE_NAME,
+    statusBarStyle: 'default',
+  },
+};
+
+// Matches app surface colors so the browser/PWA UI bar follows the active theme.
+// Explicit user theme selection is applied client-side in ThemeProvider.
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f6fafe' },
+    { media: '(prefers-color-scheme: dark)', color: '#101417' },
+  ],
 };
 
 import { headers } from 'next/headers';

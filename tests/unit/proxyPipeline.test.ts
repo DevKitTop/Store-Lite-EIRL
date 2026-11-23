@@ -17,7 +17,7 @@ import { runProxyPipeline } from '../../src/lib/middleware/proxyPipeline';
 
 // ── Mocks (must be before module imports — vi.mock is hoisted) ──
 
-const mockCheckRateLimit = vi.hoisted(() => vi.fn());
+const mockCheckRateLimitAsync = vi.hoisted(() => vi.fn());
 
 vi.mock('@/config/env', () => ({
   env: {
@@ -26,8 +26,11 @@ vi.mock('@/config/env', () => ({
   },
 }));
 
+// The pipeline MUST charge the shared (cross-instance) store. The sync limiter
+// only enforces a per-instance Map, so N middleware instances would get N x the
+// configured budget.
 vi.mock('@/lib/rateLimit', () => ({
-  checkRateLimit: mockCheckRateLimit,
+  checkRateLimitAsync: mockCheckRateLimitAsync,
   getClientIdentifier: vi.fn(() => 'test-client-ip'),
   RATE_LIMITS: { auth: { bucket: 'auth' }, api: { bucket: 'api' } },
 }));
@@ -51,7 +54,7 @@ describe('proxy pipeline — platform routes on tenant subdomains', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default: the rate limiter allows the request through.
-    mockCheckRateLimit.mockReturnValue({ allowed: true, resetInMs: 60_000 });
+    mockCheckRateLimitAsync.mockResolvedValue({ allowed: true, resetInMs: 60_000 });
   });
 
   describe('platform-only routes redirect to the platform domain', () => {
@@ -62,16 +65,18 @@ describe('proxy pipeline — platform routes on tenant subdomains', () => {
       ['/onboarding', '/onboarding'],
       ['/created', '/created'],
       ['/list-business', '/list-business'],
-    ])('%s redirects to the platform domain', (path, expectedPath) => {
-      const outcome = runProxyPipeline(createRequest(path));
+    ])('%s redirects to the platform domain', async (path, expectedPath) => {
+      const outcome = await runProxyPipeline(createRequest(path));
 
       expect(outcome.kind).toBe('platformRedirect');
       if (outcome.kind !== 'platformRedirect') return;
       expect(outcome.location.href).toBe(`https://storelite.app${expectedPath}`);
     });
 
-    test('/pricing preserves the query string in the redirect', () => {
-      const outcome = runProxyPipeline(createRequest('/pricing?slug=mi-tienda&utm_source=email'));
+    test('/pricing preserves the query string in the redirect', async () => {
+      const outcome = await runProxyPipeline(
+        createRequest('/pricing?slug=mi-tienda&utm_source=email'),
+      );
 
       expect(outcome.kind).toBe('platformRedirect');
       if (outcome.kind !== 'platformRedirect') return;
@@ -82,8 +87,8 @@ describe('proxy pipeline — platform routes on tenant subdomains', () => {
   });
 
   describe('prefix safety', () => {
-    test('/pricingxyz is NOT treated as a platform route', () => {
-      const outcome = runProxyPipeline(createRequest('/pricingxyz'));
+    test('/pricingxyz is NOT treated as a platform route', async () => {
+      const outcome = await runProxyPipeline(createRequest('/pricingxyz'));
 
       // It must flow through the regular tenant rewrite path.
       expect(outcome.kind).toBe('proceed');
@@ -93,24 +98,24 @@ describe('proxy pipeline — platform routes on tenant subdomains', () => {
   });
 
   describe('storefront behavior on tenant hosts is preserved', () => {
-    test('/ keeps the slug rewrite (no redirect)', () => {
-      const outcome = runProxyPipeline(createRequest('/'));
+    test('/ keeps the slug rewrite (no redirect)', async () => {
+      const outcome = await runProxyPipeline(createRequest('/'));
 
       expect(outcome.kind).toBe('proceed');
       if (outcome.kind !== 'proceed') return;
       expect(outcome.rewriteUrl?.pathname).toBe('/tienda1/');
     });
 
-    test('/product/abc keeps the slug rewrite (no redirect)', () => {
-      const outcome = runProxyPipeline(createRequest('/product/abc'));
+    test('/product/abc keeps the slug rewrite (no redirect)', async () => {
+      const outcome = await runProxyPipeline(createRequest('/product/abc'));
 
       expect(outcome.kind).toBe('proceed');
       if (outcome.kind !== 'proceed') return;
       expect(outcome.rewriteUrl?.pathname).toBe('/tienda1/product/abc');
     });
 
-    test('/terminos keeps the slug rewrite (no redirect)', () => {
-      const outcome = runProxyPipeline(createRequest('/terminos'));
+    test('/terminos keeps the slug rewrite (no redirect)', async () => {
+      const outcome = await runProxyPipeline(createRequest('/terminos'));
 
       expect(outcome.kind).toBe('proceed');
       if (outcome.kind !== 'proceed') return;
@@ -119,16 +124,16 @@ describe('proxy pipeline — platform routes on tenant subdomains', () => {
   });
 
   describe('non-tenant hosts', () => {
-    test('/pricing on the platform domain is not redirected by this logic', () => {
-      const outcome = runProxyPipeline(createRequest('/pricing', PLATFORM_HOST));
+    test('/pricing on the platform domain is not redirected by this logic', async () => {
+      const outcome = await runProxyPipeline(createRequest('/pricing', PLATFORM_HOST));
 
       expect(outcome.kind).toBe('proceed');
       if (outcome.kind !== 'proceed') return;
       expect(outcome.rewriteUrl).toBeNull();
     });
 
-    test('a tenant-looking host that is not a tenant host is not rewritten', () => {
-      const outcome = runProxyPipeline(createRequest('/', 'evil-storelite.app'));
+    test('a tenant-looking host that is not a tenant host is not rewritten', async () => {
+      const outcome = await runProxyPipeline(createRequest('/', 'evil-storelite.app'));
 
       expect(outcome.kind).toBe('proceed');
       if (outcome.kind !== 'proceed') return;
@@ -137,8 +142,16 @@ describe('proxy pipeline — platform routes on tenant subdomains', () => {
   });
 
   describe('API routes are never rewritten', () => {
-    test('/api/order/lookup is not rewritten to /{slug}/api/...', () => {
-      const outcome = runProxyPipeline(createRequest('/api/order/lookup'));
+    test('/api/order/lookup is not rewritten to /{slug}/api/...', async () => {
+      const outcome = await runProxyPipeline(createRequest('/api/order/lookup'));
+
+      expect(outcome.kind).toBe('proceed');
+      if (outcome.kind !== 'proceed') return;
+      expect(outcome.rewriteUrl).toBeNull();
+    });
+
+    test('the bare /api path is not rewritten to /{slug}/api either', async () => {
+      const outcome = await runProxyPipeline(createRequest('/api'));
 
       expect(outcome.kind).toBe('proceed');
       if (outcome.kind !== 'proceed') return;
@@ -147,28 +160,62 @@ describe('proxy pipeline — platform routes on tenant subdomains', () => {
   });
 
   describe('rate limiting buckets', () => {
-    test('/auth/* is charged against the auth bucket', () => {
-      runProxyPipeline(createRequest('/auth/login'));
+    test('/auth/callback is charged against the auth bucket', async () => {
+      await runProxyPipeline(createRequest('/auth/callback'));
 
-      expect(mockCheckRateLimit).toHaveBeenCalledWith('test-client-ip', { bucket: 'auth' });
+      expect(mockCheckRateLimitAsync).toHaveBeenCalledWith('test-client-ip', { bucket: 'auth' });
     });
 
-    test('/api/* is charged against the api bucket', () => {
-      runProxyPipeline(createRequest('/api/products'));
+    test.each(['/auth/customer', '/auth/chat-popup'])(
+      'the auth page %s is not charged against the brute-force bucket',
+      async (path) => {
+        // These are pages a customer opens once, not an auth action. The bucket
+        // is 10 requests / 15 min, so behind a shared NAT (office, school,
+        // market wifi) eleven customers hit a 429 on the login screen.
+        await runProxyPipeline(createRequest(path));
 
-      expect(mockCheckRateLimit).toHaveBeenCalledWith('test-client-ip', { bucket: 'api' });
+        expect(mockCheckRateLimitAsync).not.toHaveBeenCalled();
+      },
+    );
+
+    test('/api/* is charged against the api bucket', async () => {
+      await runProxyPipeline(createRequest('/api/products'));
+
+      expect(mockCheckRateLimitAsync).toHaveBeenCalledWith('test-client-ip', { bucket: 'api' });
     });
 
-    test('the storefront is not rate limited at the edge', () => {
-      runProxyPipeline(createRequest('/product/abc'));
+    test('the bare /auth page is not charged against the brute-force bucket', async () => {
+      // `/auth` is the login PAGE. The auth bucket is 10 requests / 15 min, so
+      // charging page views makes ten legitimate visits (shared office NAT, the
+      // E2E suite) hit a 429 on the login screen. Sub-paths stay limited.
+      await runProxyPipeline(createRequest('/auth'));
 
-      expect(mockCheckRateLimit).not.toHaveBeenCalled();
+      expect(mockCheckRateLimitAsync).not.toHaveBeenCalled();
     });
 
-    test('an exhausted bucket short-circuits before any tenancy work', () => {
-      mockCheckRateLimit.mockReturnValue({ allowed: false, resetInMs: 42_000 });
+    test('the bare /api path is charged against the api bucket', async () => {
+      await runProxyPipeline(createRequest('/api'));
 
-      const outcome = runProxyPipeline(createRequest('/auth/login'));
+      expect(mockCheckRateLimitAsync).toHaveBeenCalledWith('test-client-ip', { bucket: 'api' });
+    });
+
+    test('lookalike prefixes are not a separate bucket', async () => {
+      await runProxyPipeline(createRequest('/apix'));
+      await runProxyPipeline(createRequest('/authz'));
+
+      expect(mockCheckRateLimitAsync).not.toHaveBeenCalled();
+    });
+
+    test('the storefront is not rate limited at the edge', async () => {
+      await runProxyPipeline(createRequest('/product/abc'));
+
+      expect(mockCheckRateLimitAsync).not.toHaveBeenCalled();
+    });
+
+    test('an exhausted bucket short-circuits before any tenancy work', async () => {
+      mockCheckRateLimitAsync.mockResolvedValue({ allowed: false, resetInMs: 42_000 });
+
+      const outcome = await runProxyPipeline(createRequest('/auth/login'));
 
       expect(outcome).toEqual({
         kind: 'rateLimited',

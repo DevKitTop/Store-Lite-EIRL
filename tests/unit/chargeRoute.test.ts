@@ -160,7 +160,7 @@ vi.mock('@/core/payments/idempotency', () => ({
 }));
 
 vi.mock('@/core/payments/rateLimiter', () => ({
-  paymentRateLimiter: { check: mockRateLimiterCheck },
+  paymentRateLimiter: { checkAsync: mockRateLimiterCheck },
 }));
 
 const {

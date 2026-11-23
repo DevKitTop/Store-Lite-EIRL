@@ -24,7 +24,8 @@
 // `next/headers` (planner note N6) and its mock is written from the structural
 // contract of `getClientIdentifierFromHeaders` (design D4), not copied.
 //
-// The real limiter store is used throughout — only `checkRateLimit` is swapped
+// The real limiter store is used throughout — only `checkRateLimitAsync` is
+// swapped
 // for a spy, so cases (b)-(e) run the actual sliding window. Each case burns its
 // OWN client id: the store is module scope and buckets live 15 minutes.
 // =====================================================
@@ -33,7 +34,7 @@ import {
   verifyOrderAccess,
   verifyOrderByGoogleIdentity,
 } from '@/app/[slug]/(app)/order/[token]/actions';
-import { RATE_LIMITS, type checkRateLimit as CheckRateLimit } from '@/lib/rateLimit';
+import { RATE_LIMITS, type checkRateLimitAsync as CheckRateLimitAsync } from '@/lib/rateLimit';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // ── Mocks ────────────────────────────────────────────
@@ -56,8 +57,8 @@ const {
   cookieStore,
   cookieWrites,
   mockFindFirst,
-  mockCheckRateLimit,
-  realLimiter,
+  mockCheckRateLimitAsync,
+  realLimiterAsync,
 } = vi.hoisted(() => {
   const holder = new Map<string, string>();
   const cookieStore = new Map<string, string>();
@@ -71,8 +72,8 @@ const {
     cookieStore,
     cookieWrites: [] as RecordedCookie[],
     mockFindFirst: vi.fn(),
-    mockCheckRateLimit: vi.fn(),
-    realLimiter: { current: null as null | typeof CheckRateLimit },
+    mockCheckRateLimitAsync: vi.fn(),
+    realLimiterAsync: { current: null as null | typeof CheckRateLimitAsync },
   };
 });
 
@@ -88,12 +89,12 @@ vi.mock('@/core/orders/orderService', () => ({ transition: vi.fn() }));
 
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
-// Keeps RATE_LIMITS and the real store; only `checkRateLimit` is a spy, so the
+// Keeps RATE_LIMITS and the real store; only `checkRateLimitAsync` is a spy, so the
 // real sliding window still decides every bucket.
 vi.mock('@/lib/rateLimit', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  realLimiter.current = actual.checkRateLimit as typeof CheckRateLimit;
-  return { ...actual, checkRateLimit: mockCheckRateLimit };
+  realLimiterAsync.current = actual.checkRateLimitAsync as typeof CheckRateLimitAsync;
+  return { ...actual, checkRateLimitAsync: mockCheckRateLimitAsync };
 });
 
 // ── Fixtures ─────────────────────────────────────────
@@ -140,7 +141,7 @@ beforeEach(() => {
     },
   }));
   mockFindFirst.mockResolvedValue(PAYMENT);
-  mockCheckRateLimit.mockImplementation(realLimiter.current!);
+  mockCheckRateLimitAsync.mockImplementation(realLimiterAsync.current!);
 });
 
 // ── Suite: exhausted budget (R9, design D3) ─────────
@@ -148,7 +149,7 @@ beforeEach(() => {
 describe('verifyOrderAccess — exhausted budget', () => {
   test('returns the rate-limited contract with a rounded-up retry and never queries the payment', async () => {
     useClientIp('203.0.113.100');
-    mockCheckRateLimit.mockReturnValue({ allowed: false, remaining: 0, resetInMs: 30_500 });
+    mockCheckRateLimitAsync.mockResolvedValue({ allowed: false, remaining: 0, resetInMs: 30_500 });
 
     const result = await verifyOrderAccess(TOKEN, '12345678');
 
@@ -193,7 +194,7 @@ describe('verifyOrderAccess — one budget per (client, dni)', () => {
     expect(second).toEqual({ success: false });
 
     // Key proof: both calls were charged to distinct, dni-qualified keys.
-    const charged = mockCheckRateLimit.mock.calls.map(([identifier]) => identifier);
+    const charged = mockCheckRateLimitAsync.mock.calls.map(([identifier]) => identifier);
     expect(charged.at(-2)).toBe(`unknown:dni:${dniAt(1)}`);
     expect(charged.at(-1)).toBe(`unknown:dni:${dniAt(2)}`);
   });
@@ -345,7 +346,7 @@ describe('verifyOrderAccess — mint/verify round-trip with known secret', () =>
 describe('verifyOrderAccess — a refusal leaves the cookie store untouched', () => {
   test('a rate-limited caller gets no cookie', async () => {
     useClientIp('203.0.113.112');
-    mockCheckRateLimit.mockReturnValue({ allowed: false, remaining: 0, resetInMs: 30_500 });
+    mockCheckRateLimitAsync.mockResolvedValue({ allowed: false, remaining: 0, resetInMs: 30_500 });
 
     expect(await verifyOrderAccess(TOKEN, '87654321', CORRECT_ORDER)).toMatchObject({
       rateLimited: true,

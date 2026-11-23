@@ -18,6 +18,7 @@ import {
 } from '@/core/storefront';
 import { captureEvent } from '@/lib/analytics/capture';
 import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
+import { sendPromotionWelcomeEmail } from '@/lib/email/promotionEmails';
 import { logger, toErrorDetail } from '@/lib/logger';
 import { generateBusinessSlug } from '@/shared/utils/slugify';
 import { createServerClient } from '@supabase/ssr';
@@ -340,6 +341,22 @@ export async function createBusinessAction(formData: FormData) {
       business_id: businessId,
       slug: txSlug,
     }).catch(() => {});
+
+    // New-owner welcome email (S13). Only the first business qualifies, so a
+    // second/third business cannot resend the one-time acquisition message.
+    if (userBusinessesCount.length === 0 && userEmail) {
+      sendPromotionWelcomeEmail({
+        ownerId: userId,
+        ownerEmail: userEmail,
+        ownerName:
+          user.user_metadata.full_name ||
+          user.user_metadata.name ||
+          userEmail.split('@')[0] ||
+          'there',
+        businessName: commercialName,
+        slug: txSlug,
+      }).catch(() => {});
+    }
 
     return { success: true, slug: txSlug, logoWarning };
   } catch (error) {

@@ -3,12 +3,14 @@ import { db } from '@/core/database/client';
 import {
   notificationCategoryEnum,
   notifications,
-  notificationTypeEnum,
   type NewNotification,
   type NotificationCategory,
 } from '@/core/database/schema';
 import { logger, toErrorDetail } from '@/lib/logger';
+import { isValidUuid, validateNotificationCreateBody } from '@/lib/notifications/createValidation';
 import { getMemberPermissions } from '@/lib/permissions/checkPermission';
+import { checkRateLimitAsync, RATE_LIMITS } from '@/lib/rateLimit';
+import { isJsonRequest, isSameOriginRequest } from '@/lib/security/csrf';
 import { createClient } from '@/lib/supabase/server';
 import { getErrorMessage } from '@/utils/errors';
 import { and, desc, eq, sql } from 'drizzle-orm';
@@ -52,8 +54,7 @@ export async function GET(request: Request) {
   }
 
   // Validar formato UUID
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!uuidRegex.test(resolvedBusinessId)) {
+  if (!isValidUuid(resolvedBusinessId)) {
     return NextResponse.json({ error: 'businessId inválido' }, { status: 400 });
   }
 
@@ -127,51 +128,66 @@ export async function GET(request: Request) {
 /**
  * POST /api/notifications
  *
- * Crea una nueva notificación.
- * NOTA: Debería restringirse a roles administrativos o llamadas internas.
+ * Creates an inbox record only. It never triggers push fan-out: T2.5 attaches
+ * fan-out to trusted server-side producers, not to this HTTP surface.
  */
 export async function POST(request: Request) {
+  if (!isSameOriginRequest(request) || !isJsonRequest(request)) {
+    return NextResponse.json({ error: 'Solicitud no permitida' }, { status: 403 });
+  }
+
+  let rawBody: unknown;
   try {
-    const body = await request.json();
-    const { businessId, type, category, title, message, data } = body;
+    rawBody = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Cuerpo inválido' }, { status: 400 });
+  }
 
-    if (!businessId || !type || !category || !title || !message) {
-      return NextResponse.json({ error: 'Faltan campos requeridos' }, { status: 400 });
-    }
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
+  }
 
-    if (!user) {
-      return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
-    }
+  const validation = validateNotificationCreateBody(rawBody);
+  if (!validation.ok) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
 
-    // --- AUTORIZACIÓN PARA CREAR ---
-    const { role } = await getMemberPermissions(businessId, user.id);
-    if (!role || (role !== 'owner' && role !== 'admin')) {
-      return NextResponse.json(
-        { error: 'No tienes permiso para crear notificaciones' },
-        { status: 403 },
-      );
-    }
+  const { businessId, type, category, title, message, data } = validation.value;
 
-    if (!notificationTypeEnum.enumValues.includes(type)) {
-      return NextResponse.json({ error: 'Tipo inválido' }, { status: 400 });
-    }
+  // --- AUTORIZACIÓN PARA CREAR ---
+  const { role } = await getMemberPermissions(businessId, user.id);
+  if (!role || (role !== 'owner' && role !== 'admin')) {
+    return NextResponse.json(
+      { error: 'No tienes permiso para crear notificaciones' },
+      { status: 403 },
+    );
+  }
 
-    if (!notificationCategoryEnum.enumValues.includes(category)) {
-      return NextResponse.json({ error: 'Categoría inválida' }, { status: 400 });
-    }
+  const rateLimit = await checkRateLimitAsync(
+    `${user.id}:${businessId}`,
+    RATE_LIMITS.notificationCreate,
+  );
+  if (!rateLimit.allowed) {
+    const retryAfter = Math.max(1, Math.ceil(rateLimit.resetInMs / 1000));
+    return NextResponse.json(
+      { error: 'Demasiadas notificaciones. Inténtalo nuevamente en unos segundos.' },
+      { status: 429, headers: { 'Retry-After': String(retryAfter) } },
+    );
+  }
 
+  try {
     const newNotification: NewNotification = {
       businessId,
       type,
       category,
       title,
       message,
-      data: data ?? {},
+      data,
     };
 
     const [created] = await db.insert(notifications).values(newNotification).returning();

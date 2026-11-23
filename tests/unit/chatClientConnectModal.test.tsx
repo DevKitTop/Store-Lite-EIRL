@@ -49,7 +49,7 @@ vi.mock('@/lib/supabase/client', () => {
   };
 });
 
-vi.mock('@/app/[slug]/(app)/chat/actions/chatActions', () => ({
+vi.mock('@/features/chat/actions/chatActions', () => ({
   deleteChatSession: mockDeleteChatSession,
   fetchChatSessions: mockFetchChatSessions,
   fetchMessages: mockFetchMessages,

@@ -30,20 +30,22 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
    * that segment mints a fresh budget every request.
    */
   orderVerifyIp: { windowMs: 60 * 1000, maxRequests: 30 }, // 30 requests per minute
+  /**
+   * Route-level backstop for authenticated inbox creation (PWA T2.8). Charged
+   * per user + business; the edge `api` bucket remains the coarse IP ceiling.
+   */
+  notificationCreate: { windowMs: 60 * 1000, maxRequests: 10 }, // 10 per user/business per minute
 };
 
 const isTestEnv = () => process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
 
 async function getShared() {
-  try {
-    const mod = await import('@/core/payments/rateLimitShared');
-    return mod;
-  } catch {
-    return {
-      checkRateLimitShared: async () => ({ allowed: true, remaining: 100, resetInMs: 60000 }),
-      resetRateLimitShared: async () => {},
-    };
-  }
+  // Fail LOUD, not open: returning an `allowed: true` stub here silently
+  // disabled every limit when the shared module could not be evaluated (for
+  // example a missing DATABASE_URL at import time). Throwing lets each caller
+  // fall back to its own in-memory window, which still counts.
+  const mod = await import('@/core/payments/rateLimitShared');
+  return mod;
 }
 
 // In-memory store (fallback)

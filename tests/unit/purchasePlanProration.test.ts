@@ -18,6 +18,7 @@ const {
   mockValues,
   mockInsert,
   mockTransaction,
+  mockGetPromotionCandidates,
 } = vi.hoisted(() => {
   const mockSaasIssuerFindFirst = vi.fn();
   const mockSubscriptionFindFirst = vi.fn();
@@ -28,6 +29,7 @@ const {
     onConflictDoUpdate: mockOnConflict,
   }));
   const mockInsert = vi.fn(() => ({ values: mockValues }));
+  const mockGetPromotionCandidates = vi.fn(async () => ({ best: null, candidates: [] }));
 
   const mockTransaction = vi.fn((callback) =>
     callback({
@@ -47,6 +49,7 @@ const {
     mockValues,
     mockInsert,
     mockTransaction,
+    mockGetPromotionCandidates,
   };
 });
 
@@ -65,6 +68,10 @@ vi.mock('@/features/storage/actions/authz', () => ({
     ownerId: 'test-user-id',
     slug: 'test-business',
   })),
+}));
+
+vi.mock('@/features/promotions/getApplicablePromotion', () => ({
+  getPromotionCandidates: mockGetPromotionCandidates,
 }));
 
 vi.mock('@/core/database/client', () => ({

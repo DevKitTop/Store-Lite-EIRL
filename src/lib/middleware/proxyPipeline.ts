@@ -11,14 +11,15 @@
 // response construction) and the Supabase session layer.
 //
 // Pipeline order (matches the order in the entry point):
-// 1. Edge rate limiting for /auth/* and /api/*
+// 1. Rate limiting for /auth/* and /api/* (shared store, so the ceiling holds
+//    across middleware instances)
 // 2. Platform-only routes arriving on a tenant subdomain -> 302 redirect
 // 3. Subdomain storefront rewrite (Phase 2)
 // =====================================
 
 import { env } from '@/config/env';
 import {
-  checkRateLimit,
+  checkRateLimitAsync,
   getClientIdentifier,
   RATE_LIMITS,
   type RateLimitConfig,
@@ -45,13 +46,16 @@ export type ProxyPipelineOutcome =
  * `NextResponse.rewrite()` — `NextResponse.next()` is not enough, because
  * mutating `request.nextUrl` alone does not change what the App Router resolves.
  */
-export function runProxyPipeline(request: NextRequest): ProxyPipelineOutcome {
+export async function runProxyPipeline(request: NextRequest): Promise<ProxyPipelineOutcome> {
   // ── 1. Rate limiting ──────────────────────────────────
   // Auth and API routes are rate-limited; the storefront is not.
   const rateLimitConfig = resolveRateLimitConfig(request.nextUrl.pathname);
 
   if (rateLimitConfig) {
-    const result = checkRateLimit(getClientIdentifier(request), rateLimitConfig);
+    // Shared store: the sync limiter only counts per instance, so N middleware
+    // instances would allow N x the configured budget. Falls back to the
+    // per-instance window when the store cannot answer.
+    const result = await checkRateLimitAsync(getClientIdentifier(request), rateLimitConfig);
 
     if (!result.allowed) {
       const resetAfterSeconds = Math.ceil(result.resetInMs / 1000);
@@ -70,12 +74,36 @@ export function runProxyPipeline(request: NextRequest): ProxyPipelineOutcome {
 }
 
 /**
+ * True when the pathname is exactly the prefix or a sub-path of it.
+ * `/api` and `/api/products` match `/api`; `/apix` does not.
+ */
+function isSamePathOrSubPath(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
+/**
+ * Auth routes that are PAGES a customer opens, not an action that submits a
+ * secret. The auth bucket is 10 requests / 15 minutes, so charging page views
+ * means eleven customers on a shared NAT (office, school, market wifi) get a
+ * 429 on the login screen - the same failure that `/auth` itself used to cause.
+ * Any new auth page must be added here; the default stays limited on purpose.
+ */
+const AUTH_PAGE_PATHS = ['/auth/customer', '/auth/chat-popup'] as const;
+
+/**
  * Maps a pathname to its rate limit bucket.
- * Only /auth/* and /api/* are limited at the edge.
+ *
+ * /api (and its sub-paths) is limited at the edge. For auth only sub-paths are
+ * limited: `/auth` itself is the login PAGE, and the auth bucket is a
+ * 10-requests-per-15-minutes brute-force budget, so a page view must not spend
+ * it. Auth pages are excluded individually for the same reason.
  */
 export function resolveRateLimitConfig(pathname: string): RateLimitConfig | null {
-  if (pathname.startsWith('/auth/')) return RATE_LIMITS.auth;
-  if (pathname.startsWith('/api/')) return RATE_LIMITS.api;
+  if (pathname.startsWith('/auth/')) {
+    if (AUTH_PAGE_PATHS.some((page) => isSamePathOrSubPath(pathname, page))) return null;
+    return RATE_LIMITS.auth;
+  }
+  if (isSamePathOrSubPath(pathname, '/api')) return RATE_LIMITS.api;
   return null;
 }
 
@@ -108,9 +136,7 @@ const PLATFORM_ONLY_PREFIXES = [
 ] as const;
 
 export function isPlatformOnlyPath(pathname: string): boolean {
-  return PLATFORM_ONLY_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
+  return PLATFORM_ONLY_PREFIXES.some((prefix) => isSamePathOrSubPath(pathname, prefix));
 }
 
 /**
@@ -151,8 +177,8 @@ function getStorefrontRewriteUrl(request: NextRequest): URL | null {
   if (!slug || !isTenantHost(hostname)) return null;
 
   // /api/* routes live in app/api/... and must resolve at their canonical
-  // path, not at /{slug}/api/... — rewriting them yields 404.
-  if (request.nextUrl.pathname.startsWith('/api/')) return null;
+  // path, not at /{slug}/api/... - rewriting them yields 404.
+  if (isSamePathOrSubPath(request.nextUrl.pathname, '/api')) return null;
 
   // Guard against double rewrite when the slug is already in the path.
   if (request.nextUrl.pathname.startsWith(`/${slug}`)) return null;

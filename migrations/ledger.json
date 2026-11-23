@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-29T13:20:17.625Z",
+  "generatedAt": "2026-11-21T23:34:29.666Z",
   "counts": {
-    "sql": 84,
+    "sql": 87,
     "journal": 24,
-    "unjournaled": 60
+    "unjournaled": 63
   },
   "files": [
     {
@@ -425,6 +425,21 @@
     {
       "file": "0056_reconcile_pricing_webhooks_and_deactivation.sql",
       "prefix": "0056",
+      "method": "manual"
+    },
+    {
+      "file": "0057_push_subscriptions.sql",
+      "prefix": "0057",
+      "method": "manual"
+    },
+    {
+      "file": "0058_push_notification_deliveries.sql",
+      "prefix": "0058",
+      "method": "manual"
+    },
+    {
+      "file": "0059_promotions_and_redemptions.sql",
+      "prefix": "0059",
       "method": "manual"
     }
   ],

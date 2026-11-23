@@ -68,6 +68,12 @@ export const env = {
   // CRON_SECRET / cron_secret — protege los endpoints cron contra acceso público.
   //   Las llamadas desde Supabase pg_cron deben incluir este token.
   cronSecret: process.env.CRON_SECRET || process.env.cron_secret || '',
+  // Web Push / VAPID (server-side only). The public key is delivered to the
+  // browser by /api/push/config; the private key and subject must never leave
+  // the server. Missing values disable push delivery without crashing the app.
+  vapidPublicKey: process.env.VAPID_PUBLIC_KEY || '',
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || '',
+  vapidSubject: process.env.VAPID_SUBJECT || '',
   // PLATFORM_ADMIN_IDS — allowlist of Supabase auth user ids allowed to run
   //   operator-only cross-tenant reports (server-side only). Comma-separated;
   //   blanks are dropped. Unset → [] (fail-closed, never a wildcard).
@@ -185,6 +191,8 @@ if (isProd && !isCi) {
 } else {
   if (!env.cronSecret)
     console.warn('[cron] CRON_SECRET not set. Cron endpoints may be unprotected.');
+  if (!env.vapidPublicKey || !env.vapidPrivateKey || !env.vapidSubject)
+    console.warn('[push] VAPID variables are missing. Web Push delivery is disabled.');
   if (!env.culqiWebhookUser || !env.culqiWebhookPass)
     console.warn(
       '[culqi-webhook] CULQI_WEBHOOK_USER/PASS not set. Basic auth may be disabled in dev.',

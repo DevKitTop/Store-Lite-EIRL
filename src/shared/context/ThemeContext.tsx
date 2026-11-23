@@ -89,6 +89,21 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       document.body.classList.add(className);
       document.documentElement.setAttribute('data-theme', currentTheme);
       document.documentElement.style.colorScheme = currentTheme;
+
+      // Keep browser/PWA UI bar in sync with the resolved (possibly user-selected) theme.
+      const themeColor = currentTheme === 'dark' ? '#101417' : '#f6fafe';
+      const metaThemeColors = document.querySelectorAll('meta[name="theme-color"]');
+      if (metaThemeColors.length === 0) {
+        const meta = document.createElement('meta');
+        meta.setAttribute('name', 'theme-color');
+        meta.setAttribute('content', themeColor);
+        document.head.appendChild(meta);
+      } else {
+        metaThemeColors.forEach((meta) => {
+          meta.setAttribute('content', themeColor);
+          meta.removeAttribute('media');
+        });
+      }
     };
 
     if (theme === 'system') {

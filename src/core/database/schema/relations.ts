@@ -27,6 +27,7 @@ import {
 } from './orders';
 import { productCategories, productLikes, productMedia, products } from './products';
 import { profiles } from './profiles';
+import { pushSubscriptions } from './pushSubscriptions';
 
 // =====================================================
 // RELATIONS
@@ -34,6 +35,7 @@ import { profiles } from './profiles';
 
 export const profilesRelations = relations(profiles, ({ many }) => ({
   businesses: many(businesses),
+  pushSubscriptions: many(pushSubscriptions),
 }));
 
 export const businessesRelations = relations(businesses, ({ one, many }) => ({
@@ -254,5 +256,11 @@ export const importRowsRelations = relations(importRows, ({ one }) => ({
   product: one(products, {
     fields: [importRows.productId],
     references: [products.id],
+  }),
+}));
+export const pushSubscriptionsRelations = relations(pushSubscriptions, ({ one }) => ({
+  user: one(profiles, {
+    fields: [pushSubscriptions.userId],
+    references: [profiles.id],
   }),
 }));
