@@ -4,6 +4,7 @@ import {
   STOREFRONT_FONT_OPTIONS,
   createDefaultStorefrontTheme,
   createRandomStorefrontTheme,
+  isStorefrontColorScheme,
   normalizeStorefrontTheme,
   type StorefrontColorScheme,
   type StorefrontTheme,
@@ -13,7 +14,11 @@ import { AlertSnackbar, Button, Card, Icon, Select, Switch } from '@/shared/comp
 import { ThemeSettings } from '@/shared/components/ui/ThemeSettings';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition, type CSSProperties } from 'react';
-import { clearStorefrontTheme, updateStorefrontTheme } from '../actions';
+import {
+  clearStorefrontTheme,
+  updateStorefrontDefaultScheme,
+  updateStorefrontTheme,
+} from '../actions';
 import {
   THEME_COLOR_FIELDS,
   getFontFamilyCSS,
@@ -48,7 +53,8 @@ export function StorefrontThemeEditor({
   const [storefrontTheme, setStorefrontTheme] = useState<StorefrontTheme>(() =>
     normalizeStorefrontTheme(initialStorefrontTheme),
   );
-  const [scheme, setScheme] = useState<StorefrontColorScheme>(initialScheme ?? 'light');
+  const [scheme] = useState<StorefrontColorScheme>(initialScheme ?? 'light');
+  const [defaultScheme, setDefaultScheme] = useState<'light' | 'dark'>(initialScheme ?? 'light');
   const currentConfig = storefrontTheme[scheme];
   const { feedback, showSuccess, showError, close: closeFeedback } = useSnackbarFeedback();
 
@@ -60,13 +66,32 @@ export function StorefrontThemeEditor({
     JSON.stringify(normalizeStorefrontTheme(initialStorefrontTheme)),
   );
 
+  const handleDefaultSchemeChange = (event: SelectValueEvent) => {
+    const next = getSelectValue(event);
+    if (!isStorefrontColorScheme(next)) return;
+
+    const previous = defaultScheme;
+    setDefaultScheme(next);
+    startTransition(async () => {
+      const result = await updateStorefrontDefaultScheme(business.id, business.slug, next);
+      if (!result.success) {
+        setDefaultScheme(previous);
+        showError(result.error || 'No se pudo actualizar el esquema por defecto.');
+        return;
+      }
+
+      showSuccess('Esquema por defecto actualizado correctamente.');
+      router.refresh();
+    });
+  };
+
   const handleSaveTheme = () => {
     startTransition(async () => {
       let result;
       if (usePlatformColors) {
         result = await clearStorefrontTheme(business.id, business.slug);
       } else {
-        result = await updateStorefrontTheme(business.id, business.slug, storefrontTheme, scheme);
+        result = await updateStorefrontTheme(business.id, business.slug, storefrontTheme);
       }
 
       if (!result.success) {
@@ -191,6 +216,24 @@ export function StorefrontThemeEditor({
                   }}
                 />
               </div>
+            </div>
+
+            {/* Default scheme — the only writer of themeMode */}
+            <div style={{ padding: '0 24px 20px' }}>
+              <Select
+                label="Esquema que verán tus visitantes"
+                value={defaultScheme}
+                disabled={isPending}
+                options={[
+                  { value: 'light', label: 'Claro' },
+                  { value: 'dark', label: 'Oscuro' },
+                ]}
+                onChange={handleDefaultSchemeChange}
+              />
+              <p className={styles.previewSupporting} style={{ padding: 0, marginTop: '4px' }}>
+                Elegí el esquema con el que se abre tu tienda. No cambia el modo que usás para
+                administrar.
+              </p>
             </div>
 
             {/* Divisor */}

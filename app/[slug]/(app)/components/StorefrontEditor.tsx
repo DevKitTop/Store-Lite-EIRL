@@ -289,12 +289,7 @@ export function StorefrontEditor({
     setSaving(true);
     setFeedback(null);
     try {
-      const result = await updateStorefrontTheme(
-        business.id,
-        business.slug,
-        storefrontTheme,
-        scheme,
-      );
+      const result = await updateStorefrontTheme(business.id, business.slug, storefrontTheme);
       if (result.success) {
         setFeedback({ message: 'Guardado correctamente' });
         setTimeout(() => setFeedback(null), 3000);

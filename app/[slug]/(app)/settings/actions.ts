@@ -312,7 +312,6 @@ export async function updateStorefrontLayout(
       .insert(businessSettings)
       .values({
         businessId,
-        themeMode: 'light',
         contrastLevel: 'standard',
         preferences: layoutPatch,
       })
@@ -345,7 +344,6 @@ export async function updateStorefrontTheme(
   businessId: string,
   slug: string,
   storefrontTheme: StorefrontTheme,
-  themeMode?: 'light' | 'dark',
 ): Promise<StorefrontThemeActionState> {
   try {
     await requireAccessOnId(businessId, 'storefront.edit');
@@ -359,10 +357,6 @@ export async function updateStorefrontTheme(
       success: false,
       error: 'Funcion disponible solo para planes con personalizacion de storefront.',
     };
-  }
-
-  if (themeMode !== undefined && !isStorefrontColorScheme(themeMode)) {
-    return { success: false, error: 'Esquema de color no valido.' };
   }
 
   // Pattern overlays are re-derived from the PatternCraft catalog first, so the
@@ -382,14 +376,12 @@ export async function updateStorefrontTheme(
       .insert(businessSettings)
       .values({
         businessId,
-        themeMode: themeMode ?? 'light',
         contrastLevel: 'standard',
         preferences: themePatch,
       })
       .onConflictDoUpdate({
         target: businessSettings.businessId,
         set: {
-          ...(themeMode ? { themeMode } : {}),
           preferences: mergePreferencesPatch(themePatch),
           updatedAt: new Date(),
         },
@@ -410,6 +402,59 @@ export async function updateStorefrontTheme(
       success: false,
       error: 'Error inesperado al actualizar la apariencia publica.',
       storefrontTheme: createDefaultStorefrontTheme(),
+    };
+  }
+}
+
+/**
+ * The store's default scheme is a deliberate, standalone choice. Palette and
+ * layout saves must never write it, so this is the only action that does.
+ */
+export async function updateStorefrontDefaultScheme(
+  businessId: string,
+  slug: string,
+  defaultScheme: 'light' | 'dark',
+): Promise<ActionState> {
+  try {
+    await requireAccessOnId(businessId, 'storefront.edit');
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error, 'No autorizado') };
+  }
+
+  const entitlements = await getBusinessEntitlements(businessId);
+  if (entitlements.plan === 'lite') {
+    return {
+      success: false,
+      error: 'Funcion disponible solo para planes con personalizacion de storefront.',
+    };
+  }
+
+  if (!isStorefrontColorScheme(defaultScheme)) {
+    return { success: false, error: 'Esquema de color no valido.' };
+  }
+
+  try {
+    // Resolve the tenant before writing so a failed lookup cannot leave a
+    // committed row behind a failed response.
+    const tenantSlug = await resolveStoreSlug(businessId, slug);
+
+    // Upsert only the scheme column; sibling preference keys stay untouched.
+    await db
+      .insert(businessSettings)
+      .values({ businessId, themeMode: defaultScheme })
+      .onConflictDoUpdate({
+        target: businessSettings.businessId,
+        set: { themeMode: defaultScheme, updatedAt: new Date() },
+      });
+
+    revalidatePath(`/${tenantSlug}`, 'layout');
+
+    return { success: true, message: 'Esquema por defecto actualizado correctamente.' };
+  } catch (error: unknown) {
+    logger.error('Error updating storefront default scheme:', { error: toErrorDetail(error) });
+    return {
+      success: false,
+      error: 'Error inesperado al actualizar el esquema por defecto.',
     };
   }
 }

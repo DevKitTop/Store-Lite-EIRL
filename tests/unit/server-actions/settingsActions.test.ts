@@ -8,6 +8,7 @@ import {
   updateBusinessSEO,
   updateBusinessSlug,
   updateCulqiCredentials,
+  updateStorefrontDefaultScheme,
   updateStorefrontLayout,
   updateStorefrontTheme,
 } from '@/app/[slug]/(app)/settings/actions';
@@ -369,7 +370,7 @@ describe('settings actions — plan enforcement', () => {
     test('returns error when plan is lite', async () => {
       mockGetEntitlements.mockResolvedValue(LITE_ENTITLEMENTS);
 
-      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme, 'light');
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
 
       expect(result).toEqual({
         success: false,
@@ -391,7 +392,7 @@ describe('settings actions — plan enforcement', () => {
         maxTeamMembers: 3,
       });
 
-      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme, 'light');
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
 
       expect(result).toEqual({
         success: false,
@@ -402,46 +403,53 @@ describe('settings actions — plan enforcement', () => {
     test('proceeds when plan is lite_pago', async () => {
       mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
 
-      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme, 'light');
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
 
       expect(result.success).toBe(true);
       expect(mockGetEntitlements).toHaveBeenCalledWith(BUSINESS_ID);
     });
 
-    test('rejects an invalid themeMode before any write', async () => {
-      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
-
-      const result = await updateStorefrontTheme(
-        BUSINESS_ID,
-        'test-slug',
-        theme,
-        'sepia' as unknown as 'light',
-      );
-
-      expect(result.success).toBe(false);
-      expect(mockDbInsert).not.toHaveBeenCalled();
-      expect(mockDbUpdate).not.toHaveBeenCalled();
-    });
-
     test('persists through a single atomic upsert, no read-modify-write', async () => {
       mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
 
-      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme, 'dark');
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
 
       expect(result.success).toBe(true);
       expect(mockDbQueryBusinessSettingsFindFirst).not.toHaveBeenCalled();
       expect(mockDbInsertOnConflictDoUpdate).toHaveBeenCalledTimes(1);
 
       const values = mockDbInsertValues.mock.calls[0][0] as Record<string, unknown>;
-      expect(values.themeMode).toBe('dark');
+      expect(values).not.toHaveProperty('themeMode');
       expect(values.preferences).toHaveProperty('storefrontTheme');
+
+      const options = mockDbInsertOnConflictDoUpdate.mock.calls[0][0] as {
+        set: Record<string, unknown>;
+      };
+      expect(options.set).not.toHaveProperty('themeMode');
+    });
+
+    test('saving an edited dark palette does not change the default scheme (T07)', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      // No fourth argument: the editing tab is no longer forwarded by the UI.
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
+
+      expect(result.success).toBe(true);
+      const values = mockDbInsertValues.mock.calls[0][0] as Record<string, unknown>;
+      expect(values).not.toHaveProperty('themeMode');
+      expect(values.preferences).toHaveProperty('storefrontTheme');
+
+      const options = mockDbInsertOnConflictDoUpdate.mock.calls[0][0] as {
+        set: Record<string, unknown>;
+      };
+      expect(options.set).not.toHaveProperty('themeMode');
     });
 
     test('revalidates the tenant slug from the business record, not the caller', async () => {
       mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
       mockDbQueryBusinessesFindFirst.mockResolvedValue({ slug: 'real-slug' });
 
-      await updateStorefrontTheme(BUSINESS_ID, 'spoofed-slug', theme, 'light');
+      await updateStorefrontTheme(BUSINESS_ID, 'spoofed-slug', theme);
 
       expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith('/real-slug', 'layout');
       expect(vi.mocked(revalidatePath)).not.toHaveBeenCalledWith('/spoofed-slug', 'layout');
@@ -451,9 +459,55 @@ describe('settings actions — plan enforcement', () => {
       mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
       mockPosthogFlush.mockRejectedValueOnce(new Error('posthog down'));
 
-      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme, 'light');
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
 
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('updateStorefrontDefaultScheme', () => {
+    test('rejects an invalid scheme before any write', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      const result = await updateStorefrontDefaultScheme(
+        BUSINESS_ID,
+        'test-slug',
+        'sepia' as unknown as 'dark',
+      );
+
+      expect(result).toEqual({ success: false, error: 'Esquema de color no valido.' });
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    test('writes only themeMode, preserving sibling preference keys (T08)', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      const result = await updateStorefrontDefaultScheme(BUSINESS_ID, 'test-slug', 'dark');
+
+      expect(result.success).toBe(true);
+      expect(mockDbQueryBusinessSettingsFindFirst).not.toHaveBeenCalled();
+      expect(mockDbInsertOnConflictDoUpdate).toHaveBeenCalledTimes(1);
+
+      const values = mockDbInsertValues.mock.calls[0][0] as Record<string, unknown>;
+      expect(values.themeMode).toBe('dark');
+      expect(values).not.toHaveProperty('preferences');
+
+      const options = mockDbInsertOnConflictDoUpdate.mock.calls[0][0] as {
+        set: Record<string, unknown>;
+      };
+      expect(options.set).toHaveProperty('themeMode', 'dark');
+      expect(options.set).not.toHaveProperty('preferences');
+    });
+
+    test('revalidates the tenant slug from the business record', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+      mockDbQueryBusinessesFindFirst.mockResolvedValue({ slug: 'real-slug' });
+
+      await updateStorefrontDefaultScheme(BUSINESS_ID, 'spoofed-slug', 'dark');
+
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith('/real-slug', 'layout');
+      expect(vi.mocked(revalidatePath)).not.toHaveBeenCalledWith('/spoofed-slug', 'layout');
     });
   });
 
