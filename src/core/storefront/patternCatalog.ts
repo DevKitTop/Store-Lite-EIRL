@@ -32,7 +32,7 @@ export function canonicalPatternOverlay(
   if (!overlay) return undefined;
 
   const patternId = overlay.patternId;
-  if (!patternId) return overlay;
+  if (typeof patternId !== 'string' || patternId.length === 0) return overlay;
 
   const pattern = getPatternCraftById(patternId);
   if (!pattern) return overlay;

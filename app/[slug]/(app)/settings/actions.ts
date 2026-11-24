@@ -306,6 +306,8 @@ export async function updateStorefrontLayout(
   const layoutPatch = { [STOREFRONT_LAYOUT_PREFERENCES_KEY]: normalizedLayout };
 
   try {
+    const tenantSlug = await resolveStoreSlug(businessId, slug);
+
     await db
       .insert(businessSettings)
       .values({
@@ -322,7 +324,6 @@ export async function updateStorefrontLayout(
         },
       });
 
-    const tenantSlug = await resolveStoreSlug(businessId, slug);
     revalidatePath(`/${tenantSlug}`, 'layout');
 
     return {
@@ -364,14 +365,19 @@ export async function updateStorefrontTheme(
     return { success: false, error: 'Esquema de color no valido.' };
   }
 
-  // Pattern overlays are re-derived from the PatternCraft catalog: for a known
-  // pattern id the stored CSS must never be whatever the client sent.
-  const normalizedTheme = canonicalizeStorefrontThemePatterns(
-    normalizeStorefrontTheme(storefrontTheme),
+  // Pattern overlays are re-derived from the PatternCraft catalog first, so the
+  // catalog CSS is then normalized and sanitized exactly like any other value.
+  // For a known pattern id the client payload is never persisted.
+  const normalizedTheme = normalizeStorefrontTheme(
+    canonicalizeStorefrontThemePatterns(storefrontTheme),
   );
   const themePatch = { [STOREFRONT_THEME_PREFERENCES_KEY]: normalizedTheme };
 
   try {
+    // Resolve the tenant before writing so a failed lookup cannot leave a
+    // committed row behind a failed response.
+    const tenantSlug = await resolveStoreSlug(businessId, slug);
+
     await db
       .insert(businessSettings)
       .values({
@@ -389,7 +395,6 @@ export async function updateStorefrontTheme(
         },
       });
 
-    const tenantSlug = await resolveStoreSlug(businessId, slug);
     revalidatePath(`/${tenantSlug}`, 'layout');
 
     trackStorefrontCustomized(businessId, tenantSlug);
@@ -425,6 +430,8 @@ export async function clearStorefrontTheme(businessId: string, slug: string): Pr
   }
 
   try {
+    const tenantSlug = await resolveStoreSlug(businessId, slug);
+
     // Atomic removal of the theme key: no read-modify-write, and sibling
     // preference keys (layout, notifications) are preserved.
     const updatedRows = await db
@@ -440,7 +447,6 @@ export async function clearStorefrontTheme(businessId: string, slug: string): Pr
       return { success: true, message: 'La apariencia publica ya usaba los colores por defecto.' };
     }
 
-    const tenantSlug = await resolveStoreSlug(businessId, slug);
     revalidatePath(`/${tenantSlug}`, 'layout');
 
     return {

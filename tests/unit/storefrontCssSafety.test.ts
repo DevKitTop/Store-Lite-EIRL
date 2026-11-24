@@ -30,7 +30,6 @@ const DANGEROUS_VALUES = [
   'javascript' + ':alert(1)',
   'red !important',
   'a\\62 c',
-  'red\u0000',
 ];
 
 const themeWithOverlay = (cssOverlay: Record<string, unknown>) => {
@@ -69,6 +68,19 @@ describe('cssSafety — seller-supplied CSS values', () => {
     expect(sanitizeCssValue('intersect')).toBe('intersect');
   });
 
+  it('collapses multi-line catalog styling into a single-line safe value', () => {
+    const multiline = `
+        linear-gradient(to right, #e2e8f0 1px, transparent 1px),
+        linear-gradient(to bottom, #e2e8f0 1px, transparent 1px)
+      `;
+
+    expect(sanitizeCssValue(multiline)).toBe(
+      'linear-gradient(to right, #e2e8f0 1px, transparent 1px), linear-gradient(to bottom, #e2e8f0 1px, transparent 1px)',
+    );
+    expect(sanitizeCssValue('red\u0000')).toBe('red');
+    expect(sanitizeCssValue(' \n\t ')).toBeUndefined();
+  });
+
   it('caps value length at 800 characters', () => {
     expect(sanitizeCssValue('a'.repeat(800))).toHaveLength(800);
     expect(sanitizeCssValue('a'.repeat(801))).toBeUndefined();
@@ -80,9 +92,11 @@ describe('cssSafety — seller-supplied CSS values', () => {
     expect(sanitizeCssValue({})).toBeUndefined();
   });
 
-  it('accepts only slug-shaped pattern ids', () => {
+  it('accepts only id-shaped pattern ids', () => {
     expect(sanitizePatternId(' basic-grid ')).toBe('basic-grid');
-    expect(sanitizePatternId('basic grid')).toBeUndefined();
+    // Real catalog ids contain spaces and slashes; they never reach CSS output.
+    expect(sanitizePatternId('orchid -depths')).toBe('orchid -depths');
+    expect(sanitizePatternId('diagonal-red/blue-glow')).toBe('diagonal-red/blue-glow');
     expect(sanitizePatternId('basic-grid;}')).toBeUndefined();
     expect(sanitizePatternId(7)).toBeUndefined();
   });

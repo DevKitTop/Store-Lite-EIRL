@@ -12,11 +12,19 @@
 /** Hard cap for a single CSS value. Catalog gradients top out around 670 chars. */
 export const MAX_CSS_VALUE_LENGTH = 800;
 
-/** `patternId` is a catalog slug, never free-form CSS. */
-const PATTERN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+/** `patternId` is a catalog identifier, never CSS. Catalog ids may contain spaces and `/`. */
+const PATTERN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9 _/-]{0,63}$/;
 
 /** Custom properties only: `--storefront-primary`, `--storefront-bg-image`. */
 const CUSTOM_PROPERTY_RE = /^--[a-z0-9-]{1,64}$/i;
+
+/**
+ * CSS treats these as insignificant whitespace, and catalog values are authored
+ * as readable multi-line strings. They are collapsed instead of rejected so a
+ * legitimate pattern is never lost; injection tokens are rejected below.
+ */
+// eslint-disable-next-line no-control-regex
+const INSIGNIFICANT_WHITESPACE_RE = /[\u0000-\u0008\u000E-\u001F\u007F\s]+/g;
 
 const FORBIDDEN_FRAGMENTS: readonly RegExp[] = [
   /[;{}<>@\\]/,
@@ -30,8 +38,9 @@ const FORBIDDEN_FRAGMENTS: readonly RegExp[] = [
 ];
 
 /**
- * Returns the trimmed value when it is safe to serialise, otherwise `undefined`.
- * Callers drop the declaration entirely; they never try to repair it.
+ * Returns the whitespace-collapsed value when it is safe to serialise,
+ * otherwise `undefined`. Callers drop the declaration entirely; they never try
+ * to repair it.
  */
 export function sanitizeCssValue(
   value: unknown,
@@ -39,18 +48,18 @@ export function sanitizeCssValue(
 ): string | undefined {
   if (typeof value !== 'string') return undefined;
 
-  const trimmed = value.trim();
-  if (trimmed.length === 0 || trimmed.length > maxLength) return undefined;
-  if (FORBIDDEN_FRAGMENTS.some((pattern) => pattern.test(trimmed))) return undefined;
+  const collapsed = value.replace(INSIGNIFICANT_WHITESPACE_RE, ' ').trim();
+  if (collapsed.length === 0 || collapsed.length > maxLength) return undefined;
+  if (FORBIDDEN_FRAGMENTS.some((pattern) => pattern.test(collapsed))) return undefined;
 
-  return trimmed;
+  return collapsed;
 }
 
-/** Returns the trimmed catalog id when slug-shaped, otherwise `undefined`. */
+/** Returns the trimmed catalog id when id-shaped, otherwise `undefined`. */
 export function sanitizePatternId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
 
-  const trimmed = value.trim();
+  const trimmed = value.replace(INSIGNIFICANT_WHITESPACE_RE, ' ').trim();
   return PATTERN_ID_RE.test(trimmed) ? trimmed : undefined;
 }
 
