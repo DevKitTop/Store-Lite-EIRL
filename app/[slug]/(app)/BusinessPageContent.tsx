@@ -151,9 +151,11 @@ function BusinessPageContentUI({
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [showLookupModal, setShowLookupModal] = useState(false);
-  const [editableTheme, setEditableTheme] = useState<StorefrontTheme>(
+  const baseTheme = useMemo(
     () => storefrontTheme ?? createDefaultStorefrontTheme(),
+    [storefrontTheme],
   );
+  const [editableTheme, setEditableTheme] = useState<StorefrontTheme>(baseTheme);
   const [previewScheme, setPreviewScheme] = useState<StorefrontColorScheme | undefined>(undefined);
   const { viewerTheme, setViewerTheme, handleViewerThemeToggle } = useStorefrontViewerTheme({
     slug: business.slug,
@@ -385,11 +387,20 @@ function BusinessPageContentUI({
     () => resolveActiveScheme(viewerTheme, previewScheme, defaultScheme ?? 'light'),
     [viewerTheme, previewScheme, defaultScheme],
   );
+  const hasThemePreview = useMemo(
+    () =>
+      storefrontTheme !== undefined ||
+      previewScheme !== undefined ||
+      JSON.stringify(editableTheme) !== JSON.stringify(baseTheme),
+    [storefrontTheme, previewScheme, editableTheme, baseTheme],
+  );
   const themeStyles = useMemo(
     () =>
-      buildStorefrontThemeVars(editableTheme, activeScheme) as CSSProperties &
-        Record<string, string>,
-    [editableTheme, activeScheme],
+      hasThemePreview
+        ? (buildStorefrontThemeVars(editableTheme, activeScheme) as CSSProperties &
+            Record<string, string>)
+        : undefined,
+    [hasThemePreview, editableTheme, activeScheme],
   );
 
   // Read stored preview scheme from localStorage on mount (staff only)

@@ -6,7 +6,6 @@ import { businessSettings, productCategories } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import {
   buildStorefrontThemeStyleTag,
-  createDefaultStorefrontTheme,
   getStorefrontLayoutFromPreferences,
   getStorefrontThemeFromPreferences,
   hasCustomStorefrontTheme,
@@ -175,8 +174,9 @@ export default async function BusinessPage({ params }: Props) {
     cookieValue: cookieStore.get(viewerSchemeCookieName(business.slug))?.value,
     storedScheme: settings?.themeMode,
   });
-  const effectiveStorefrontTheme = savedStorefrontTheme ?? createDefaultStorefrontTheme();
-  const ssrThemeStyleTag = buildStorefrontThemeStyleTag(effectiveStorefrontTheme, defaultScheme);
+  const ssrThemeStyleTag = savedStorefrontTheme
+    ? buildStorefrontThemeStyleTag(savedStorefrontTheme, defaultScheme)
+    : '';
 
   // DS 011 customer-facing trust signal: same data source as the complaint
   // banner (getBusinessTrustScore). Returns null when ENABLE_AUTO_DEACTIVATION
@@ -197,7 +197,7 @@ export default async function BusinessPage({ params }: Props) {
           dangerouslySetInnerHTML={{ __html: toSafeJsonLd(breadcrumbJsonLd) }}
         />
       )}
-      <style dangerouslySetInnerHTML={{ __html: ssrThemeStyleTag }} />
+      {ssrThemeStyleTag && <style dangerouslySetInnerHTML={{ __html: ssrThemeStyleTag }} />}
       <BusinessPageContent
         business={business}
         isOwner={isOwner}

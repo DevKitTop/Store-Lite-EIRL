@@ -13,8 +13,21 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+type BuildStorefrontThemeVarsFn = (
+  ...args: Parameters<typeof buildStorefrontThemeVars>
+) => ReturnType<typeof buildStorefrontThemeVars>;
+
 // ─── Mocks (vi.mock paths are relative to THIS test file) ──────────────────
 
+vi.mock('@/core/storefront/buildStorefrontThemeVars', async (importOriginal) => {
+  const actual = (await importOriginal()) as {
+    buildStorefrontThemeVars: BuildStorefrontThemeVarsFn;
+  };
+  return {
+    ...actual,
+    buildStorefrontThemeVars: vi.fn(actual.buildStorefrontThemeVars),
+  };
+});
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock('posthog-js', () => ({ posthog: { capture: vi.fn() } }));
 vi.mock('@/shared/context/ThemeContext', () => ({
@@ -127,6 +140,7 @@ vi.mock('@/app/[slug]/(app)/components/mapToStorageProduct', () => ({
 
 import BusinessPageContent from '@/app/[slug]/(app)/BusinessPageContent';
 import { StorefrontAboutSection } from '@/app/[slug]/(app)/StorefrontAboutSection';
+import { buildStorefrontThemeVars } from '@/core/storefront/buildStorefrontThemeVars';
 import type { Business } from '@/types/business';
 import { render, screen } from '@testing-library/react';
 
@@ -214,6 +228,26 @@ describe('StorefrontProductGridSection — merchant-view uses isStaff', () => {
 // ─── Paint surface: storefront vars stay on the scoped root ───────────────
 
 describe('StorefrontContent — one scoped paint surface', () => {
+  it('renders children without a style attribute when no custom theme is saved', () => {
+    const buildVars = vi.mocked(buildStorefrontThemeVars);
+    buildVars.mockClear();
+
+    const { container } = render(
+      <BusinessPageContent
+        business={business}
+        isOwner={false}
+        isStaff={false}
+        storefrontLayout={layout}
+      />,
+    );
+
+    const root = container.querySelector('div.page-container');
+    expect(root).not.toBeNull();
+    expect(root?.children.length).toBeGreaterThan(0);
+    expect(root?.getAttribute('style')).toBeNull();
+    expect(buildVars).not.toHaveBeenCalled();
+  });
+
   it('does not write storefront theme vars to document.documentElement', () => {
     const setProperty = vi.spyOn(document.documentElement.style, 'setProperty');
     try {
