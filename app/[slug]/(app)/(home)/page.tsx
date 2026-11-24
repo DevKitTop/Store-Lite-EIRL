@@ -11,7 +11,8 @@ import {
   getStorefrontThemeFromPreferences,
   hasCustomStorefrontTheme,
 } from '@/core/storefront';
-import { parseViewerScheme, viewerSchemeCookieName } from '@/core/storefront/viewerScheme';
+import { resolveStorefrontDefaultScheme } from '@/core/storefront/resolveStorefrontDefaultScheme';
+import { viewerSchemeCookieName } from '@/core/storefront/viewerScheme';
 import { getMemberPermissions } from '@/lib/permissions';
 import { createClient } from '@/lib/supabase/server';
 import { buildHomeBreadcrumbs } from '@/shared/seo/buildStorefrontBreadcrumbs';
@@ -170,10 +171,10 @@ export default async function BusinessPage({ params }: Props) {
     : undefined;
 
   const cookieStore = await cookies();
-  const viewerCookieScheme = parseViewerScheme(
-    cookieStore.get(viewerSchemeCookieName(business.slug))?.value,
-  );
-  const defaultScheme = viewerCookieScheme ?? settings?.themeMode ?? 'light';
+  const defaultScheme = resolveStorefrontDefaultScheme({
+    cookieValue: cookieStore.get(viewerSchemeCookieName(business.slug))?.value,
+    storedScheme: settings?.themeMode,
+  });
   const effectiveStorefrontTheme = savedStorefrontTheme ?? createDefaultStorefrontTheme();
   const ssrThemeStyleTag = buildStorefrontThemeStyleTag(effectiveStorefrontTheme, defaultScheme);
 
