@@ -32,9 +32,14 @@ vi.mock('@/core/database/client', () => ({
   },
 }));
 
-const mockEnforceProductLimit = vi.hoisted(() => vi.fn(async () => 0));
+const mockDisableExcessProducts = vi.hoisted(() =>
+  vi.fn(async () => ({
+    disabledCount: 0,
+    disabledProducts: [] as { id: string; title: string }[],
+  })),
+);
 vi.mock('@/core/entitlements/enforceProductLimit', () => ({
-  enforceProductLimit: mockEnforceProductLimit,
+  disableExcessProducts: mockDisableExcessProducts,
 }));
 
 // ── Helpers ──────────────────────────────────────────
@@ -141,32 +146,46 @@ describe('getBusinessEntitlements', () => {
     expect(result.isPaymentConfigured).toBe(true);
   });
 
-  describe('safety net — enforceProductLimit', () => {
-    test('calls enforceProductLimit when subscription expired (plan degrades)', async () => {
+  describe('safety net — disableExcessProducts', () => {
+    test('calls disableExcessProducts when subscription expired (plan degrades)', async () => {
       mockSubscriptionFindFirst.mockResolvedValue(
         makeSubscription({ planEndDate: new Date('2024-01-01T00:00:00Z') }),
       );
 
       await getBusinessEntitlements('biz_123');
 
-      expect(mockEnforceProductLimit).toHaveBeenCalledTimes(1);
-      expect(mockEnforceProductLimit).toHaveBeenCalledWith('biz_123', 50);
+      expect(mockDisableExcessProducts).toHaveBeenCalledTimes(1);
+      expect(mockDisableExcessProducts).toHaveBeenCalledWith('biz_123', 50);
     });
 
-    test('does NOT call enforceProductLimit when plan stays same (active)', async () => {
+    test('exposes the disabled products returned on degradation', async () => {
+      mockSubscriptionFindFirst.mockResolvedValue(
+        makeSubscription({ planEndDate: new Date('2024-01-01T00:00:00Z') }),
+      );
+      mockDisableExcessProducts.mockResolvedValueOnce({
+        disabledCount: 1,
+        disabledProducts: [{ id: 'prod_1', title: 'Producto antiguo' }],
+      });
+
+      const result = await getBusinessEntitlements('biz_123');
+
+      expect(result.disabledProducts).toEqual([{ id: 'prod_1', title: 'Producto antiguo' }]);
+    });
+
+    test('does NOT call disableExcessProducts when plan stays same (active)', async () => {
       mockSubscriptionFindFirst.mockResolvedValue(makeSubscription());
 
       await getBusinessEntitlements('biz_123');
 
-      expect(mockEnforceProductLimit).not.toHaveBeenCalled();
+      expect(mockDisableExcessProducts).not.toHaveBeenCalled();
     });
 
-    test('does NOT call enforceProductLimit when no subscription exists', async () => {
+    test('does NOT call disableExcessProducts when no subscription exists', async () => {
       mockSubscriptionFindFirst.mockResolvedValue(null);
 
       await getBusinessEntitlements('biz_123');
 
-      expect(mockEnforceProductLimit).not.toHaveBeenCalled();
+      expect(mockDisableExcessProducts).not.toHaveBeenCalled();
     });
   });
 });

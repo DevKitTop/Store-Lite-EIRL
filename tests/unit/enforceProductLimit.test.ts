@@ -5,7 +5,10 @@
 // excess products when business exceeds plan limit.
 // =====================================================
 
-import { enforceProductLimit } from '@/core/entitlements/enforceProductLimit';
+import {
+  disableExcessProducts,
+  enforceProductLimit,
+} from '@/core/entitlements/enforceProductLimit';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // ── Mocks ────────────────────────────────────────────
@@ -64,6 +67,9 @@ function thenableWithOrderBy<T>(value: T): Promise<T> & { orderBy: typeof mockOr
 describe('enforceProductLimit', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSelectWhere.mockReset();
+    mockLimit.mockReset();
+    mockUpdateWhere.mockReset();
   });
 
   test('no-op when under limit', async () => {
@@ -118,6 +124,30 @@ describe('enforceProductLimit', () => {
     expect(mockUpdateSet).toHaveBeenCalledWith({
       isAvailable: false,
       updatedAt: expect.any(Date),
+    });
+  });
+
+  test('disableExcessProducts returns the disabled product titles', async () => {
+    const oldestProducts = [
+      { id: 'prod_1', title: 'Laptop' },
+      { id: 'prod_2', title: 'Mouse' },
+    ];
+
+    mockSelectWhere
+      .mockImplementationOnce(() => thenableWithOrderBy([{ count: 52 }]))
+      .mockImplementationOnce(() => thenableWithOrderBy(oldestProducts));
+
+    mockLimit.mockResolvedValue(oldestProducts);
+    mockUpdateWhere.mockResolvedValue(undefined);
+
+    const result = await disableExcessProducts('biz_1', 50);
+
+    expect(result).toEqual({
+      disabledCount: 2,
+      disabledProducts: [
+        { id: 'prod_1', title: 'Laptop' },
+        { id: 'prod_2', title: 'Mouse' },
+      ],
     });
   });
 

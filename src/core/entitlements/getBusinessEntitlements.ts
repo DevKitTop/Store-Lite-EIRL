@@ -13,12 +13,13 @@ import { logger } from '@/lib/logger';
 import { and, desc, eq } from 'drizzle-orm';
 import { cache } from 'react';
 
-import { enforceProductLimit } from './enforceProductLimit';
+import { disableExcessProducts } from './enforceProductLimit';
 import {
   DEFAULT_PLAN,
   PLAN_ENTITLEMENTS,
   resolvePlan,
   type BusinessEntitlements,
+  type DisabledProduct,
   type PlanType,
 } from './plans';
 
@@ -74,8 +75,13 @@ export const getBusinessEntitlements = cache(
     }
 
     // Safety net: ensure product count is within plan limits on degradation
+    let disabledProducts: DisabledProduct[] = [];
     if (previousPlan !== null && previousPlan !== plan) {
-      await enforceProductLimit(businessId, PLAN_ENTITLEMENTS[plan].maxProducts);
+      const limitResult = await disableExcessProducts(
+        businessId,
+        PLAN_ENTITLEMENTS[plan].maxProducts,
+      );
+      disabledProducts = limitResult.disabledProducts;
     }
 
     const isPaymentConfigured = Boolean(settings?.culqiPublicKey && settings?.culqiSecretKey);
@@ -88,6 +94,7 @@ export const getBusinessEntitlements = cache(
       isPaymentConfigured,
       culqiPublicKey: settings?.culqiPublicKey ?? undefined,
       planEndDate,
+      disabledProducts,
     };
   },
 );
