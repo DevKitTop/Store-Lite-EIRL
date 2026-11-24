@@ -11,6 +11,7 @@ import {
   getStorefrontThemeFromPreferences,
   hasCustomStorefrontTheme,
 } from '@/core/storefront';
+import { parseViewerScheme, viewerSchemeCookieName } from '@/core/storefront/viewerScheme';
 import { getMemberPermissions } from '@/lib/permissions';
 import { createClient } from '@/lib/supabase/server';
 import { buildHomeBreadcrumbs } from '@/shared/seo/buildStorefrontBreadcrumbs';
@@ -20,6 +21,7 @@ import { getCanonicalBusinessUrl } from '@/shared/utils/url';
 import type { PublicBusiness } from '@/types/business';
 import { eq } from 'drizzle-orm';
 import type { Metadata } from 'next';
+import { cookies } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
 import BusinessPageContent from '../BusinessPageContent';
 
@@ -167,7 +169,11 @@ export default async function BusinessPage({ params }: Props) {
     ? getStorefrontThemeFromPreferences(settings?.preferences)
     : undefined;
 
-  const defaultScheme = settings?.themeMode ?? 'light';
+  const cookieStore = await cookies();
+  const viewerCookieScheme = parseViewerScheme(
+    cookieStore.get(viewerSchemeCookieName(business.slug))?.value,
+  );
+  const defaultScheme = viewerCookieScheme ?? settings?.themeMode ?? 'light';
   const effectiveStorefrontTheme = savedStorefrontTheme ?? createDefaultStorefrontTheme();
   const ssrThemeStyleTag = buildStorefrontThemeStyleTag(effectiveStorefrontTheme, defaultScheme);
 
@@ -208,7 +214,7 @@ export default async function BusinessPage({ params }: Props) {
         businessName={business.name}
         businessRuc={business.taxId ?? undefined}
         businessAddress={business.address ?? undefined}
-        defaultScheme={settings?.themeMode ?? 'light'}
+        defaultScheme={defaultScheme}
         trustSignal={trustSignal}
       />
     </>

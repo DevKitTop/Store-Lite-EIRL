@@ -166,9 +166,10 @@ function BusinessPageContentUI({
     () => storefrontTheme ?? createDefaultStorefrontTheme(),
   );
   const [previewScheme, setPreviewScheme] = useState<StorefrontColorScheme | undefined>(undefined);
-  const [isEditorOpen, setIsEditorOpen] = useState(false);
-  const { effectiveTheme, viewerTheme, setViewerTheme, handleViewerThemeToggle, setTheme } =
-    useStorefrontViewerTheme({ slug: business.slug, editorOpen: isEditorOpen });
+  const { viewerTheme, setViewerTheme, handleViewerThemeToggle } = useStorefrontViewerTheme({
+    slug: business.slug,
+    defaultScheme: defaultScheme ?? 'light',
+  });
   const [alert, setAlert] = useState<{
     open: boolean;
     description: string;
@@ -392,13 +393,8 @@ function BusinessPageContentUI({
   };
 
   const activeScheme = useMemo(
-    () =>
-      resolveActiveScheme(
-        viewerTheme,
-        previewScheme,
-        defaultScheme ?? (effectiveTheme as StorefrontColorScheme),
-      ),
-    [viewerTheme, previewScheme, defaultScheme, effectiveTheme],
+    () => resolveActiveScheme(viewerTheme, previewScheme, defaultScheme ?? 'light'),
+    [viewerTheme, previewScheme, defaultScheme],
   );
   const themeStyles = useMemo(
     () =>
@@ -492,16 +488,14 @@ function BusinessPageContentUI({
       setPreviewScheme(scheme);
       if (scheme) {
         setViewerTheme(scheme);
-        setTheme(scheme); // 'light' | 'dark' â€” same values
         try {
           localStorage.setItem(`storefront-preview-scheme-${business.slug}`, scheme);
-          localStorage.setItem(`storefront-theme-${business.slug}`, scheme);
         } catch {
-          // Safari private mode â€” no-op
+          // Safari private mode - no-op
         }
       }
     },
-    [business.slug, setTheme, setViewerTheme],
+    [business.slug, setViewerTheme],
   );
 
   return (
@@ -560,12 +554,11 @@ function BusinessPageContentUI({
           editableTheme={editableTheme}
           onThemeChange={setEditableTheme}
           onPreviewSchemeChange={handlePreviewSchemeChange}
-          onEditorClose={() => setIsEditorOpen(false)}
-          onEditorOpen={() => setIsEditorOpen(true)}
-          detectedColorScheme={effectiveTheme as StorefrontColorScheme}
+          onEditorClose={() => undefined}
+          onEditorOpen={() => undefined}
+          detectedColorScheme={activeScheme}
           previewScheme={previewScheme}
           defaultScheme={defaultScheme}
-          onEditorOpenChange={setIsEditorOpen}
         />
       )}
       {isStaff && (
