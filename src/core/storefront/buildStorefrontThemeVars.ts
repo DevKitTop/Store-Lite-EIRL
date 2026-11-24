@@ -40,28 +40,10 @@ export function buildStorefrontThemeVars(
   const isDark = scheme === 'dark';
   const ff = resolveStorefrontFontFamily(theme.fontFamily);
 
-  // Build background CSS vars, then strip image-related keys so ::before
-  // does not double-paint (the pattern is rendered on <html> instead).
+  // The scoped ::before surface consumes every background var. Keeping the
+  // complete set here gives SSR, hydration, and the editor preview one
+  // identical paint path; no canvas outside the store scope is mutated.
   const bgVars = buildBackgroundCSS(colorConfig.background);
-  if (bgVars['--storefront-bg-image']) {
-    bgVars['--storefront-bg-image'] = 'none';
-    bgVars['--storefront-bg'] = 'transparent';
-    delete bgVars['--storefront-bg-size'];
-    delete bgVars['--storefront-bg-position'];
-    delete bgVars['--storefront-bg-repeat'];
-    delete bgVars['--storefront-bg-blend-mode'];
-    delete bgVars['--storefront-mask-image'];
-    delete bgVars['--storefront-mask-size'];
-    delete bgVars['--storefront-mask-position'];
-    delete bgVars['--storefront-mask-repeat'];
-    delete bgVars['--storefront-mask-composite'];
-    delete bgVars['--storefront-filter'];
-    delete bgVars['--storefront-opacity'];
-    delete bgVars['--storefront-mix-blend-mode'];
-    delete bgVars['--storefront-animation'];
-    delete bgVars['--storefront-box-shadow'];
-    delete bgVars['--storefront-image-rendering'];
-  }
 
   return {
     '--storefront-font-family': ff,

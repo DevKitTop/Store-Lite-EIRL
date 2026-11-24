@@ -211,6 +211,33 @@ describe('StorefrontProductGridSection — merchant-view uses isStaff', () => {
   });
 });
 
+// ─── Paint surface: storefront vars stay on the scoped root ───────────────
+
+describe('StorefrontContent — one scoped paint surface', () => {
+  it('does not write storefront theme vars to document.documentElement', () => {
+    const setProperty = vi.spyOn(document.documentElement.style, 'setProperty');
+    try {
+      render(
+        <BusinessPageContent
+          business={business}
+          isOwner={false}
+          isStaff={false}
+          storefrontLayout={layout}
+        />,
+      );
+
+      const storefrontWrites = setProperty.mock.calls.filter(
+        ([name]) =>
+          typeof name === 'string' &&
+          (name.startsWith('--storefront-') || name.startsWith('--md-sys-')),
+      );
+      expect(storefrontWrites).toEqual([]);
+    } finally {
+      setProperty.mockRestore();
+    }
+  });
+});
+
 // ─── Grid section: notice bar uses isStaff ─────────────────────────────────
 
 describe('StorefrontProductGridSection — notice bar uses isStaff', () => {

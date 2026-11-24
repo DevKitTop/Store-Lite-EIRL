@@ -7,11 +7,7 @@ import type {
   StorefrontSection,
   StorefrontTheme,
 } from '@/core/storefront';
-import {
-  buildBackgroundCSS,
-  buildStorefrontThemeVars,
-  createDefaultStorefrontTheme,
-} from '@/core/storefront';
+import { buildStorefrontThemeVars, createDefaultStorefrontTheme } from '@/core/storefront';
 import { useProductFilters } from '@/features/products/hooks/useProductFilters';
 import type { ProductWithRelations } from '@/features/products/types/productTypes';
 import { StorageProvider, useStorage } from '@/features/storage/context/StorageContext';
@@ -24,14 +20,7 @@ import type { SaveProductMediaItem, SaveProductPayload } from '@/types/storage';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { posthog } from 'posthog-js';
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useState,
-  type CSSProperties,
-} from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import FeaturedItems from '../../(main)/home/FeaturedItems';
 import Hero from '../../(main)/home/Hero';
 import styles from './BusinessPageContent.module.css';
@@ -402,72 +391,6 @@ function BusinessPageContentUI({
         Record<string, string>,
     [editableTheme, activeScheme],
   );
-
-  // Sync theme CSS vars to document root so parent elements (layout, main-area)
-  // can see --storefront-bg, --storefront-bg-image, and all MD colors
-  // useLayoutEffect ensures vars are applied synchronously BEFORE paint,
-  // preventing the flicker from cleanup â†’ re-apply of CSS custom properties.
-  useLayoutEffect(() => {
-    const root = document.documentElement;
-    const entries = Object.entries(themeStyles) as [string, string][];
-
-    // 1. Set all CSS vars on root (affects layout/main-area/storefront)
-    entries.forEach(([key, value]) => root.style.setProperty(key, value));
-
-    // 2. Recompute the ORIGINAL background (themeStyles has it stripped so
-    //    ::before doesn't double-paint). HTML handles the pattern exclusively.
-    const activeBackground =
-      activeScheme === 'dark' ? editableTheme.dark.background : editableTheme.light.background;
-    const bgOriginal = buildBackgroundCSS(activeBackground);
-    const bgImage = bgOriginal['--storefront-bg-image' as keyof typeof bgOriginal] as
-      | string
-      | undefined;
-    const hasImage = bgImage && bgImage !== 'none' && bgImage.length > 0;
-
-    if (hasImage) {
-      // Override --storefront-bg to transparent so .layout / .main-area
-      // don't paint a solid color that blocks the pattern on <html>.
-      root.style.setProperty('--storefront-bg', 'transparent');
-
-      // Set the background directly on <html> so it covers the entire page.
-      root.style.backgroundColor = 'transparent';
-      root.style.backgroundImage = bgImage;
-      root.style.backgroundSize =
-        (bgOriginal['--storefront-bg-size' as keyof typeof bgOriginal] as string) || 'auto';
-      root.style.backgroundPosition =
-        (bgOriginal['--storefront-bg-position' as keyof typeof bgOriginal] as string) || '0 0';
-      root.style.backgroundRepeat =
-        (bgOriginal['--storefront-bg-repeat' as keyof typeof bgOriginal] as string) || 'repeat';
-      root.style.backgroundAttachment = 'fixed';
-
-      // Make <body> transparent so the <html> pattern/gradient shows through
-      // the entire viewport â€” including margins, the sidebar column, and areas
-      // outside .storefrontThemeRoot.
-      document.body.style.backgroundColor = 'transparent';
-    } else {
-      // Sin imagen de fondo: <html> hereda el color sólido normal.
-      root.style.backgroundColor = '';
-      root.style.backgroundImage = '';
-      root.style.backgroundSize = '';
-      root.style.backgroundPosition = '';
-      root.style.backgroundRepeat = '';
-      root.style.backgroundAttachment = '';
-
-      // Restore body background when no pattern is active.
-      document.body.style.backgroundColor = '';
-    }
-
-    return () => {
-      entries.forEach(([key]) => root.style.removeProperty(key));
-      root.style.backgroundColor = '';
-      root.style.backgroundImage = '';
-      root.style.backgroundSize = '';
-      root.style.backgroundPosition = '';
-      root.style.backgroundRepeat = '';
-      root.style.backgroundAttachment = '';
-      document.body.style.backgroundColor = '';
-    };
-  }, [themeStyles, editableTheme, activeScheme]);
 
   // Read stored preview scheme from localStorage on mount (staff only)
   // Mirrors the same localStorage pattern as viewerTheme above.
