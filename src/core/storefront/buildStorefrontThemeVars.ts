@@ -38,6 +38,8 @@ export function buildStorefrontThemeVars(
   const colorConfig = getStorefrontColorConfig(theme, scheme);
   const palette = colorConfig.palette;
   const isDark = scheme === 'dark';
+  const onSurface = isDark ? '#f3f4f6' : '#111827';
+  const onSurfaceVariant = isDark ? '#cbd5e1' : '#4b5563';
   const ff = resolveStorefrontFontFamily(theme.fontFamily);
 
   // The scoped ::before surface consumes every background var. Keeping the
@@ -47,6 +49,9 @@ export function buildStorefrontThemeVars(
 
   return {
     '--storefront-font-family': ff,
+    '--storefront-primary': palette.primary,
+    '--storefront-on-surface': onSurface,
+    '--storefront-on-surface-variant': onSurfaceVariant,
     '--md-sys-color-primary': palette.primary,
     '--md-sys-color-on-primary': getReadableTextColor(palette.primary),
     '--md-sys-color-primary-container': palette.primary,
@@ -63,11 +68,11 @@ export function buildStorefrontThemeVars(
     '--md-sys-color-surface-container-lowest': isDark
       ? 'rgba(18, 20, 32, 0.62)'
       : 'rgba(252, 252, 253, 0.62)',
-    '--md-sys-color-on-surface': isDark ? '#f3f4f6' : '#111827',
+    '--md-sys-color-on-surface': onSurface,
     '--md-sys-color-surface-variant': isDark
       ? 'rgba(22, 27, 36, 0.72)'
       : 'rgba(245, 247, 251, 0.68)',
-    '--md-sys-color-on-surface-variant': isDark ? '#cbd5e1' : '#4b5563',
+    '--md-sys-color-on-surface-variant': onSurfaceVariant,
     '--md-sys-color-surface-container-low': isDark
       ? 'rgba(24, 29, 41, 0.68)'
       : 'rgba(248, 250, 252, 0.66)',
