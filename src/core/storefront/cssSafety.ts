@@ -34,7 +34,8 @@ const FORBIDDEN_FRAGMENTS: readonly RegExp[] = [
   /expression\s*\(/i,
   /javascript\s*:/i,
   /-moz-binding/i,
-  /!important/i,
+  // CSS allows whitespace between `!` and `important`; match the folded form too.
+  /!\s*important/i,
 ];
 
 /**

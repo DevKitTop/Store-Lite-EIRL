@@ -60,6 +60,10 @@ function canonicalizeColorConfig(config: StorefrontColorConfig | undefined) {
  * catalog rebuilt from the catalog definition.
  */
 export function canonicalizeStorefrontThemePatterns(theme: StorefrontTheme): StorefrontTheme {
+  // Client payloads are untrusted: a null/non-object theme must be left for
+  // `normalizeStorefrontTheme` to handle, exactly as it did before this step.
+  if (typeof theme !== 'object' || theme === null) return theme;
+
   return {
     ...theme,
     light: canonicalizeColorConfig(theme.light) ?? theme.light,
