@@ -1,3 +1,4 @@
+import { isSafeCssDeclaration, sanitizeCssValue } from './cssSafety';
 import type { StorefrontColorScheme, StorefrontTheme } from './storefrontTheme';
 import {
   buildBackgroundCSS,
@@ -115,12 +116,13 @@ export function buildStorefrontThemeStyleTag(
 ): string {
   const vars = buildStorefrontThemeVars(theme, scheme);
   const declarations = Object.entries(vars)
-    // Hardening: palette values are free-form seller-supplied strings. A value
-    // containing an angle bracket could close this `<style>` element early and
-    // inject a `<script>` (CSS injection escalating to stored XSS on a page a
-    // buyer views). Legit CSS values never contain `<` or `>`, so drop such a
-    // declaration entirely rather than emit it and break out of the element.
-    .filter(([, value]) => !/[<>]/.test(value))
+    // Hardening: palette values are free-form seller-supplied strings that end
+    // up inside a `<style>` element. Emit only a custom property whose value
+    // passes the same allowlist used when persisting the theme, so a value can
+    // never close the element, start a new rule/at-rule, or fetch a URL.
+    .filter(([key]) => isSafeCssDeclaration(key))
+    .map(([key, value]) => [key, sanitizeCssValue(value)] as const)
+    .filter((entry): entry is readonly [string, string] => entry[1] !== undefined)
     .map(([key, value]) => `${key}:${value}`)
     .join(';');
   return `:root{${declarations}}`;

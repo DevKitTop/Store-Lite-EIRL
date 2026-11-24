@@ -1,3 +1,5 @@
+import { sanitizeCssValue, sanitizePatternId } from './cssSafety';
+
 export type StorefrontFontFamily = 'google-sans' | 'inter' | 'roboto' | 'poppins';
 export type StorefrontColorScheme = 'light' | 'dark';
 export type StorefrontBackgroundType = 'solid' | 'gradient';
@@ -144,6 +146,11 @@ export function getStorefrontColorConfig(
 
 export function normalizeStorefrontColorScheme(input: unknown): StorefrontColorScheme {
   return input === 'dark' ? 'dark' : 'light';
+}
+
+/** Strict guard for values arriving from the client (no silent fallback). */
+export function isStorefrontColorScheme(input: unknown): input is StorefrontColorScheme {
+  return input === 'light' || input === 'dark';
 }
 
 // ─── Pattern CSS helpers ──────────────────────────────────────────
@@ -472,55 +479,40 @@ function normalizeStorefrontBackground(input: unknown): StorefrontBackground | u
     };
   }
 
-  // Normalize custom CSS overlay (from PatternCraft or similar)
+  // Normalize custom CSS overlay (from PatternCraft or similar).
+  // Every field is client input that is persisted and later serialized into a
+  // <style> tag served to buyers, so each value goes through the sanitizer and
+  // an unsafe value is dropped instead of stored.
   const cssInput = isRecord(input.cssOverlay)
     ? (input.cssOverlay as Record<string, unknown>)
     : undefined;
   let cssOverlay: StorefrontCssOverlay | undefined;
-  if (
-    cssInput &&
-    typeof cssInput.backgroundImage === 'string' &&
-    cssInput.backgroundImage.trim().length > 0
-  ) {
-    cssOverlay = {
-      patternId: typeof cssInput.patternId === 'string' ? cssInput.patternId.trim() : undefined,
-      background: typeof cssInput.background === 'string' ? cssInput.background.trim() : undefined,
-      backgroundImage: cssInput.backgroundImage.trim(),
-      backgroundSize:
-        typeof cssInput.backgroundSize === 'string' ? cssInput.backgroundSize.trim() : undefined,
-      backgroundPosition:
-        typeof cssInput.backgroundPosition === 'string'
-          ? cssInput.backgroundPosition.trim()
-          : undefined,
-      backgroundRepeat:
-        typeof cssInput.backgroundRepeat === 'string'
-          ? cssInput.backgroundRepeat.trim()
-          : undefined,
-      maskImage: typeof cssInput.maskImage === 'string' ? cssInput.maskImage.trim() : undefined,
-      maskSize: typeof cssInput.maskSize === 'string' ? cssInput.maskSize.trim() : undefined,
-      maskPosition:
-        typeof cssInput.maskPosition === 'string' ? cssInput.maskPosition.trim() : undefined,
-      maskRepeat: typeof cssInput.maskRepeat === 'string' ? cssInput.maskRepeat.trim() : undefined,
-      maskComposite:
-        typeof cssInput.maskComposite === 'string' ? cssInput.maskComposite.trim() : undefined,
-      backgroundBlendMode:
-        typeof cssInput.backgroundBlendMode === 'string'
-          ? cssInput.backgroundBlendMode.trim()
-          : undefined,
-      filter: typeof cssInput.filter === 'string' ? cssInput.filter.trim() : undefined,
-      opacity:
-        typeof cssInput.opacity === 'string'
-          ? cssInput.opacity.trim()
-          : typeof cssInput.opacity === 'number'
-            ? String(cssInput.opacity)
-            : undefined,
-      mixBlendMode:
-        typeof cssInput.mixBlendMode === 'string' ? cssInput.mixBlendMode.trim() : undefined,
-      animation: typeof cssInput.animation === 'string' ? cssInput.animation.trim() : undefined,
-      boxShadow: typeof cssInput.boxShadow === 'string' ? cssInput.boxShadow.trim() : undefined,
-      imageRendering:
-        typeof cssInput.imageRendering === 'string' ? cssInput.imageRendering.trim() : undefined,
-    };
+  if (cssInput) {
+    const backgroundImage = sanitizeCssValue(cssInput.backgroundImage);
+    if (backgroundImage) {
+      cssOverlay = {
+        patternId: sanitizePatternId(cssInput.patternId),
+        background: sanitizeCssValue(cssInput.background),
+        backgroundImage,
+        backgroundSize: sanitizeCssValue(cssInput.backgroundSize),
+        backgroundPosition: sanitizeCssValue(cssInput.backgroundPosition),
+        backgroundRepeat: sanitizeCssValue(cssInput.backgroundRepeat),
+        maskImage: sanitizeCssValue(cssInput.maskImage),
+        maskSize: sanitizeCssValue(cssInput.maskSize),
+        maskPosition: sanitizeCssValue(cssInput.maskPosition),
+        maskRepeat: sanitizeCssValue(cssInput.maskRepeat),
+        maskComposite: sanitizeCssValue(cssInput.maskComposite),
+        backgroundBlendMode: sanitizeCssValue(cssInput.backgroundBlendMode),
+        filter: sanitizeCssValue(cssInput.filter),
+        opacity: sanitizeCssValue(
+          typeof cssInput.opacity === 'number' ? String(cssInput.opacity) : cssInput.opacity,
+        ),
+        mixBlendMode: sanitizeCssValue(cssInput.mixBlendMode),
+        animation: sanitizeCssValue(cssInput.animation),
+        boxShadow: sanitizeCssValue(cssInput.boxShadow),
+        imageRendering: sanitizeCssValue(cssInput.imageRendering),
+      };
+    }
   }
 
   // Normalize gradient direction (0-360, default 135)
