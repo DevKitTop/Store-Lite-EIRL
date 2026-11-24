@@ -93,4 +93,29 @@ describe('storefront theme style tag — style element breakout guard', () => {
     expect(vars['--storefront-bg-blend-mode']).toBe('overlay');
     expect(vars['--storefront-mix-blend-mode']).toBe('multiply');
   });
+
+  it('sanitizes hostile CSS carried by a pattern var', () => {
+    const theme = createDefaultStorefrontTheme();
+    const hostile = {
+      ...theme,
+      light: {
+        ...theme.light,
+        background: {
+          type: 'gradient' as const,
+          colors: ['#ffffff', '#000000'],
+          cssOverlay: {
+            backgroundImage: 'linear-gradient(#ffffff, #000000)',
+            maskImage: 'red;}</style><script>alert(1)</script>',
+          },
+        },
+      },
+    };
+
+    const css = buildStorefrontThemeStyleTag(hostile, 'light');
+
+    expect(css).not.toContain('</style>');
+    expect(css).not.toContain('<script');
+    expect(css).not.toContain('<');
+    expect(css).not.toContain('>');
+  });
 });
