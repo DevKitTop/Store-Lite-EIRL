@@ -40,6 +40,11 @@ export function resolvePlan(plan: string | null | undefined): PlanType {
  * Todos los permisos/límites que un negocio puede tener.
  * Agrega nuevas propiedades aquí cuando necesites una nueva validación.
  */
+export interface DisabledProduct {
+  id: string;
+  title: string;
+}
+
 export interface BusinessEntitlements {
   /** Plan activo del negocio */
   plan: PlanType;
@@ -64,6 +69,9 @@ export interface BusinessEntitlements {
   maxCategories: number;
   /** Puede importar productos en masa */
   canImportProducts: boolean;
+
+  /** Productos desactivados al degradar el plan por vencimiento */
+  disabledProducts?: DisabledProduct[];
 
   // ─── Storefront ───────────────────────────────────────
   /** Puede personalizar colores, fuentes y layout del storefront */
@@ -102,7 +110,12 @@ export const PLAN_ENTITLEMENTS: Record<
   PlanType,
   Omit<
     BusinessEntitlements,
-    'plan' | 'isActive' | 'isPaymentConfigured' | 'culqiPublicKey' | 'planEndDate'
+    | 'plan'
+    | 'isActive'
+    | 'isPaymentConfigured'
+    | 'culqiPublicKey'
+    | 'planEndDate'
+    | 'disabledProducts'
   >
 > = {
   // Free tier — formerly "basico"
