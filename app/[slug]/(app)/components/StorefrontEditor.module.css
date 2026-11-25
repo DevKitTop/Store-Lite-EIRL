@@ -628,24 +628,6 @@
   padding-left: 1.7rem;
 }
 
-.patternCraftRemoveBtn {
-  margin-left: auto;
-  padding: 4px 12px;
-  border: 1px solid var(--md-sys-color-error, #b3261e);
-  background: transparent;
-  color: var(--md-sys-color-error, #b3261e);
-  border-radius: 6px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s;
-  flex-shrink: 0;
-}
-
-.patternCraftRemoveBtn:hover {
-  background: color-mix(in srgb, var(--md-sys-color-error) 10%, transparent);
-}
-
 /* ── Fill disabled state (when non-geometric pattern is active) ── */
 .fillDisabled {
   opacity: 0.45;

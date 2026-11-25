@@ -19,16 +19,41 @@ interface PatternBrowserProps {
   colorScheme: 'light' | 'dark';
 }
 
+type PatternBrowserCategoryKey = 'gradients' | 'geometric' | 'effects';
+
 const CATEGORIES: {
-  key: PatternCraftCategory;
+  key: PatternBrowserCategoryKey;
   label: string;
   icon: string;
 }[] = [
   { key: 'gradients', label: 'Gradientes', icon: 'gradient' },
   { key: 'geometric', label: 'Geométricos', icon: 'grid_view' },
-  { key: 'decorative', label: 'Decorativos', icon: 'auto_awesome' },
-  { key: 'effects', label: 'Efectos', icon: 'blur_on' },
+  { key: 'effects', label: 'Efectos', icon: 'auto_awesome' },
 ];
+
+const CATEGORY_FAMILIES: ReadonlyMap<PatternBrowserCategoryKey, readonly PatternCraftCategory[]> =
+  new Map([
+    ['gradients', ['gradients']],
+    ['geometric', ['geometric']],
+    ['effects', ['decorative', 'effects']],
+  ]);
+
+function patternsForFamily(family: PatternCraftCategory): PatternCraftPattern[] {
+  switch (family) {
+    case 'gradients':
+      return curatedPatternByCategory.gradients;
+    case 'geometric':
+      return curatedPatternByCategory.geometric;
+    case 'decorative':
+      return curatedPatternByCategory.decorative;
+    case 'effects':
+      return curatedPatternByCategory.effects;
+  }
+}
+
+function curatedForCategory(key: PatternBrowserCategoryKey): PatternCraftPattern[] {
+  return (CATEGORY_FAMILIES.get(key) ?? []).flatMap(patternsForFamily);
+}
 
 function previewStyle(style: PatternCraftStyle): React.CSSProperties {
   const css: React.CSSProperties = {};
@@ -120,7 +145,7 @@ export function PatternBrowser({
   currentPatternId,
   colorScheme,
 }: PatternBrowserProps) {
-  const [activeCategory, setActiveCategory] = useState<PatternCraftCategory>('gradients');
+  const [activeCategory, setActiveCategory] = useState<PatternBrowserCategoryKey>('gradients');
   const [selectedId, setSelectedId] = useState<string | null>(currentPatternId ?? null);
   const { surfaceRef } = useDialogSurface({ open, onClose, captureEscape: true });
 
@@ -140,7 +165,7 @@ export function PatternBrowser({
 
   const patterns = useMemo(
     () =>
-      (curatedPatternByCategory[activeCategory] ?? []).filter((p) => {
+      curatedForCategory(activeCategory).filter((p) => {
         const match = classifyPattern(p.style);
         return match === 'both' || match === colorScheme;
       }),
@@ -209,11 +234,10 @@ export function PatternBrowser({
         {/* ── Category tabs ── */}
         <div className={styles.tabs}>
           {visibleCategories.map((cat) => {
-            const filteredCount =
-              (curatedPatternByCategory[cat.key] ?? []).filter((p) => {
-                const match = classifyPattern(p.style);
-                return match === 'both' || match === colorScheme;
-              }).length ?? 0;
+            const filteredCount = curatedForCategory(cat.key).filter((p) => {
+              const match = classifyPattern(p.style);
+              return match === 'both' || match === colorScheme;
+            }).length;
             return (
               <button
                 key={cat.key}
@@ -270,7 +294,7 @@ export function PatternBrowser({
             disabled={!selectedId}
             onClick={() => handleConfirm()}
           >
-            {selectedId === currentPatternId ? 'Mantener selección' : 'Aplicar patrón'}
+            Aplicar patrón
           </button>
         </div>
       </div>

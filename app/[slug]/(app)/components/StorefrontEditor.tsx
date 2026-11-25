@@ -694,12 +694,6 @@ export function StorefrontEditor({
                             cssOverlay.patternId}
                         </strong>
                       </span>
-                      <button
-                        className={styles.patternCraftRemoveBtn}
-                        onClick={handleRemovePatternCraft}
-                      >
-                        Quitar
-                      </button>
                     </div>
                     <span className={styles.patternCraftHint}>
                       {hasPatternColor
