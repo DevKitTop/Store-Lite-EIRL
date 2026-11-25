@@ -4,8 +4,8 @@ import type {
   PatternCraftCategory,
   PatternCraftPattern,
   PatternCraftStyle,
-} from '@/data/patterncraft';
-import { getPatternCraftById, patternCraftByCategory } from '@/data/patterncraft';
+} from '@/data/patterncraft/curated';
+import { curatedPatternByCategory, getCuratedPatternById } from '@/data/patterncraft/curated';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDialogSurface } from '../useDialogSurface';
 import styles from './PatternBrowser.module.css';
@@ -112,34 +112,6 @@ function classifyPattern(style: PatternCraftStyle): 'dark' | 'light' | 'both' {
   return 'light';
 }
 
-// Patrones eliminados del browser (no se renderizan en ningún scheme)
-const REMOVED = new Set([
-  'left-masked-basic-grid',
-  'left-masked-circuit-board',
-  'left-masked-circuit-board-light',
-  'left-masked-dashed-grid-light',
-  'right-masked-basic-grid',
-  'right-masked-circuit-board',
-  'right-masked-circuit-board-light',
-  'right-masked-dashed-grid-light',
-  'diagonal-lines',
-]);
-
-// Patrones que solo se muestran en dark mode
-const DARK_ONLY = new Set([
-  'striped-dark',
-  'azure-depths-top',
-  'crimson-depth-top',
-  'dark-horizon-glow-top',
-  'emerald-void-top',
-  'orchid-depths-top',
-  'violet-abyss-top',
-  'cosmic-noise',
-  'cosmic-sparkle',
-  'deep-ocean-glow',
-  'midnight-ember',
-]);
-
 export function PatternBrowser({
   open,
   onClose,
@@ -168,9 +140,7 @@ export function PatternBrowser({
 
   const patterns = useMemo(
     () =>
-      (patternCraftByCategory[activeCategory] ?? []).filter((p) => {
-        if (REMOVED.has(p.id)) return false;
-        if (colorScheme === 'light' && DARK_ONLY.has(p.id)) return false;
+      (curatedPatternByCategory[activeCategory] ?? []).filter((p) => {
         const match = classifyPattern(p.style);
         return match === 'both' || match === colorScheme;
       }),
@@ -180,7 +150,7 @@ export function PatternBrowser({
   const handleConfirm = useCallback(
     (patternId: string | null = selectedId) => {
       if (!patternId) return;
-      const pattern = getPatternCraftById(patternId);
+      const pattern = getCuratedPatternById(patternId);
       if (pattern) {
         onSelect(pattern);
       }
@@ -189,7 +159,7 @@ export function PatternBrowser({
     [selectedId, onSelect, onClose],
   );
 
-  const currentPattern = currentPatternId ? getPatternCraftById(currentPatternId) : undefined;
+  const currentPattern = currentPatternId ? getCuratedPatternById(currentPatternId) : undefined;
 
   if (!open) return null;
 
@@ -240,9 +210,7 @@ export function PatternBrowser({
         <div className={styles.tabs}>
           {visibleCategories.map((cat) => {
             const filteredCount =
-              (patternCraftByCategory[cat.key] ?? []).filter((p) => {
-                if (REMOVED.has(p.id)) return false;
-                if (colorScheme === 'light' && DARK_ONLY.has(p.id)) return false;
+              (curatedPatternByCategory[cat.key] ?? []).filter((p) => {
                 const match = classifyPattern(p.style);
                 return match === 'both' || match === colorScheme;
               }).length ?? 0;

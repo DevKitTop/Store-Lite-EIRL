@@ -1,4 +1,4 @@
-import { getPatternCraftById, type PatternCraftPattern } from '@/data/patterncraft';
+import { getCuratedPatternById, type PatternCraftPattern } from '@/data/patterncraft/curated';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
@@ -10,8 +10,8 @@ import { PatternBrowser } from './PatternBrowser';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const firstPattern = getPatternCraftById('arctic-lights-glow');
-const secondPattern = getPatternCraftById('aurora-edge-glow');
+const firstPattern = getCuratedPatternById('aurora-edge-glow');
+const secondPattern = getCuratedPatternById('center-spotlight-violet');
 
 if (!firstPattern || !secondPattern) {
   throw new Error('PatternCraft fixtures are missing');
@@ -77,8 +77,8 @@ describe('PatternBrowser correctness (T22)', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: /Arctic Lights Glow/ }));
-    fireEvent.doubleClick(screen.getByRole('button', { name: /Aurora Edge Glow/ }));
+    await user.click(screen.getByRole('button', { name: /Aurora Edge Glow/ }));
+    fireEvent.doubleClick(screen.getByRole('button', { name: /Violet Spotlight/ }));
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith(secondPattern);
@@ -89,7 +89,7 @@ describe('PatternBrowser correctness (T22)', () => {
     const onSelect = vi.fn();
     render(<BrowserHarness onSelect={onSelect} />);
 
-    const card = screen.getByRole('button', { name: /Arctic Lights Glow/ });
+    const card = screen.getByRole('button', { name: /Aurora Edge Glow/ });
     for (let i = 0; i < 20 && document.activeElement !== card; i += 1) {
       await user.tab();
     }
@@ -196,11 +196,11 @@ describe('PatternBrowser labels and states (T24)', () => {
       'aria-pressed',
       'false',
     );
-    expect(screen.getByRole('button', { name: /Arctic Lights Glow/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /Aurora Edge Glow/ })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
-    expect(screen.getByRole('button', { name: /Aurora Edge Glow/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /Violet Spotlight/ })).toHaveAttribute(
       'aria-pressed',
       'false',
     );

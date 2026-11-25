@@ -1,0 +1,192 @@
+[
+  {
+    "id": "aurora-edge-glow",
+    "name": "Aurora Edge Glow",
+    "category": "gradients",
+    "badge": "New",
+    "hasMask": false,
+    "style": {
+      "background": "#000000",
+      "backgroundImage": "\n     radial-gradient(ellipse 50% 100% at 10% 0%, rgba(226, 232, 240, 0.15), transparent 65%)\n   ",
+      "backgroundSize": "100% 100%"
+    }
+  },
+  {
+    "id": "blue-radial-glow",
+    "name": "Blue Radial Glow",
+    "category": "gradients",
+    "hasMask": false,
+    "style": {
+      "background": "#0f172a",
+      "backgroundImage": "radial-gradient(circle 600px at 50% 50%, rgba(59,130,246,0.3), transparent)"
+    }
+  },
+  {
+    "id": "center-spotlight-amber",
+    "name": "Amber Spotlight",
+    "category": "gradients",
+    "hasMask": false,
+    "style": {
+      "background": "#000000",
+      "backgroundImage": "\n        radial-gradient(\n          circle at center,\n          rgba(245, 158, 11, 0.12) 0%,\n          rgba(245, 158, 11, 0.06) 20%,\n          rgba(0, 0, 0, 0.0) 60%\n        )\n      ",
+      "backgroundSize": "100% 100%"
+    }
+  },
+  {
+    "id": "center-spotlight-violet",
+    "name": "Violet Spotlight",
+    "category": "gradients",
+    "badge": "New",
+    "hasMask": false,
+    "style": {
+      "background": "#000000",
+      "backgroundImage": "\n        radial-gradient(\n          circle at center,\n          rgba(168, 85, 247, 0.12) 0%,\n          rgba(168, 85, 247, 0.06) 20%,\n          rgba(0, 0, 0, 0.0) 60%\n        )\n      ",
+      "backgroundSize": "100% 100%"
+    }
+  },
+  {
+    "id": "basic-grid",
+    "name": "Basic Grid",
+    "category": "geometric",
+    "hasMask": false,
+    "style": {
+      "backgroundImage": "\n        linear-gradient(to right, #e5e7eb 1px, transparent 1px),\n        linear-gradient(to bottom, #e5e7eb 1px, transparent 1px)\n      ",
+      "backgroundSize": "40px 40px"
+    }
+  },
+  {
+    "id": "bottom-fade-grid",
+    "name": "Bottom Fade Grid",
+    "category": "geometric",
+    "badge": "New",
+    "hasMask": true,
+    "style": {
+      "background": "#f8fafc",
+      "backgroundImage": "\n        linear-gradient(to right, #e2e8f0 1px, transparent 1px),\n        linear-gradient(to bottom, #e2e8f0 1px, transparent 1px)\n      ",
+      "backgroundSize": "20px 30px",
+      "WebkitMaskImage": "radial-gradient(ellipse 70% 60% at 50% 100%, #000 60%, transparent 100%)",
+      "maskImage": "radial-gradient(ellipse 70% 60% at 50% 100%, #000 60%, transparent 100%)"
+    }
+  },
+  {
+    "id": "circuit-board-light",
+    "name": "Circuit Board - Light",
+    "category": "geometric",
+    "badge": "New",
+    "hasMask": false,
+    "style": {
+      "background": "#ffffff",
+      "backgroundImage": "\n      repeating-linear-gradient(0deg, transparent, transparent 19px, rgba(75, 85, 99, 0.08) 19px, rgba(75, 85, 99, 0.08) 20px, transparent 20px, transparent 39px, rgba(75, 85, 99, 0.08) 39px, rgba(75, 85, 99, 0.08) 40px),\n      repeating-linear-gradient(90deg, transparent, transparent 19px, rgba(75, 85, 99, 0.08) 19px, rgba(75, 85, 99, 0.08) 20px, transparent 20px, transparent 39px, rgba(75, 85, 99, 0.08) 39px, rgba(75, 85, 99, 0.08) 40px),\n      radial-gradient(circle at 20px 20px, rgba(55, 65, 81, 0.12) 2px, transparent 2px),\n      radial-gradient(circle at 40px 40px, rgba(55, 65, 81, 0.12) 2px, transparent 2px)\n    ",
+      "backgroundSize": "40px 40px, 40px 40px, 40px 40px, 40px 40px"
+    }
+  },
+  {
+    "id": "dashed-center-fade-grid",
+    "name": "Dashed Center Fade Grid",
+    "category": "geometric",
+    "badge": "New",
+    "hasMask": true,
+    "style": {
+      "backgroundImage": "\n             linear-gradient(to right, #e7e5e4 1px, transparent 1px),\n        linear-gradient(to bottom, #e7e5e4 1px, transparent 1px)\n          ",
+      "backgroundSize": "20px 20px",
+      "backgroundPosition": "0 0, 0 0",
+      "maskImage": "\n            repeating-linear-gradient(\n              to right,\n              black 0px,\n              black 3px,\n              transparent 3px,\n              transparent 8px\n            ),\n            repeating-linear-gradient(\n              to bottom,\n              black 0px,\n              black 3px,\n              transparent 3px,\n              transparent 8px\n            ),\n          radial-gradient(ellipse 60% 60% at 50% 50%, #000 30%, transparent 70%)\n          ",
+      "WebkitMaskImage": "\n            repeating-linear-gradient(\n              to right,\n              black 0px,\n              black 3px,\n              transparent 3px,\n              transparent 8px\n            ),\n            repeating-linear-gradient(\n              to bottom,\n              black 0px,\n              black 3px,\n              transparent 3px,\n              transparent 8px\n            ),\n          radial-gradient(ellipse 60% 60% at 50% 50%, #000 30%, transparent 70%)\n          ",
+      "maskComposite": "intersect",
+      "WebkitMaskComposite": "source-in"
+    }
+  },
+  {
+    "id": "blue-corner-glow",
+    "name": "Blue Corner Glow",
+    "category": "decorative",
+    "badge": "New",
+    "hasMask": false,
+    "style": {
+      "background": "#ffffff",
+      "backgroundImage": "\n      radial-gradient(circle 600px at 0% 200px, #bfdbfe, transparent),\n      radial-gradient(circle 600px at 100% 200px, #bfdbfe, transparent)\n    "
+    }
+  },
+  {
+    "id": "bottom-emerald-glow",
+    "name": "Bottom Emerald Glow",
+    "badge": "New",
+    "category": "decorative",
+    "hasMask": false,
+    "style": {
+      "background": "#ffffff",
+      "backgroundImage": "\n      radial-gradient(125% 125% at 50% 90%, #ffffff 40%, #10b981 100%)\n    ",
+      "backgroundSize": "100% 100%"
+    }
+  },
+  {
+    "id": "azure-depths",
+    "name": "Azure Depths",
+    "badge": "New",
+    "category": "decorative",
+    "hasMask": false,
+    "style": {
+      "background": "#000000",
+      "backgroundImage": "radial-gradient(125% 125% at 50% 100%, #000000 40%, #010133 100%)",
+      "backgroundSize": "100% 100%"
+    }
+  },
+  {
+    "id": "lavender-cosmic-glow",
+    "name": "Lavender Cosmic Glow",
+    "category": "decorative",
+    "badge": "New",
+    "hasMask": false,
+    "style": {
+      "background": "radial-gradient(circle at 40% 40%, #E9D5FF 0%, #C4B5FD 20%, #A78BFA 40%, #8B5CF6 60%, #6D28D9 80%, #581C87 100%)"
+    }
+  },
+  {
+    "id": "aurora-dream-corner-whispers",
+    "name": "Aurora Dream Corner Whispers",
+    "category": "effects",
+    "badge": "New",
+    "hasMask": false,
+    "style": {
+      "background": "#f7eaff",
+      "backgroundImage": "\n       radial-gradient(ellipse 85% 65% at 8% 8%, rgba(175, 109, 255, 0.42), transparent 60%),\n            radial-gradient(ellipse 75% 60% at 75% 35%, rgba(255, 235, 170, 0.55), transparent 62%),\n            radial-gradient(ellipse 70% 60% at 15% 80%, rgba(255, 100, 180, 0.40), transparent 62%),\n            radial-gradient(ellipse 70% 60% at 92% 92%, rgba(120, 190, 255, 0.45), transparent 62%),\n            linear-gradient(180deg, #f7eaff 0%, #fde2ea 100%)\n    ",
+      "backgroundSize": "100% 100%"
+    }
+  },
+  {
+    "id": "beige-texture",
+    "name": "Warm Beige",
+    "category": "effects",
+    "badge": "New",
+    "hasMask": false,
+    "style": {
+      "background": "#f5f5dc",
+      "backgroundImage": "\n        radial-gradient(circle at 20% 80%, rgba(120,119,198,0.3) 0%, transparent 50%),\n        radial-gradient(circle at 80% 20%, rgba(255,255,255,0.5) 0%, transparent 50%),\n        radial-gradient(circle at 40% 40%, rgba(120,119,198,0.1) 0%, transparent 50%)\n      "
+    }
+  },
+  {
+    "id": "moonlit-fog",
+    "name": "Moonlit Fog",
+    "category": "effects",
+    "badge": "New",
+    "description": "Soft, ethereal gradient inspired by moonlit foggy nights",
+    "hasMask": false,
+    "style": {
+      "background": "\n        radial-gradient(circle at 70% 30%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),\n        radial-gradient(circle at 30% 70%, rgba(176, 196, 222, 0.15) 0%, transparent 50%),\n        linear-gradient(135deg, \n          #2c3e50 0%,\n          #3a506b 25%,\n          #435e79 50%,\n          #516b87 75%,\n          #5f7995 100%\n        )\n      ",
+      "backgroundBlendMode": "soft-light, screen, normal",
+      "filter": "brightness(1.05) contrast(1.05)"
+    }
+  },
+  {
+    "id": "soft-yellow-glow",
+    "name": "Soft Yellow Glow",
+    "category": "effects",
+    "badge": "New",
+    "hasMask": false,
+    "style": {
+      "backgroundImage": "\n      radial-gradient(circle at center, #FFF991 0%, transparent 70%)\n    ",
+      "opacity": 0.6,
+      "mixBlendMode": "multiply"
+    }
+  }
+]

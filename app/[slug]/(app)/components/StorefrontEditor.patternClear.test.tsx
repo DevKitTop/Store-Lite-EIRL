@@ -1,5 +1,5 @@
 import { patternToCssOverlay, type StorefrontTheme } from '@/core/storefront/storefrontTheme';
-import { getPatternCraftById } from '@/data/patterncraft';
+import { getCuratedPatternById } from '@/data/patterncraft/curated';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -17,7 +17,7 @@ vi.mock('@/shared/components/ui/data-display/Icon', () => ({
   Icon: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
 }));
 
-const pattern = getPatternCraftById('arctic-lights-glow');
+const pattern = getCuratedPatternById('aurora-edge-glow');
 if (!pattern) throw new Error('PatternCraft fixture is missing');
 
 const overlay = patternToCssOverlay({

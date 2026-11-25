@@ -8,8 +8,8 @@ import type {
   StorefrontTheme,
 } from '@/core/storefront';
 import { normalizeStorefrontTheme, patternToCssOverlay, randomHexColor } from '@/core/storefront';
-import type { PatternCraftPattern } from '@/data/patterncraft';
-import { getPatternCraftById } from '@/data/patterncraft';
+import type { PatternCraftPattern } from '@/data/patterncraft/curated';
+import { getCuratedPatternById } from '@/data/patterncraft/curated';
 import { Icon } from '@/shared/components/ui/data-display/Icon';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { updateStorefrontTheme } from '../settings/actions';
@@ -98,7 +98,6 @@ export function StorefrontEditor({
     onOpenChange?.(open);
   }, [open, onOpenChange]);
   const [isPatternBrowserOpen, setIsPatternBrowserOpen] = useState(false);
-  const [, setOverlayPending] = useState(false);
   // The scheme state (light/dark) persists across open/close cycles because
   // this component stays mounted. The user's last tab selection remains active,
   // and onPreviewSchemeChange keeps the page preview showing that scheme even
@@ -356,11 +355,9 @@ export function StorefrontEditor({
   const toggleOverlay = (enable: boolean) => {
     if (enable) {
       if (!cssOverlay) {
-        setOverlayPending(true);
         setIsPatternBrowserOpen(true);
       }
     } else {
-      setOverlayPending(false);
       updateConfig({
         background: { type: fillType, colors: fillColors },
       });
@@ -693,7 +690,8 @@ export function StorefrontEditor({
                       <span className={styles.patternCraftActiveIcon}>✦</span>
                       <span>
                         <strong>
-                          {getPatternCraftById(cssOverlay.patternId)?.name ?? cssOverlay.patternId}
+                          {getCuratedPatternById(cssOverlay.patternId)?.name ??
+                            cssOverlay.patternId}
                         </strong>
                       </span>
                       <button

@@ -1,5 +1,7 @@
-import { getPatternCraftById } from './index';
+import curatedPatternData from './curated-patterns.json';
 import type { PatternCraftCategory, PatternCraftPattern } from './types';
+
+export type { PatternCraftCategory, PatternCraftPattern, PatternCraftStyle } from './types';
 
 export type CuratedSchemeSuitability = 'light' | 'dark' | 'both';
 
@@ -152,7 +154,18 @@ export const curatedPatternIds: readonly string[] = curatedPatternCatalog.map((e
 
 const curatedIds = new Set(curatedPatternIds);
 
+const curatedPatterns = curatedPatternData as unknown as PatternCraftPattern[];
+const curatedPatternsById = new Map(curatedPatterns.map((pattern) => [pattern.id, pattern]));
+
+/** Curated patterns grouped by family for the storefront selector. */
+export const curatedPatternByCategory: Record<PatternCraftCategory, PatternCraftPattern[]> = {
+  gradients: curatedPatterns.filter((pattern) => pattern.category === 'gradients'),
+  geometric: curatedPatterns.filter((pattern) => pattern.category === 'geometric'),
+  decorative: curatedPatterns.filter((pattern) => pattern.category === 'decorative'),
+  effects: curatedPatterns.filter((pattern) => pattern.category === 'effects'),
+};
+
 /** Resolves only ids in the curated catalog; unknown ids stay undefined. */
 export function getCuratedPatternById(id: string): PatternCraftPattern | undefined {
-  return curatedIds.has(id) ? getPatternCraftById(id) : undefined;
+  return curatedIds.has(id) ? curatedPatternsById.get(id) : undefined;
 }
