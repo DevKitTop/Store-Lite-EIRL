@@ -24,6 +24,44 @@ function resolveStorefrontFontFamily(fontFamily: string): string {
   }
 }
 
+function colorToRgbChannels(color: string): string | undefined {
+  const value = color.trim();
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value);
+
+  if (hex) {
+    const expanded =
+      hex[1].length === 3
+        ? hex[1]
+            .split('')
+            .map((channel) => channel + channel)
+            .join('')
+        : hex[1];
+    return [0, 2, 4]
+      .map((index) => Number.parseInt(expanded.slice(index, index + 2), 16))
+      .join(', ');
+  }
+
+  const rgb = /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})\b/i.exec(value);
+  if (!rgb) return undefined;
+
+  const channels = [rgb[1], rgb[2], rgb[3]].map(Number);
+  return channels.every((channel) => channel >= 0 && channel <= 255)
+    ? channels.join(', ')
+    : undefined;
+}
+
+function withRgbColorAliases(vars: Record<string, string>): Record<string, string> {
+  const aliases: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(vars)) {
+    if (!key.startsWith('--md-sys-color-') || key.endsWith('-rgb')) continue;
+    const channels = colorToRgbChannels(value);
+    if (channels) aliases[`${key}-rgb`] = channels;
+  }
+
+  return { ...vars, ...aliases };
+}
+
 /**
  * Builds the complete set of CSS custom properties for a storefront theme.
  *
@@ -54,7 +92,7 @@ export function buildStorefrontThemeVars(
   // identical paint path; no canvas outside the store scope is mutated.
   const bgVars = buildBackgroundCSS(colorConfig.background);
 
-  return {
+  return withRgbColorAliases({
     '--storefront-font-family': ff,
     '--storefront-primary': palette.primary,
     '--storefront-on-surface': onSurface,
@@ -104,7 +142,7 @@ export function buildStorefrontThemeVars(
     '--md-sys-color-shadow': '#000000',
     '--md-sys-color-scrim': '#000000',
     ...bgVars,
-  };
+  });
 }
 
 /**
