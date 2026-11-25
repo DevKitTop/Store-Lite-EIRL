@@ -47,6 +47,8 @@ interface BusinessPageContentProps {
   business: PublicBusiness;
   isOwner?: boolean;
   isStaff?: boolean;
+  /** Server-resolved storefront customization capability for the current caller. */
+  canCustomizeStorefront?: boolean;
   isLoggedIn?: boolean;
   categories?: ProductCategory[];
   products?: ProductWithRelations[];
@@ -74,6 +76,7 @@ export default function BusinessPageContent({
   business,
   isOwner = false,
   isStaff = false,
+  canCustomizeStorefront = false,
   isLoggedIn = false,
   categories = [],
   products = [],
@@ -104,6 +107,7 @@ export default function BusinessPageContent({
         business={business}
         isOwner={isOwner}
         isStaff={isStaff}
+        canCustomizeStorefront={canCustomizeStorefront}
         isLoggedIn={isLoggedIn}
         categories={categories}
         products={products}
@@ -125,6 +129,7 @@ function BusinessPageContentUI({
   business,
   isOwner = false,
   isStaff = false,
+  canCustomizeStorefront = false,
   isLoggedIn: _isLoggedIn = false,
   categories = [],
   products = [],
@@ -486,6 +491,7 @@ function BusinessPageContentUI({
           onDeleteClose={() => setIsDeleteOpen(false)}
           onDeleteConfirm={handleConfirmDelete}
           editableTheme={editableTheme}
+          canCustomizeStorefront={canCustomizeStorefront}
           onThemeChange={setEditableTheme}
           onPreviewSchemeChange={handlePreviewSchemeChange}
           onEditorClose={() => undefined}

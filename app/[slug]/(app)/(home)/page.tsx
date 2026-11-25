@@ -11,6 +11,10 @@ import {
   hasCustomStorefrontTheme,
 } from '@/core/storefront';
 import { resolveStorefrontDefaultScheme } from '@/core/storefront/resolveStorefrontDefaultScheme';
+import {
+  hasStorefrontCustomizationAccess,
+  hasStorefrontEditPermission,
+} from '@/core/storefront/storefrontCustomizationAccess';
 import { viewerSchemeCookieName } from '@/core/storefront/viewerScheme';
 import { getMemberPermissions } from '@/lib/permissions';
 import { createClient } from '@/lib/supabase/server';
@@ -144,6 +148,10 @@ export default async function BusinessPage({ params }: Props) {
 
   // Consideramos staff a quien tenga acceso de gestión (Dueño o Miembro con algún permiso)
   const isStaff = isOwner || permissions.length > 0;
+  const canCustomizeStorefront = hasStorefrontCustomizationAccess({
+    hasEditPermission: hasStorefrontEditPermission({ isOwner, permissions }),
+    canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
+  });
 
   const { hasPaymentGateway, chatEnabled } = entitlements;
 
@@ -202,6 +210,7 @@ export default async function BusinessPage({ params }: Props) {
         business={business}
         isOwner={isOwner}
         isStaff={isStaff}
+        canCustomizeStorefront={canCustomizeStorefront}
         isLoggedIn={isLoggedIn}
         categories={categories.slice(0, 7)}
         products={allProducts}

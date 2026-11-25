@@ -17,6 +17,10 @@ import {
 } from '@/core/storefront';
 import { canonicalizeStorefrontThemePatterns } from '@/core/storefront/patternCatalog';
 import {
+  STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
+  hasStorefrontCustomizationAccess,
+} from '@/core/storefront/storefrontCustomizationAccess';
+import {
   STOREFRONT_THEME_PREFERENCES_KEY,
   isStorefrontColorScheme,
 } from '@/core/storefront/storefrontTheme';
@@ -295,10 +299,16 @@ export async function updateStorefrontLayout(
   }
 
   const entitlements = await getBusinessEntitlements(businessId);
-  if (entitlements.plan === 'lite') {
+  // requireAccessOnId already resolved the identity side of this predicate.
+  if (
+    !hasStorefrontCustomizationAccess({
+      hasEditPermission: true,
+      canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
+    })
+  ) {
     return {
       success: false,
-      error: 'Funcion disponible solo para planes con personalizacion de storefront.',
+      error: STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
     };
   }
 
@@ -352,10 +362,16 @@ export async function updateStorefrontTheme(
   }
 
   const entitlements = await getBusinessEntitlements(businessId);
-  if (entitlements.plan === 'lite') {
+  // requireAccessOnId already resolved the identity side of this predicate.
+  if (
+    !hasStorefrontCustomizationAccess({
+      hasEditPermission: true,
+      canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
+    })
+  ) {
     return {
       success: false,
-      error: 'Funcion disponible solo para planes con personalizacion de storefront.',
+      error: STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
     };
   }
 
@@ -422,10 +438,16 @@ export async function updateStorefrontDefaultScheme(
   }
 
   const entitlements = await getBusinessEntitlements(businessId);
-  if (entitlements.plan === 'lite') {
+  // requireAccessOnId already resolved the identity side of this predicate.
+  if (
+    !hasStorefrontCustomizationAccess({
+      hasEditPermission: true,
+      canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
+    })
+  ) {
     return {
       success: false,
-      error: 'Funcion disponible solo para planes con personalizacion de storefront.',
+      error: STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
     };
   }
 
@@ -467,10 +489,16 @@ export async function clearStorefrontTheme(businessId: string, slug: string): Pr
   }
 
   const entitlements = await getBusinessEntitlements(businessId);
-  if (entitlements.plan === 'lite') {
+  // requireAccessOnId already resolved the identity side of this predicate.
+  if (
+    !hasStorefrontCustomizationAccess({
+      hasEditPermission: true,
+      canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
+    })
+  ) {
     return {
       success: false,
-      error: 'Funcion disponible solo para planes con personalizacion de storefront.',
+      error: STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
     };
   }
 

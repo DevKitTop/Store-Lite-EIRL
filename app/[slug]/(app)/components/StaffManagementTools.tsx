@@ -22,6 +22,7 @@ interface StaffManagementToolsProps {
   onDeleteClose: () => void;
   onDeleteConfirm: (id: string) => Promise<void>;
   editableTheme: StorefrontTheme;
+  canCustomizeStorefront: boolean;
   onThemeChange: (theme: StorefrontTheme) => void;
   onPreviewSchemeChange: (scheme: StorefrontColorScheme | undefined) => void;
   onEditorClose: () => void;
@@ -43,6 +44,7 @@ export function StaffManagementTools({
   onDeleteClose,
   onDeleteConfirm,
   editableTheme,
+  canCustomizeStorefront,
   onThemeChange,
   onPreviewSchemeChange,
   onEditorClose,
@@ -67,18 +69,20 @@ export function StaffManagementTools({
         onSave={onSave}
         initialProduct={initialProduct}
       />
-      <StorefrontEditor
-        business={business}
-        storefrontTheme={editableTheme}
-        onThemeChange={onThemeChange}
-        onPreviewSchemeChange={onPreviewSchemeChange}
-        onOpen={onEditorOpen}
-        onClose={onEditorClose}
-        detectedColorScheme={detectedColorScheme}
-        currentScheme={previewScheme}
-        defaultScheme={defaultScheme}
-        onOpenChange={onEditorOpenChange}
-      />
+      {canCustomizeStorefront && (
+        <StorefrontEditor
+          business={business}
+          storefrontTheme={editableTheme}
+          onThemeChange={onThemeChange}
+          onPreviewSchemeChange={onPreviewSchemeChange}
+          onOpen={onEditorOpen}
+          onClose={onEditorClose}
+          detectedColorScheme={detectedColorScheme}
+          currentScheme={previewScheme}
+          defaultScheme={defaultScheme}
+          onOpenChange={onEditorOpenChange}
+        />
+      )}
     </>
   );
 }

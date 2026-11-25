@@ -12,6 +12,7 @@ import {
   updateStorefrontLayout,
   updateStorefrontTheme,
 } from '@/app/[slug]/(app)/settings/actions';
+import { STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE } from '@/core/storefront/storefrontCustomizationAccess';
 import { revalidatePath } from 'next/cache';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -564,6 +565,55 @@ describe('settings actions — plan enforcement', () => {
         success: true,
         message: 'La apariencia publica ya usaba los colores por defecto.',
       });
+    });
+  });
+
+  describe('storefront actions — shared access predicate (T27)', () => {
+    const writeActions: [string, () => Promise<{ success: boolean; error?: string }>][] = [
+      [
+        'updateStorefrontLayout',
+        () => updateStorefrontLayout(BUSINESS_ID, 'test-slug', { type: 'grid' }),
+      ],
+      [
+        'updateStorefrontTheme',
+        () => updateStorefrontTheme(BUSINESS_ID, 'test-slug', { colors: { primary: '#ff0000' } }),
+      ],
+      [
+        'updateStorefrontDefaultScheme',
+        () => updateStorefrontDefaultScheme(BUSINESS_ID, 'test-slug', 'dark'),
+      ],
+      ['clearStorefrontTheme', () => clearStorefrontTheme(BUSINESS_ID, 'test-slug')],
+    ];
+
+    test.each(writeActions)(
+      '%s denies when the entitlement is false on a paid plan',
+      async (_, call) => {
+        mockGetEntitlements.mockResolvedValue({
+          ...PREMIUM_ENTITLEMENTS,
+          canCustomizeStorefront: false,
+        });
+
+        const result = await call();
+
+        expect(result.success).toBe(false);
+        expect(result.error).toBe(STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE);
+        expect(mockDbInsertValues).not.toHaveBeenCalled();
+        expect(mockDbUpdateSet).not.toHaveBeenCalled();
+      },
+    );
+
+    test.each(writeActions)('%s denies a member without storefront.edit', async (_, call) => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+      mockRequireAccessOnId.mockRejectedValueOnce(
+        new Error('No tienes permiso para realizar esta acción'),
+      );
+
+      const result = await call();
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('No tienes permiso para realizar esta acción');
+      expect(mockDbInsertValues).not.toHaveBeenCalled();
+      expect(mockDbUpdateSet).not.toHaveBeenCalled();
     });
   });
 
