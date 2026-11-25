@@ -5,6 +5,7 @@ import {
   getReadableTextColor,
   getStorefrontColorConfig,
 } from './storefrontTheme';
+import { deriveStorefrontTonalContainer } from './tonalPalette';
 
 /**
  * Resolves the CSS font-family value for a storefront font family identifier.
@@ -40,6 +41,12 @@ export function buildStorefrontThemeVars(
   const isDark = scheme === 'dark';
   const onSurface = isDark ? '#f3f4f6' : '#111827';
   const onSurfaceVariant = isDark ? '#cbd5e1' : '#4b5563';
+  const primaryContainer = deriveStorefrontTonalContainer(palette.primary, scheme);
+  const secondaryContainer = deriveStorefrontTonalContainer(palette.secondary, scheme);
+  const tertiaryContainer = deriveStorefrontTonalContainer(palette.accent, scheme);
+  const error = isDark ? '#f2b8b5' : '#b3261e';
+  const errorContainer = deriveStorefrontTonalContainer(error, scheme);
+  const inversePrimary = deriveStorefrontTonalContainer(palette.primary, scheme, 0.4);
   const ff = resolveStorefrontFontFamily(theme.fontFamily);
 
   // The scoped ::before surface consumes every background var. Keeping the
@@ -54,16 +61,16 @@ export function buildStorefrontThemeVars(
     '--storefront-on-surface-variant': onSurfaceVariant,
     '--md-sys-color-primary': palette.primary,
     '--md-sys-color-on-primary': getReadableTextColor(palette.primary),
-    '--md-sys-color-primary-container': palette.primary,
-    '--md-sys-color-on-primary-container': getReadableTextColor(palette.primary),
+    '--md-sys-color-primary-container': primaryContainer,
+    '--md-sys-color-on-primary-container': getReadableTextColor(primaryContainer),
     '--md-sys-color-secondary': palette.secondary,
     '--md-sys-color-on-secondary': getReadableTextColor(palette.secondary),
-    '--md-sys-color-secondary-container': palette.secondary,
-    '--md-sys-color-on-secondary-container': getReadableTextColor(palette.secondary),
+    '--md-sys-color-secondary-container': secondaryContainer,
+    '--md-sys-color-on-secondary-container': getReadableTextColor(secondaryContainer),
     '--md-sys-color-tertiary': palette.accent,
     '--md-sys-color-on-tertiary': getReadableTextColor(palette.accent),
-    '--md-sys-color-tertiary-container': palette.accent,
-    '--md-sys-color-on-tertiary-container': getReadableTextColor(palette.accent),
+    '--md-sys-color-tertiary-container': tertiaryContainer,
+    '--md-sys-color-on-tertiary-container': getReadableTextColor(tertiaryContainer),
     '--md-sys-color-surface': isDark ? 'rgba(15, 17, 23, 0.82)' : 'rgba(255, 255, 255, 0.78)',
     '--md-sys-color-surface-container-lowest': isDark
       ? 'rgba(18, 20, 32, 0.62)'
@@ -85,7 +92,17 @@ export function buildStorefrontThemeVars(
     '--md-sys-color-surface-container-highest': isDark
       ? 'rgba(45, 55, 72, 0.80)'
       : 'rgba(223, 230, 241, 0.80)',
+    '--md-sys-color-outline': isDark ? '#938f99' : '#79747e',
     '--md-sys-color-outline-variant': isDark ? '#475569' : '#cbd5e1',
+    '--md-sys-color-error': error,
+    '--md-sys-color-on-error': getReadableTextColor(error),
+    '--md-sys-color-error-container': errorContainer,
+    '--md-sys-color-on-error-container': getReadableTextColor(errorContainer),
+    '--md-sys-color-inverse-surface': isDark ? '#e6e0e9' : '#303033',
+    '--md-sys-color-inverse-on-surface': isDark ? '#303033' : '#f5f5f5',
+    '--md-sys-color-inverse-primary': inversePrimary,
+    '--md-sys-color-shadow': '#000000',
+    '--md-sys-color-scrim': '#000000',
     ...bgVars,
   };
 }
