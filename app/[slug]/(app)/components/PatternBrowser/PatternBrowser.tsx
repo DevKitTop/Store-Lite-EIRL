@@ -209,7 +209,11 @@ export function PatternBrowser({
           <h2 id="pattern-browser-title" className={styles.title}>
             Patrones PatternCraft
           </h2>
-          <button className={styles.closeBtn} onClick={onClose}>
+          <button
+            className={styles.closeBtn}
+            onClick={onClose}
+            aria-label="Cerrar selector de patrones"
+          >
             ✕
           </button>
         </div>
@@ -246,6 +250,7 @@ export function PatternBrowser({
               <button
                 key={cat.key}
                 className={`${styles.tab} ${activeCategory === cat.key ? styles.tabActive : ''}`}
+                aria-pressed={activeCategory === cat.key}
                 onClick={() => setActiveCategory(cat.key)}
               >
                 <span className={styles.tabIcon}>
@@ -264,6 +269,7 @@ export function PatternBrowser({
             <button
               key={pattern.id}
               className={`${styles.card} ${selectedId === pattern.id ? styles.cardSelected : ''}`}
+              aria-pressed={selectedId === pattern.id}
               onClick={() => setSelectedId(pattern.id)}
               onDoubleClick={() => handleConfirm(pattern.id)}
               onKeyDown={(e) => {

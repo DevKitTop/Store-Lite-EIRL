@@ -456,6 +456,7 @@ export function StorefrontEditor({
                 <button
                   key={tab.value}
                   className={`${styles.schemeTab} ${scheme === tab.value ? styles.schemeTabActive : ''}`}
+                  aria-pressed={scheme === tab.value}
                   onClick={() => {
                     setScheme(tab.value);
                     onPreviewSchemeChange?.(tab.value);
@@ -497,6 +498,7 @@ export function StorefrontEditor({
                         value={color}
                         onChange={(e) => handlePaletteChange(key, e.target.value)}
                         className={styles.colorInput}
+                        aria-label={`Color ${label.toLowerCase()}`}
                       />
                       <span className={styles.colorPreview} style={{ backgroundColor: color }} />
                     </div>
@@ -587,6 +589,7 @@ export function StorefrontEditor({
                       className={styles.dirRandomBtn}
                       onClick={handleRandomizeDirection}
                       title="Randomizar dirección del degradado"
+                      aria-label="Randomizar dirección del degradado"
                     >
                       <Icon>shuffle</Icon>
                     </button>
@@ -606,6 +609,11 @@ export function StorefrontEditor({
                           value={color}
                           onChange={(e) => handleFillColorChange(i, e.target.value)}
                           className={styles.colorInput}
+                          aria-label={
+                            fillColorCount === 1
+                              ? 'Color de fondo'
+                              : `Color de fondo, capa ${i + 1}`
+                          }
                         />
                         <span className={styles.colorPreview} style={{ backgroundColor: color }} />
                       </div>
@@ -631,6 +639,7 @@ export function StorefrontEditor({
                             style={{ backgroundColor: c }}
                             onClick={() => handleFillColorChange(i, c)}
                             title={c}
+                            aria-label={`Color ${c}`}
                           />
                         ))}
                       </div>
@@ -639,6 +648,7 @@ export function StorefrontEditor({
                           className={styles.removeColorBtn}
                           onClick={() => removeColorAt(i)}
                           title="Quitar color"
+                          aria-label="Quitar color"
                         >
                           <Icon>close</Icon>
                         </button>
@@ -667,6 +677,7 @@ export function StorefrontEditor({
                   type="checkbox"
                   checked={hasActiveOverlay}
                   onChange={(e) => toggleOverlay(e.target.checked)}
+                  aria-label="Patrón decorativo"
                 />
                 <span className={styles.toggleSlider} />
               </label>

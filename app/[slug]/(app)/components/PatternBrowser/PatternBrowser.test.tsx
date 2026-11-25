@@ -178,3 +178,36 @@ describe('PatternBrowser accessible surface (T23)', () => {
     expect(document.activeElement).toBe(opener);
   });
 });
+
+describe('PatternBrowser labels and states (T24)', () => {
+  test('icon-only close button has an accessible name', () => {
+    render(<BrowserHarness />);
+    expect(screen.getByRole('button', { name: 'Cerrar selector de patrones' })).toBeDefined();
+  });
+
+  test('category tabs and pattern cards expose pressed states', () => {
+    render(<BrowserHarness currentPatternId={firstPattern.id} />);
+
+    expect(screen.getByRole('button', { name: /Gradientes/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: /Geométricos/ })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(screen.getByRole('button', { name: /Arctic Lights Glow/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: /Aurora Edge Glow/ })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+  });
+
+  test('category tabs have a focus-visible style', () => {
+    const css = readFileSync(join(__dirname, 'PatternBrowser.module.css'), 'utf8');
+    expect(css).toMatch(/\.tab:focus-visible/);
+  });
+});

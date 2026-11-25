@@ -134,6 +134,11 @@
   color: var(--md-sys-color-on-surface, #374151);
 }
 
+.tab:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary, #6366f1);
+  outline-offset: 2px;
+}
+
 .tabActive {
   color: var(--md-sys-color-primary, #6366f1);
   border-bottom-color: var(--md-sys-color-primary, #6366f1);

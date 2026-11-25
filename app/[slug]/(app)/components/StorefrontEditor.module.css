@@ -201,6 +201,11 @@
   background: color-mix(in srgb, var(--md-sys-color-primary) 4%, transparent);
 }
 
+.schemeTab:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
+
 .schemeTabActive {
   border-color: var(--md-sys-color-primary);
   background: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent);
@@ -553,6 +558,11 @@
   width: 0;
   height: 0;
   position: absolute;
+}
+
+.toggle input:focus-visible + .toggleSlider {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
 }
 
 .toggleSlider {

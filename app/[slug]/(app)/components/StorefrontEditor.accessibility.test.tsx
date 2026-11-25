@@ -1,6 +1,9 @@
 import type { StorefrontTheme } from '@/core/storefront/storefrontTheme';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { StorefrontEditor } from './StorefrontEditor';
 
@@ -11,6 +14,8 @@ vi.mock('@app/[slug]/(app)/settings/actions', () => ({
 vi.mock('@/shared/components/ui/data-display/Icon', () => ({
   Icon: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
 }));
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const theme = {
   version: 2 as const,
@@ -116,5 +121,43 @@ describe('StorefrontEditor accessible surface (T23)', () => {
     expect(screen.queryByRole('dialog', { name: 'Patrones PatternCraft' })).toBeNull();
     expect(screen.getByRole('dialog', { name: 'Personalizar tienda' })).toBeDefined();
     expect(document.activeElement).toBe(overlayToggle);
+  });
+});
+
+describe('StorefrontEditor labels and states (T24)', () => {
+  test('color inputs and the overlay toggle have accessible names', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<Harness />);
+    await user.click(screen.getByRole('button', { name: 'Personalizar tienda' }));
+
+    const colorInputs = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[type="color"]'),
+    );
+    expect(colorInputs.length).toBeGreaterThan(0);
+    for (const input of colorInputs) {
+      expect((input.getAttribute('aria-label') ?? '').trim()).not.toBe('');
+    }
+    expect(screen.getByRole('checkbox')).toHaveAttribute('aria-label', 'Patrón decorativo');
+  });
+
+  test('scheme tabs expose their pressed state', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole('button', { name: 'Personalizar tienda' }));
+
+    const lightTab = screen.getByRole('button', { name: /Claro/ });
+    const darkTab = screen.getByRole('button', { name: /Oscuro/ });
+    expect(lightTab).toHaveAttribute('aria-pressed', 'true');
+    expect(darkTab).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(darkTab);
+    expect(lightTab).toHaveAttribute('aria-pressed', 'false');
+    expect(darkTab).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('custom tabs and toggle have focus-visible styles', () => {
+    const css = readFileSync(join(__dirname, 'StorefrontEditor.module.css'), 'utf8');
+    expect(css).toMatch(/\.schemeTab:focus-visible/);
+    expect(css).toMatch(/\.toggle input:focus-visible \+ \.toggleSlider/);
   });
 });
