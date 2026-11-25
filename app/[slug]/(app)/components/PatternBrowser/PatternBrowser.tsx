@@ -6,7 +6,8 @@ import type {
   PatternCraftStyle,
 } from '@/data/patterncraft';
 import { getPatternCraftById, patternCraftByCategory } from '@/data/patterncraft';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useDialogSurface } from '../useDialogSurface';
 import styles from './PatternBrowser.module.css';
 
 interface PatternBrowserProps {
@@ -149,7 +150,7 @@ export function PatternBrowser({
 }: PatternBrowserProps) {
   const [activeCategory, setActiveCategory] = useState<PatternCraftCategory>('gradients');
   const [selectedId, setSelectedId] = useState<string | null>(currentPatternId ?? null);
-  const openerRef = useRef<HTMLElement | null>(null);
+  const { surfaceRef } = useDialogSurface({ open, onClose, captureEscape: true });
 
   // Sync selection when currentPatternId changes externally
   useEffect(() => {
@@ -164,38 +165,6 @@ export function PatternBrowser({
       setActiveCategory(visibleCategories[0]?.key ?? 'gradients');
     }
   }, [visibleCategories, activeCategory]);
-
-  // Lock body scroll when modal is open
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
-  // Remember what had focus before the modal opened, and restore it on close.
-  useEffect(() => {
-    if (!open) return;
-    openerRef.current = document.activeElement as HTMLElement | null;
-    return () => {
-      openerRef.current?.focus();
-    };
-  }, [open]);
-
-  // Close on Escape without letting the parent's document-level handler also react.
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      e.stopPropagation();
-      onClose();
-    };
-    document.addEventListener('keydown', handler, true);
-    return () => document.removeEventListener('keydown', handler, true);
-  }, [open, onClose]);
 
   const patterns = useMemo(
     () =>
@@ -225,11 +194,21 @@ export function PatternBrowser({
   if (!open) return null;
 
   return (
-    <div className={styles.overlay} onClick={onClose}>
-      <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+    <div className={styles.overlay} data-testid="pattern-browser-backdrop" onClick={onClose}>
+      <div
+        ref={surfaceRef}
+        className={styles.modal}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pattern-browser-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* ── Header ── */}
         <div className={styles.header}>
-          <h2 className={styles.title}>Patrones PatternCraft</h2>
+          <h2 id="pattern-browser-title" className={styles.title}>
+            Patrones PatternCraft
+          </h2>
           <button className={styles.closeBtn} onClick={onClose}>
             ✕
           </button>

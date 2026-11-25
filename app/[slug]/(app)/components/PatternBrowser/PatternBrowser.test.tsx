@@ -124,3 +124,57 @@ describe('PatternBrowser correctness (T22)', () => {
     document.removeEventListener('keydown', parentListener);
   });
 });
+
+describe('PatternBrowser accessible surface (T23)', () => {
+  let opener: HTMLButtonElement;
+
+  beforeEach(() => {
+    opener = document.createElement('button');
+    opener.textContent = 'Abrir patrón';
+    document.body.appendChild(opener);
+    opener.focus();
+  });
+
+  afterEach(() => {
+    document.body.removeChild(opener);
+  });
+
+  test('has dialog semantics and takes initial focus', async () => {
+    render(<BrowserHarness />);
+
+    const dialog = screen.getByRole('dialog', { name: 'Patrones PatternCraft' });
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAttribute('aria-labelledby', 'pattern-browser-title');
+    expect(dialog).toHaveAttribute('tabindex', '-1');
+    expect(document.activeElement).toBe(dialog);
+  });
+
+  test('Tab and Shift+Tab keep focus inside the dialog', async () => {
+    const user = userEvent.setup();
+    render(<BrowserHarness />);
+
+    const dialog = screen.getByRole('dialog', { name: 'Patrones PatternCraft' });
+    for (let i = 0; i < 30; i += 1) {
+      await user.tab();
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    }
+    for (let i = 0; i < 30; i += 1) {
+      await user.tab({ shift: true });
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    }
+  });
+
+  test('backdrop click closes the dialog and restores focus', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<BrowserHarness />);
+
+    const backdrop = container.querySelector<HTMLElement>(
+      '[data-testid="pattern-browser-backdrop"]',
+    );
+    expect(backdrop).not.toBeNull();
+    await user.click(backdrop as HTMLElement);
+
+    expect(screen.queryByRole('dialog', { name: 'Patrones PatternCraft' })).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+});

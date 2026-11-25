@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { updateStorefrontTheme } from '../settings/actions';
 import { PatternBrowser } from './PatternBrowser';
 import styles from './StorefrontEditor.module.css';
+import { useDialogSurface } from './useDialogSurface';
 
 interface StorefrontEditorProps {
   business: { id: string; slug: string };
@@ -103,7 +104,6 @@ export function StorefrontEditor({
   // and onPreviewSchemeChange keeps the page preview showing that scheme even
   // after the editor closes. No reset logic needed here.
   const [scheme, setScheme] = useState<StorefrontColorScheme>(defaultScheme ?? 'light');
-  const panelRef = useRef<HTMLDivElement>(null);
 
   const currentConfig: StorefrontColorConfig = storefrontTheme[scheme];
   const bg = currentConfig.background;
@@ -119,16 +119,6 @@ export function StorefrontEditor({
   // ── Pattern color vs fill: if the pattern has its own background color,
   //     show a color editor for it; otherwise fill shows through ──
   const hasPatternColor = !!cssOverlay?.background;
-
-  // Lock body scroll when open
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
 
   // Sync the editor's internal scheme tab to whatever scheme is active on the
   // page (from the floating toggle or OS default) whenever the editor opens.
@@ -281,15 +271,13 @@ export function StorefrontEditor({
     onClose?.();
   }, [discardChanges, hasChanges, onClose]);
 
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleClose();
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open, handleClose]);
+  // The picker owns keyboard input while nested; the panel resumes focus
+  // trapping after it closes.
+  const { surfaceRef } = useDialogSurface({
+    open,
+    onClose: handleClose,
+    suspended: isPatternBrowserOpen,
+  });
 
   // ── Color removal / add (replaces [1][2][3][4] grid) ──
 
@@ -426,12 +414,31 @@ export function StorefrontEditor({
       </button>
 
       {/* Backdrop */}
-      {open && <div className={styles.backdrop} onClick={handleClose} />}
+      {open && (
+        <div
+          data-testid="storefront-editor-backdrop"
+          className={styles.backdrop}
+          onClick={handleClose}
+          aria-hidden="true"
+        />
+      )}
 
       {/* Panel */}
-      <div ref={panelRef} className={`${styles.panel} ${open ? styles.panelOpen : ''}`}>
+      <div
+        ref={surfaceRef}
+        data-testid="storefront-editor-panel"
+        className={`${styles.panel} ${open ? styles.panelOpen : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="storefront-editor-title"
+        aria-hidden={open ? undefined : true}
+        inert={!open}
+        tabIndex={-1}
+      >
         <div className={styles.panelHeader}>
-          <h2 className={styles.panelTitle}>Personalizar tienda</h2>
+          <h2 id="storefront-editor-title" className={styles.panelTitle}>
+            Personalizar tienda
+          </h2>
           <button className={styles.closeBtn} onClick={handleClose} aria-label="Cerrar editor">
             <Icon>close</Icon>
           </button>
