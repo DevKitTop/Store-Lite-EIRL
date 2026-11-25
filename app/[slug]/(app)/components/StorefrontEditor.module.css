@@ -738,11 +738,63 @@
   background: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent);
   color: var(--md-sys-color-primary);
   animation: feedbackIn 0.25s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.feedbackDismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.feedbackDismiss:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
 .feedbackError {
   background: color-mix(in srgb, var(--md-sys-color-error) 10%, transparent);
   color: var(--md-sys-color-error, #b3261e);
+}
+
+.footerActions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.discardBtn {
+  width: 100%;
+  padding: 0.65rem 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.discardBtn:hover:not(:disabled) {
+  background: var(--md-sys-color-surface-container-high);
+}
+
+.discardBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 @keyframes feedbackIn {

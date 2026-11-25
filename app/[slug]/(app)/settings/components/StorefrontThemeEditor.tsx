@@ -30,6 +30,10 @@ import {
 import { useSnackbarFeedback } from '../hooks/useSettingsState';
 import styles from '../settings.module.css';
 
+function getSnackbarAutoCloseDuration(color: 'success' | 'error'): number {
+  return color === 'error' ? 0 : 5000;
+}
+
 export function StorefrontThemeEditor({
   business,
   entitlements,
@@ -62,8 +66,8 @@ export function StorefrontThemeEditor({
   // Captured at the same time as the state initializers so they are
   // guaranteed to match on the first render (no serialization mismatch).
   const [savedPlatformColors, setSavedPlatformColors] = useState(!initialHasCustomTheme);
-  const [savedThemeJson, setSavedThemeJson] = useState(() =>
-    JSON.stringify(normalizeStorefrontTheme(initialStorefrontTheme)),
+  const [savedTheme, setSavedTheme] = useState<StorefrontTheme>(() =>
+    normalizeStorefrontTheme(initialStorefrontTheme),
   );
 
   const handleDefaultSchemeChange = (event: SelectValueEvent) => {
@@ -86,6 +90,7 @@ export function StorefrontThemeEditor({
   };
 
   const handleSaveTheme = () => {
+    closeFeedback();
     startTransition(async () => {
       let result;
       if (usePlatformColors) {
@@ -102,10 +107,10 @@ export function StorefrontThemeEditor({
       if ('storefrontTheme' in result && result.storefrontTheme) {
         const updated = normalizeStorefrontTheme(result.storefrontTheme);
         setStorefrontTheme(updated);
-        setSavedThemeJson(JSON.stringify(updated));
+        setSavedTheme(updated);
       } else {
-        // clearStorefrontTheme — snapshot stays in sync
-        setSavedThemeJson(JSON.stringify(storefrontTheme));
+        // clearStorefrontTheme — snapshot stays in sync with the saved theme
+        setSavedTheme(normalizeStorefrontTheme(storefrontTheme));
       }
 
       setSavedPlatformColors(usePlatformColors);
@@ -115,11 +120,18 @@ export function StorefrontThemeEditor({
   };
 
   // Dirty state: comparar contra snapshots guardados (no contra props)
-  const themeChanged = JSON.stringify(storefrontTheme) !== savedThemeJson;
+  const themeChanged = JSON.stringify(storefrontTheme) !== JSON.stringify(savedTheme);
   const hasChanges =
     usePlatformColors !== savedPlatformColors || (!usePlatformColors && themeChanged);
 
+  const handleDiscardTheme = () => {
+    closeFeedback();
+    setStorefrontTheme(normalizeStorefrontTheme(savedTheme));
+    setUsePlatformColors(savedPlatformColors);
+  };
+
   const canSave = isOwner || permissions.includes('storefront.edit');
+  const actionsDisabled = isPending || !canSave || !hasChanges;
 
   return (
     <div className={styles.sectionArea}>
@@ -402,13 +414,12 @@ export function StorefrontThemeEditor({
             </div>
           </Card>
 
-          {/* Botón guardar — activo solo si hay cambios */}
+          {/* Botones de guardado y descarte — activos solo si hay cambios */}
           <div className={styles.actionRow}>
-            <Button
-              variant="filled"
-              onClick={handleSaveTheme}
-              disabled={isPending || !canSave || !hasChanges}
-            >
+            <Button variant="text" onClick={handleDiscardTheme} disabled={actionsDisabled}>
+              Descartar cambios
+            </Button>
+            <Button variant="filled" onClick={handleSaveTheme} disabled={actionsDisabled}>
               <Icon slot="icon" size={20}>
                 {isPending ? 'sync' : 'save'}
               </Icon>
@@ -428,6 +439,7 @@ export function StorefrontThemeEditor({
         color={feedback.color}
         icon={feedback.icon}
         onClose={closeFeedback}
+        autoCloseDuration={getSnackbarAutoCloseDuration(feedback.color)}
       />
     </div>
   );

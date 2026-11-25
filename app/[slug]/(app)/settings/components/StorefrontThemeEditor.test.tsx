@@ -22,14 +22,27 @@ vi.mock('@/shared/components/ui/ThemeSettings', () => ({
   ThemeSettings: () => null,
 }));
 
-vi.mock('@app/[slug]/(app)/settings/hooks/useSettingsState', () => ({
-  useSnackbarFeedback: () => ({
-    feedback: { open: false },
-    showSuccess: vi.fn(),
-    showError: vi.fn(),
-    close: vi.fn(),
-  }),
-}));
+vi.mock('@app/[slug]/(app)/settings/hooks/useSettingsState', async () => {
+  const React = await import('react');
+  return {
+    useSnackbarFeedback: () => {
+      const [feedback, setFeedback] = React.useState({
+        open: false,
+        description: '',
+        color: 'success' as 'success' | 'error',
+        icon: 'check_circle',
+      });
+      return {
+        feedback,
+        showSuccess: (description: string) =>
+          setFeedback({ open: true, description, color: 'success', icon: 'check_circle' }),
+        showError: (description: string) =>
+          setFeedback({ open: true, description, color: 'error', icon: 'error' }),
+        close: () => setFeedback((prev) => ({ ...prev, open: false })),
+      };
+    },
+  };
+});
 
 vi.mock('@app/[slug]/(app)/settings/constants', () => ({
   THEME_COLOR_FIELDS: [],
@@ -38,7 +51,26 @@ vi.mock('@app/[slug]/(app)/settings/constants', () => ({
 }));
 
 vi.mock('@/shared/components/ui', () => ({
-  AlertSnackbar: () => null,
+  AlertSnackbar: ({
+    open,
+    description,
+    autoCloseDuration,
+    onClose,
+  }: {
+    open?: boolean;
+    description: string;
+    autoCloseDuration?: number;
+    onClose?: () => void;
+  }) => (
+    <div data-testid="snackbar" data-auto-close={autoCloseDuration}>
+      {open ? description : ''}
+      {open && (
+        <button type="button" aria-label="Cerrar aviso" onClick={onClose}>
+          x
+        </button>
+      )}
+    </div>
+  ),
   Button: ({
     children,
     onClick,
@@ -154,5 +186,59 @@ describe('StorefrontThemeEditor scheme semantics', () => {
     });
     expect(mockUpdateTheme.mock.calls[0]).toHaveLength(3);
     expect(mockUpdateScheme).not.toHaveBeenCalled();
+  });
+
+  test('discard restores the saved snapshot and disables Save (T21)', () => {
+    renderEditor();
+
+    const save = screen.getByRole('button', {
+      name: /Sin cambios pendientes|Guardar apariencia pública/,
+    });
+    expect(save).toHaveProperty('disabled', true);
+
+    const fontControl = screen.getByLabelText('Estilo de tipografía') as HTMLSelectElement;
+    const originalFont = fontControl.value;
+    const alternative = Array.from(fontControl.querySelectorAll('option')).find(
+      (option) => (option as HTMLOptionElement).value !== originalFont,
+    );
+    expect(alternative).toBeDefined();
+    fireEvent.change(fontControl, { target: { value: (alternative as HTMLOptionElement).value } });
+
+    expect(screen.getByRole('button', { name: /Guardar apariencia pública/ })).toHaveProperty(
+      'disabled',
+      false,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Descartar cambios' }));
+
+    expect((screen.getByLabelText('Estilo de tipografía') as HTMLSelectElement).value).toBe(
+      originalFont,
+    );
+    expect(screen.getByRole('button', { name: /Sin cambios pendientes/ })).toHaveProperty(
+      'disabled',
+      true,
+    );
+  });
+
+  test('error feedback persists until dismissed and errors disable auto-close (T21)', async () => {
+    mockUpdateTheme.mockResolvedValueOnce({
+      success: false,
+      error: 'No se pudo guardar la apariencia pública.',
+    });
+    renderEditor();
+
+    const fontControl = screen.getByLabelText('Estilo de tipografía') as HTMLSelectElement;
+    const alternative = Array.from(fontControl.querySelectorAll('option')).find(
+      (option) => (option as HTMLOptionElement).value !== fontControl.value,
+    );
+    fireEvent.change(fontControl, { target: { value: (alternative as HTMLOptionElement).value } });
+    fireEvent.click(screen.getByRole('button', { name: /Guardar apariencia pública/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText('No se pudo guardar la apariencia pública.')).toBeDefined();
+    });
+    expect(screen.getByTestId('snackbar')).toHaveProperty('dataset.autoClose', '0');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cerrar aviso' }));
+    expect(screen.queryByText('No se pudo guardar la apariencia pública.')).toBeNull();
   });
 });
