@@ -198,6 +198,12 @@
   transform: translateY(-1px);
 }
 
+.card:focus-visible {
+  outline: 3px solid var(--md-sys-color-primary, #6366f1);
+  outline-offset: 2px;
+  border-color: var(--md-sys-color-primary, #6366f1);
+}
+
 .cardSelected {
   border-color: var(--md-sys-color-primary, #6366f1) !important;
   box-shadow:

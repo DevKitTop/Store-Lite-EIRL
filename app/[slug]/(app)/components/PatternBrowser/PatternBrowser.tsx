@@ -6,13 +6,14 @@ import type {
   PatternCraftStyle,
 } from '@/data/patterncraft';
 import { getPatternCraftById, patternCraftByCategory } from '@/data/patterncraft';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from './PatternBrowser.module.css';
 
 interface PatternBrowserProps {
   open: boolean;
   onClose: () => void;
   onSelect: (pattern: PatternCraftPattern) => void;
+  onClear?: (pattern: PatternCraftPattern) => void;
   currentPatternId?: string;
   colorScheme: 'light' | 'dark';
 }
@@ -142,11 +143,13 @@ export function PatternBrowser({
   open,
   onClose,
   onSelect,
+  onClear,
   currentPatternId,
   colorScheme,
 }: PatternBrowserProps) {
   const [activeCategory, setActiveCategory] = useState<PatternCraftCategory>('gradients');
   const [selectedId, setSelectedId] = useState<string | null>(currentPatternId ?? null);
+  const openerRef = useRef<HTMLElement | null>(null);
 
   // Sync selection when currentPatternId changes externally
   useEffect(() => {
@@ -172,14 +175,26 @@ export function PatternBrowser({
     };
   }, [open]);
 
-  // Close on Escape
+  // Remember what had focus before the modal opened, and restore it on close.
+  useEffect(() => {
+    if (!open) return;
+    openerRef.current = document.activeElement as HTMLElement | null;
+    return () => {
+      openerRef.current?.focus();
+    };
+  }, [open]);
+
+  // Close on Escape without letting the parent's document-level handler also react.
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
     };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
+    document.addEventListener('keydown', handler, true);
+    return () => document.removeEventListener('keydown', handler, true);
   }, [open, onClose]);
 
   const patterns = useMemo(
@@ -193,14 +208,17 @@ export function PatternBrowser({
     [activeCategory, colorScheme],
   );
 
-  const handleConfirm = useCallback(() => {
-    if (!selectedId) return;
-    const pattern = getPatternCraftById(selectedId);
-    if (pattern) {
-      onSelect(pattern);
-    }
-    onClose();
-  }, [selectedId, onSelect, onClose]);
+  const handleConfirm = useCallback(
+    (patternId: string | null = selectedId) => {
+      if (!patternId) return;
+      const pattern = getPatternCraftById(patternId);
+      if (pattern) {
+        onSelect(pattern);
+      }
+      onClose();
+    },
+    [selectedId, onSelect, onClose],
+  );
 
   const currentPattern = currentPatternId ? getPatternCraftById(currentPatternId) : undefined;
 
@@ -225,10 +243,9 @@ export function PatternBrowser({
             <button
               className={styles.clearBtn}
               onClick={() => {
+                onClear?.(currentPattern);
                 setSelectedId(null);
                 onClose();
-                // Inform parent to clear by calling onSelect with a null signal
-                // We'll rely on parent handling
               }}
             >
               Quitar
@@ -269,9 +286,15 @@ export function PatternBrowser({
               key={pattern.id}
               className={`${styles.card} ${selectedId === pattern.id ? styles.cardSelected : ''}`}
               onClick={() => setSelectedId(pattern.id)}
-              onDoubleClick={() => {
-                setSelectedId(pattern.id);
-                handleConfirm();
+              onDoubleClick={() => handleConfirm(pattern.id)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                if (selectedId === pattern.id) {
+                  handleConfirm(pattern.id);
+                } else {
+                  setSelectedId(pattern.id);
+                }
               }}
               title={pattern.name}
             >
@@ -289,7 +312,11 @@ export function PatternBrowser({
           <button className={styles.cancelBtn} onClick={onClose}>
             Cancelar
           </button>
-          <button className={styles.applyBtn} disabled={!selectedId} onClick={handleConfirm}>
+          <button
+            className={styles.applyBtn}
+            disabled={!selectedId}
+            onClick={() => handleConfirm()}
+          >
             {selectedId === currentPatternId ? 'Mantener selección' : 'Aplicar patrón'}
           </button>
         </div>
