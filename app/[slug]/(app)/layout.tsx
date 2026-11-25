@@ -14,6 +14,7 @@ import AppLayout from '@/shared/components/layout/AppLayout';
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import { BusinessProviders } from './components/BusinessProviders';
+import { StorefrontThemeScope } from './components/StorefrontThemeScope';
 import { PlanExpiredProductsDialog } from './dashboard/components/PlanExpiredProductsDialog';
 
 interface AppLayoutProps {
@@ -124,36 +125,38 @@ export default async function AppGroupLayout({ children, modal, params }: AppLay
   }
 
   return (
-    <BusinessProviders
-      businessSlug={business.slug}
-      businessId={business.id}
-      country={business.country}
-      entitlements={entitlements}
-      initialProducts={storageProducts}
-      initialCategories={categoryNames}
-      isOwner={isOwner}
-      role={role}
-      permissions={permissions}
-    >
-      <AppLayout
-        showNavbarByDefault={isAdminView}
-        navbarPlanName={navbarPlanName}
-        navbarBusinessId={business.id}
-        navbarBusinessName={business.name}
-        navbarBusinessLogoUrl={business.logoUrl ?? undefined}
-        navbarBusinessCoverUrl={business.coverImageUrl ?? undefined}
+    <StorefrontThemeScope businessId={business.id} slug={business.slug}>
+      <BusinessProviders
+        businessSlug={business.slug}
+        businessId={business.id}
+        country={business.country}
+        entitlements={entitlements}
+        initialProducts={storageProducts}
+        initialCategories={categoryNames}
+        isOwner={isOwner}
+        role={role}
+        permissions={permissions}
       >
-        {isOwner && entitlements.disabledProducts && entitlements.disabledProducts.length > 0 && (
-          <PlanExpiredProductsDialog
-            businessId={business.id}
-            planEndDate={entitlements.planEndDate}
-            products={entitlements.disabledProducts}
-          />
-        )}
-        <DiscoveryBanner slug={business.slug} offer={promotionOffer} isOwner={isOwner} />
-        {children}
-        {modal}
-      </AppLayout>
-    </BusinessProviders>
+        <AppLayout
+          showNavbarByDefault={isAdminView}
+          navbarPlanName={navbarPlanName}
+          navbarBusinessId={business.id}
+          navbarBusinessName={business.name}
+          navbarBusinessLogoUrl={business.logoUrl ?? undefined}
+          navbarBusinessCoverUrl={business.coverImageUrl ?? undefined}
+        >
+          {isOwner && entitlements.disabledProducts && entitlements.disabledProducts.length > 0 && (
+            <PlanExpiredProductsDialog
+              businessId={business.id}
+              planEndDate={entitlements.planEndDate}
+              products={entitlements.disabledProducts}
+            />
+          )}
+          <DiscoveryBanner slug={business.slug} offer={promotionOffer} isOwner={isOwner} />
+          {children}
+          {modal}
+        </AppLayout>
+      </BusinessProviders>
+    </StorefrontThemeScope>
   );
 }

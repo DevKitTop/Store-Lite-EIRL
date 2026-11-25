@@ -5,7 +5,6 @@ import { db } from '@/core/database/client';
 import { businessSettings, productCategories } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import {
-  buildStorefrontThemeStyleTag,
   getStorefrontLayoutFromPreferences,
   getStorefrontThemeFromPreferences,
   hasCustomStorefrontTheme,
@@ -182,10 +181,6 @@ export default async function BusinessPage({ params }: Props) {
     cookieValue: cookieStore.get(viewerSchemeCookieName(business.slug))?.value,
     storedScheme: settings?.themeMode,
   });
-  const ssrThemeStyleTag = savedStorefrontTheme
-    ? buildStorefrontThemeStyleTag(savedStorefrontTheme, defaultScheme)
-    : '';
-
   // DS 011 customer-facing trust signal: same data source as the complaint
   // banner (getBusinessTrustScore). Returns null when ENABLE_AUTO_DEACTIVATION
   // is off, which ALSO gates the badge — mirroring the banner's gating. It is
@@ -205,7 +200,6 @@ export default async function BusinessPage({ params }: Props) {
           dangerouslySetInnerHTML={{ __html: toSafeJsonLd(breadcrumbJsonLd) }}
         />
       )}
-      {ssrThemeStyleTag && <style dangerouslySetInnerHTML={{ __html: ssrThemeStyleTag }} />}
       <BusinessPageContent
         business={business}
         isOwner={isOwner}
