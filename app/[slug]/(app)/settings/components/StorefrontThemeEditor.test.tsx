@@ -152,12 +152,15 @@ const theme = {
   },
 } satisfies StorefrontTheme;
 
-function renderEditor(scheme: 'light' | 'dark' = 'light') {
+function renderEditor(
+  scheme: 'light' | 'dark' = 'light',
+  initialStorefrontTheme: StorefrontTheme = theme,
+) {
   return render(
     <StorefrontThemeEditor
       business={business as never}
       entitlements={entitlements}
-      initialStorefrontTheme={theme}
+      initialStorefrontTheme={initialStorefrontTheme}
       initialHasCustomTheme
       initialScheme={scheme}
       isOwner
@@ -395,5 +398,26 @@ describe('StorefrontThemeEditor scheme semantics', () => {
     expect(saved.dark.background?.cssOverlay).toMatchObject(patternOverlay);
     expect(saved.light.palette).toEqual(DEFAULT_STOREFRONT_THEME.light.palette);
     expect(saved.dark.palette).toEqual(DEFAULT_STOREFRONT_THEME.dark.palette);
+  });
+
+  test('contrast warning appears below AA and never blocks saving (T15)', () => {
+    renderEditor();
+
+    const primaryInput = screen.getByLabelText('Color principal') as HTMLInputElement;
+    expect(screen.queryByText(/poco contraste/i)).toBeNull();
+
+    fireEvent.change(primaryInput, { target: { value: '#777777' } });
+    expect(screen.getByText(/poco contraste/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: /Guardar apariencia pública/ })).toHaveProperty(
+      'disabled',
+      false,
+    );
+
+    fireEvent.change(primaryInput, { target: { value: '#767676' } });
+    expect(screen.queryByText(/poco contraste/i)).toBeNull();
+    expect(screen.getByRole('button', { name: /Guardar apariencia pública/ })).toHaveProperty(
+      'disabled',
+      false,
+    );
   });
 });

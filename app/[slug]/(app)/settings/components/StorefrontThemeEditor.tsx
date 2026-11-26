@@ -3,6 +3,7 @@
 import {
   createDefaultStorefrontTheme,
   createRandomStorefrontPalette,
+  getContrastRatio,
   isStorefrontColorScheme,
   normalizeStorefrontTheme,
   type StorefrontColorScheme,
@@ -65,6 +66,10 @@ export function StorefrontThemeEditor({
   const [scheme, setScheme] = useState<StorefrontColorScheme>(initialScheme ?? 'light');
   const [defaultScheme, setDefaultScheme] = useState<'light' | 'dark'>(initialScheme ?? 'light');
   const currentConfig = storefrontTheme[scheme];
+  const backgroundColor =
+    currentConfig.background?.colors[0] ?? (scheme === 'dark' ? '#111827' : '#ffffff');
+  const hasLowPrimaryContrast =
+    getContrastRatio(currentConfig.palette.primary, backgroundColor) < 4.5;
   const { feedback, showSuccess, showError, close: closeFeedback } = useSnackbarFeedback();
 
   // ── Dirty tracking snapshots ──
@@ -425,6 +430,14 @@ export function StorefrontThemeEditor({
                   );
                 })}
               </div>
+
+              {!usePlatformColors && hasLowPrimaryContrast && (
+                <p className={styles.contrastWarning} role="status" aria-live="polite">
+                  <Icon size={18}>warning_amber</Icon>
+                  El color principal tiene poco contraste con este fondo. Podés guardarlo, pero
+                  puede dificultar la lectura.
+                </p>
+              )}
 
               {/* Botones de paleta */}
               <div

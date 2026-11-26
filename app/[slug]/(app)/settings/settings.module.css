@@ -1112,6 +1112,17 @@
   color: var(--md-sys-color-primary);
 }
 
+.contrastWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0 24px 16px;
+  color: var(--md-sys-color-error);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
 .themeColorGrid {
   display: grid;
   grid-template-columns: 1fr;
