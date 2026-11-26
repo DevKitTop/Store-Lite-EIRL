@@ -71,6 +71,7 @@ export function StorefrontEditor({
   onOpenChange,
 }: StorefrontEditorProps) {
   const [open, setOpen] = useState(false);
+  const [storeVisible, setStoreVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedTheme, setSavedTheme] = useState<StorefrontTheme>(() =>
     normalizeStorefrontTheme(storefrontTheme),
@@ -81,6 +82,9 @@ export function StorefrontEditor({
     () => JSON.stringify(normalizeStorefrontTheme(storefrontTheme)) !== JSON.stringify(savedTheme),
     [storefrontTheme, savedTheme],
   );
+  // While "Ver tienda" is active, the storefront stays interactive: no backdrop,
+  // no focus trap and no body scroll lock. The compact editor bar remains usable.
+  const editorActive = open && !storeVisible;
   const clearFeedback = useCallback(() => {
     clearTimeout(feedbackTimeoutRef.current);
     feedbackTimeoutRef.current = undefined;
@@ -262,13 +266,14 @@ export function StorefrontEditor({
     if (hasChanges && !window.confirm('¿Descartar los cambios sin guardar?')) return;
     if (hasChanges) discardChanges();
     setOpen(false);
+    setStoreVisible(false);
     onClose?.();
   }, [discardChanges, hasChanges, onClose]);
 
   // The picker owns keyboard input while nested; the panel resumes focus
   // trapping after it closes.
   const { surfaceRef } = useDialogSurface({
-    open,
+    open: editorActive,
     onClose: handleClose,
     suspended: isPatternBrowserOpen,
   });
@@ -398,6 +403,7 @@ export function StorefrontEditor({
         className={styles.fab}
         onClick={() => {
           setOpen(true);
+          setStoreVisible(false);
           onOpen?.();
         }}
         aria-label="Personalizar tienda"
@@ -406,7 +412,7 @@ export function StorefrontEditor({
       </button>
 
       {/* Backdrop */}
-      {open && (
+      {editorActive && (
         <div
           data-testid="storefront-editor-backdrop"
           className={styles.backdrop}
@@ -419,9 +425,9 @@ export function StorefrontEditor({
       <div
         ref={surfaceRef}
         data-testid="storefront-editor-panel"
-        className={`${styles.panel} ${open ? styles.panelOpen : ''}`}
+        className={`${styles.panel} ${editorActive ? styles.panelOpen : ''} ${storeVisible ? styles.panelCollapsed : ''}`}
         role="dialog"
-        aria-modal="true"
+        aria-modal={editorActive ? 'true' : undefined}
         aria-labelledby="storefront-editor-title"
         aria-hidden={open ? undefined : true}
         inert={!open}
@@ -431,12 +437,23 @@ export function StorefrontEditor({
           <h2 id="storefront-editor-title" className={styles.panelTitle}>
             Personalizar tienda
           </h2>
+          <button
+            type="button"
+            className={styles.viewStoreBtn}
+            onClick={() => setStoreVisible((visible) => !visible)}
+            aria-label={storeVisible ? 'Editar estilo' : 'Ver tienda'}
+            aria-expanded={!storeVisible}
+            aria-controls="storefront-editor-body"
+          >
+            <Icon>{storeVisible ? 'edit' : 'visibility'}</Icon>
+            {storeVisible ? 'Editar estilo' : 'Ver tienda'}
+          </button>
           <button className={styles.closeBtn} onClick={handleClose} aria-label="Cerrar editor">
             <Icon>close</Icon>
           </button>
         </div>
 
-        <div className={styles.panelBody}>
+        <div id="storefront-editor-body" className={styles.panelBody}>
           {/* ── Toggle modo claro/oscuro ── */}
           <div className={styles.sectionCard}>
             <h3 className={styles.sectionTitle}>

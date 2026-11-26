@@ -190,3 +190,34 @@ describe('StorefrontEditor dirty state (T21)', () => {
     expect(mockUpdateTheme).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('StorefrontEditor mobile preview (T25)', () => {
+  test('"Ver tienda" collapses the panel and restores editing', () => {
+    render(<EditorHarness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Personalizar tienda' }));
+
+    const panel = screen.getByTestId('storefront-editor-panel');
+    expect(panel.getAttribute('aria-modal')).toBe('true');
+    expect(screen.getByTestId('storefront-editor-backdrop')).toBeDefined();
+    expect(document.body.style.overflow).toBe('hidden');
+
+    const viewStore = screen.getByRole('button', { name: 'Ver tienda' });
+    expect(viewStore.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(viewStore);
+
+    expect(screen.queryByTestId('storefront-editor-backdrop')).toBeNull();
+    expect(panel.getAttribute('aria-modal')).toBeNull();
+    expect(document.body.style.overflow).toBe('');
+    const editStyle = screen.getByRole('button', { name: 'Editar estilo' });
+    expect(editStyle.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(editStyle);
+
+    expect(screen.getByTestId('storefront-editor-backdrop')).toBeDefined();
+    expect(panel.getAttribute('aria-modal')).toBe('true');
+    expect(document.body.style.overflow).toBe('hidden');
+    expect(screen.getByRole('button', { name: 'Ver tienda' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+  });
+});

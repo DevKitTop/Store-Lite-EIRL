@@ -65,6 +65,12 @@
   transform: translateX(0);
 }
 
+/* Mobile preview: keep the header accessible while the store stays visible. */
+.panelCollapsed .panelBody,
+.panelCollapsed .panelFooter {
+  display: none;
+}
+
 /* ============================================================
    Header
    ============================================================ */
@@ -100,6 +106,20 @@
 
 .closeBtn:hover {
   background: var(--md-sys-color-surface-container-highest);
+}
+
+.viewStoreBtn {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 999px;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* ============================================================
@@ -832,14 +852,45 @@
 /* ============================================================
    Responsive
    ============================================================ */
+@media (max-width: 768px) {
+  .viewStoreBtn {
+    display: inline-flex;
+  }
+
+  .fab {
+    bottom: auto;
+  }
+
+  /* Sit above the 4.5rem bottom navbar (24px offset + 8px gap). */
+  .panelCollapsed {
+    top: auto;
+    right: 1rem;
+    bottom: calc(4.5rem + 24px + 8px);
+    width: calc(100% - 2rem);
+    max-width: 450px;
+    height: auto;
+    border: 1px solid var(--md-sys-color-outline-variant);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 420px) {
   .panel {
     width: 100vw;
   }
 
+  .panelCollapsed {
+    right: 0.5rem;
+    bottom: calc(4.5rem + 16px + 8px);
+    width: calc(100% - 1rem);
+  }
+
   .fab {
     top: 16px;
     right: 16px;
+    bottom: auto;
     width: 48px;
     height: 48px;
   }
