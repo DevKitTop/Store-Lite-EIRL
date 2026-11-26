@@ -136,8 +136,12 @@ describe('storefront role token invariants', () => {
       },
     };
     const tag = buildStorefrontThemeStyleTag(forced, 'light');
+    const rootEnd = tag.indexOf('}');
     expect(tag.startsWith(':root{')).toBe(true);
-    expect(tag.slice(6, -1)).not.toMatch(/[<>{}@]|url\(/i);
+    expect(tag.slice(6, rootEnd)).not.toMatch(/[<>{}@]|url\(/i);
+    expect(tag.slice(rootEnd + 1)).toMatch(
+      /^:root md-filled-button,:root md-outlined-button,:root md-text-button,:root md-elevated-button,:root md-filled-tonal-button\{[^{}<>@]*\}$/i,
+    );
     for (const [key, value] of Object.entries(buildStorefrontThemeVars(forced, 'light'))) {
       expect(isSafeCssDeclaration(key), key).toBe(true);
       expect(sanitizeCssValue(value) === value || sanitizeCssValue(value) === undefined, key).toBe(

@@ -78,6 +78,23 @@ export function buildStorefrontThemeVars(
 
   return withRgbColorAliases({
     '--storefront-font-family': ff,
+    '--md-ref-typeface-brand': ff,
+    '--md-ref-typeface-plain': ff,
+    '--md-sys-typescale-display-large-font-family-name': ff,
+    '--md-sys-typescale-display-medium-font-family-name': ff,
+    '--md-sys-typescale-display-small-font-family-name': ff,
+    '--md-sys-typescale-headline-large-font-family-name': ff,
+    '--md-sys-typescale-headline-medium-font-family-name': ff,
+    '--md-sys-typescale-headline-small-font-family-name': ff,
+    '--md-sys-typescale-title-large-font-family-name': ff,
+    '--md-sys-typescale-title-medium-font-family-name': ff,
+    '--md-sys-typescale-title-small-font-family-name': ff,
+    '--md-sys-typescale-body-large-font-family-name': ff,
+    '--md-sys-typescale-body-medium-font-family-name': ff,
+    '--md-sys-typescale-body-small-font-family-name': ff,
+    '--md-sys-typescale-label-large-font-family-name': ff,
+    '--md-sys-typescale-label-medium-font-family-name': ff,
+    '--md-sys-typescale-label-small-font-family-name': ff,
     '--storefront-primary': palette.primary,
     '--storefront-on-surface': onSurface,
     '--storefront-on-surface-variant': onSurfaceVariant,
@@ -151,5 +168,18 @@ export function buildStorefrontThemeStyleTag(
     .filter((entry): entry is readonly [string, string] => entry[1] !== undefined)
     .map(([key, value]) => `${key}:${value}`)
     .join(';');
-  return `:root{${declarations}}`;
+  const selectedFont = sanitizeCssValue(vars['--storefront-font-family']);
+  const buttonFontCascade = selectedFont
+    ? [
+        'md-filled-button',
+        'md-outlined-button',
+        'md-text-button',
+        'md-elevated-button',
+        'md-filled-tonal-button',
+      ]
+        .map((selector) => `:root ${selector}`)
+        .join(',') + `{--md-sys-typescale-label-large-font-family-name:${selectedFont}}`
+    : '';
+
+  return `:root{${declarations}}${buttonFontCascade}`;
 }

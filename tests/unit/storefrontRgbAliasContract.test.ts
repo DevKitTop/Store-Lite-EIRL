@@ -81,7 +81,8 @@ describe('storefront RGB alias contract (T29)', () => {
   it.each(['light', 'dark'] as const)(
     '%s style tag preserves declaration order and appends only aliases',
     (scheme) => {
-      const declarations = buildStorefrontThemeStyleTag(theme, scheme).slice(6, -1).split(';');
+      const tag = buildStorefrontThemeStyleTag(theme, scheme);
+      const declarations = tag.slice(6, tag.indexOf('}')).split(';');
       const expected = Object.entries(buildStorefrontThemeVars(theme, scheme)).map(
         ([key, value]) => `${key}:${value}`,
       );
