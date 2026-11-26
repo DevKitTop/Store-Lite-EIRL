@@ -15,15 +15,19 @@ import {
   normalizeStorefrontLayout,
   normalizeStorefrontTheme,
 } from '@/core/storefront';
+import {
+  businessSlugCharactersSchema,
+  businessSlugLengthSchema,
+  storefrontColorSchemeSchema,
+  storefrontSlugSchema,
+  storefrontThemePayloadSchema,
+} from '@/core/storefront/actionInputSchemas';
 import { canonicalizeStorefrontThemePatterns } from '@/core/storefront/patternCatalog';
 import {
   STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
   hasStorefrontCustomizationAccess,
 } from '@/core/storefront/storefrontCustomizationAccess';
-import {
-  STOREFRONT_THEME_PREFERENCES_KEY,
-  isStorefrontColorScheme,
-} from '@/core/storefront/storefrontTheme';
+import { STOREFRONT_THEME_PREFERENCES_KEY } from '@/core/storefront/storefrontTheme';
 import { requireAccessOnId } from '@/features/storage/actions/authz';
 import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { logger, toErrorDetail } from '@/lib/logger';
@@ -107,11 +111,11 @@ export async function updateBusinessSlug(
     return { success: false, error: FROZEN_FIELD_MESSAGE };
   }
 
-  if (newSlug.length < 10 || newSlug.length > 30) {
+  if (!businessSlugLengthSchema.safeParse(newSlug).success) {
     return { success: false, error: 'El slug debe tener entre 10 y 30 caracteres.' };
   }
 
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(newSlug) || newSlug.endsWith('-')) {
+  if (!businessSlugCharactersSchema.safeParse(newSlug).success) {
     return {
       success: false,
       error:
@@ -249,6 +253,9 @@ export interface StorefrontThemeActionState extends ActionState {
   storefrontTheme?: StorefrontTheme;
 }
 
+const INVALID_STOREFRONT_SLUG_MESSAGE = 'Slug no valido.';
+const INVALID_STOREFRONT_THEME_MESSAGE = 'Datos de apariencia no validos.';
+
 export async function updateBusinessSEO(
   businessId: string,
   seoData: SEOActionInput,
@@ -312,6 +319,10 @@ export async function updateStorefrontLayout(
     };
   }
 
+  if (!storefrontSlugSchema.safeParse(slug).success) {
+    return { success: false, error: INVALID_STOREFRONT_SLUG_MESSAGE };
+  }
+
   const normalizedLayout = normalizeStorefrontLayout(layout);
   const layoutPatch = { [STOREFRONT_LAYOUT_PREFERENCES_KEY]: normalizedLayout };
 
@@ -373,6 +384,14 @@ export async function updateStorefrontTheme(
       success: false,
       error: STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
     };
+  }
+
+  if (!storefrontSlugSchema.safeParse(slug).success) {
+    return { success: false, error: INVALID_STOREFRONT_SLUG_MESSAGE };
+  }
+
+  if (!storefrontThemePayloadSchema.safeParse(storefrontTheme).success) {
+    return { success: false, error: INVALID_STOREFRONT_THEME_MESSAGE };
   }
 
   // Pattern overlays are re-derived from the PatternCraft catalog first, so the
@@ -451,7 +470,11 @@ export async function updateStorefrontDefaultScheme(
     };
   }
 
-  if (!isStorefrontColorScheme(defaultScheme)) {
+  if (!storefrontSlugSchema.safeParse(slug).success) {
+    return { success: false, error: INVALID_STOREFRONT_SLUG_MESSAGE };
+  }
+
+  if (!storefrontColorSchemeSchema.safeParse(defaultScheme).success) {
     return { success: false, error: 'Esquema de color no valido.' };
   }
 
@@ -500,6 +523,10 @@ export async function clearStorefrontTheme(businessId: string, slug: string): Pr
       success: false,
       error: STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
     };
+  }
+
+  if (!storefrontSlugSchema.safeParse(slug).success) {
+    return { success: false, error: INVALID_STOREFRONT_SLUG_MESSAGE };
   }
 
   try {

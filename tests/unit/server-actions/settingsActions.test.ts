@@ -749,4 +749,45 @@ describe('settings actions — plan enforcement', () => {
       expect(result.success).toBe(true);
     });
   });
+
+  describe('T06 action input validation', () => {
+    test('rejects an invalid default scheme before any write', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      const result = await updateStorefrontDefaultScheme(
+        BUSINESS_ID,
+        'test-slug',
+        'purple' as never,
+      );
+
+      expect(result).toEqual({ success: false, error: 'Esquema de color no valido.' });
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    test('rejects a malformed slug before any write', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'Bad Slug!', {
+        colors: { primary: '#ff0000' },
+      } as never);
+
+      expect(result).toEqual({ success: false, error: 'Slug no valido.' });
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    test('rejects an oversized theme payload before any write', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', {
+        colors: { primary: '#ff0000' },
+        oversized: 'x'.repeat(60_000),
+      } as never);
+
+      expect(result).toEqual({ success: false, error: 'Datos de apariencia no validos.' });
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+  });
 });
