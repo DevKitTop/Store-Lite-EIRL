@@ -1,6 +1,8 @@
 import { sanitizeCssValue, sanitizePatternId } from './cssSafety';
+import { isStorefrontFontFamily, type StorefrontFontFamily } from './storefrontFontRegistry';
 
-export type StorefrontFontFamily = 'google-sans' | 'inter' | 'roboto' | 'poppins';
+export { STOREFRONT_FONT_OPTIONS } from './storefrontFontRegistry';
+export type { StorefrontFontFamily };
 export type StorefrontColorScheme = 'light' | 'dark';
 export type StorefrontBackgroundType = 'solid' | 'gradient';
 export type StorefrontOverlayType =
@@ -88,16 +90,6 @@ export interface StorefrontTheme {
 }
 
 export const STOREFRONT_THEME_PREFERENCES_KEY = 'storefrontTheme';
-
-export const STOREFRONT_FONT_OPTIONS = [
-  { value: 'google-sans', label: 'Predeterminado', description: 'Google Sans' },
-  { value: 'inter', label: 'Inter', description: 'Inter' },
-  { value: 'roboto', label: 'Roboto', description: 'Roboto' },
-] as const satisfies readonly {
-  value: StorefrontFontFamily;
-  label: string;
-  description: string;
-}[];
 
 export const STOREFRONT_SURFACE_MODE_OPTIONS = [
   { value: 'light', label: 'Modo claro' },
@@ -391,8 +383,6 @@ export function buildBackgroundCSS(bg?: StorefrontBackground): Record<string, st
 
 // ─── Internal helpers ──────────────────────────────────────────────
 
-const FONT_OPTIONS: readonly StorefrontFontFamily[] = ['google-sans', 'inter', 'roboto', 'poppins'];
-
 const FILL_TYPES: readonly StorefrontBackgroundType[] = ['solid', 'gradient'];
 const OVERLAY_TYPES: readonly StorefrontOverlayType[] = [
   'dots',
@@ -424,7 +414,7 @@ export function randomHexColor() {
 }
 
 function isFontFamily(value: unknown): value is StorefrontFontFamily {
-  return typeof value === 'string' && FONT_OPTIONS.includes(value as StorefrontFontFamily);
+  return isStorefrontFontFamily(value);
 }
 
 function isOverlayType(value: unknown): value is StorefrontOverlayType {

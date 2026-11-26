@@ -7,6 +7,7 @@ import {
   type StorefrontSection,
   type StorefrontTheme,
 } from '@/core/storefront';
+import { resolveStorefrontFontFamily } from '@/core/storefront/storefrontFontRegistry';
 import type { Permission } from '@/lib/permissions/definitions';
 import { Icon, IconButton, LinearProgress } from '@/shared/components/ui';
 import { getCounterStatus, type OptimalRange } from '@/shared/seo/seoPreview';
@@ -192,18 +193,7 @@ export const THEME_COLOR_FIELDS = [
 // ── Utility Functions ────────────────────────────────────────────────────────
 
 export function getFontFamilyCSS(fontFamily: StorefrontTheme['fontFamily']): string {
-  switch (fontFamily) {
-    case 'google-sans':
-      return "var(--font-google-sans-flex), 'Google Sans', var(--mio-theme-text-font-family), sans-serif";
-    case 'inter':
-      return 'var(--font-storefront-inter), var(--mio-theme-text-font-family), sans-serif';
-    case 'roboto':
-      return 'var(--font-storefront-roboto), var(--mio-theme-text-font-family), sans-serif';
-    case 'poppins':
-      return 'var(--font-storefront-poppins), var(--mio-theme-text-font-family), sans-serif';
-    default:
-      return "var(--font-google-sans-flex), 'Google Sans', var(--mio-theme-text-font-family), sans-serif";
-  }
+  return resolveStorefrontFontFamily(fontFamily);
 }
 
 export function getRemainingTime(planEndDate: string | null): string | null {

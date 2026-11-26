@@ -8,6 +8,7 @@ import type {
   StorefrontTheme,
 } from '@/core/storefront';
 import { normalizeStorefrontTheme, patternToCssOverlay, randomHexColor } from '@/core/storefront';
+import { STOREFRONT_FONT_OPTIONS } from '@/core/storefront/storefrontFontRegistry';
 import type { PatternCraftPattern } from '@/data/patterncraft/curated';
 import { getCuratedPatternById } from '@/data/patterncraft/curated';
 import { Icon } from '@/shared/components/ui/data-display/Icon';
@@ -36,12 +37,6 @@ interface StorefrontEditorProps {
 
 // NOTE: Built-in overlays (dots, lines, etc.) and custom CSS textarea were removed in V2.
 // PatternCraft is now the only decorative pattern option.
-
-const FONT_OPTIONS = [
-  { value: 'google-sans', label: 'Predeterminado' },
-  { value: 'inter', label: 'Inter' },
-  { value: 'roboto', label: 'Roboto' },
-] as const;
 
 const SCHEME_TABS: { value: StorefrontColorScheme; label: string }[] = [
   { value: 'light', label: 'Claro' },
@@ -527,26 +522,16 @@ export function StorefrontEditor({
               Tipografía
             </h3>
             <div className={styles.fontGrid}>
-              {FONT_OPTIONS.map((opt) => (
+              {STOREFRONT_FONT_OPTIONS.map((option) => (
                 <button
-                  key={opt.value}
-                  className={`${styles.fontOption} ${storefrontTheme.fontFamily === opt.value ? styles.fontOptionActive : ''}`}
-                  onClick={() => updateTheme({ fontFamily: opt.value })}
+                  key={option.value}
+                  className={`${styles.fontOption} ${storefrontTheme.fontFamily === option.value ? styles.fontOptionActive : ''}`}
+                  onClick={() => updateTheme({ fontFamily: option.value })}
                 >
-                  <span
-                    className={styles.fontPreview}
-                    style={{
-                      fontFamily:
-                        opt.value === 'google-sans'
-                          ? undefined
-                          : opt.value === 'inter'
-                            ? "'Inter', sans-serif"
-                            : "'Roboto', sans-serif",
-                    }}
-                  >
+                  <span className={styles.fontPreview} style={{ fontFamily: option.cssValue }}>
                     Aa
                   </span>
-                  <span className={styles.fontLabel}>{opt.label}</span>
+                  <span className={styles.fontLabel}>{option.label}</span>
                 </button>
               ))}
             </div>

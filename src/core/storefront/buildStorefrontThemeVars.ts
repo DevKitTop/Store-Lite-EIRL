@@ -1,4 +1,5 @@
 import { isSafeCssDeclaration, sanitizeCssValue } from './cssSafety';
+import { resolveStorefrontFontFamily } from './storefrontFontRegistry';
 import type { StorefrontColorScheme, StorefrontTheme } from './storefrontTheme';
 import {
   buildBackgroundCSS,
@@ -6,23 +7,6 @@ import {
   getStorefrontColorConfig,
 } from './storefrontTheme';
 import { deriveStorefrontTonalContainer } from './tonalPalette';
-
-/**
- * Resolves the CSS font-family value for a storefront font family identifier.
- */
-function resolveStorefrontFontFamily(fontFamily: string): string {
-  switch (fontFamily) {
-    case 'inter':
-      return 'var(--font-storefront-inter), var(--mio-theme-text-font-family), sans-serif';
-    case 'roboto':
-      return 'var(--font-storefront-roboto), var(--mio-theme-text-font-family), sans-serif';
-    case 'poppins':
-      return 'var(--font-storefront-poppins), var(--mio-theme-text-font-family), sans-serif';
-    case 'google-sans':
-    default:
-      return "var(--font-google-sans-flex), 'Google Sans', var(--mio-theme-text-font-family), sans-serif";
-  }
-}
 
 function colorToRgbChannels(color: string): string | undefined {
   const value = color.trim();

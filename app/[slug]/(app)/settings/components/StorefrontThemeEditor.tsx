@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  STOREFRONT_FONT_OPTIONS,
   createDefaultStorefrontTheme,
   createRandomStorefrontTheme,
   isStorefrontColorScheme,
@@ -9,6 +8,7 @@ import {
   type StorefrontColorScheme,
   type StorefrontTheme,
 } from '@/core/storefront';
+import { STOREFRONT_FONT_OPTIONS } from '@/core/storefront/storefrontFontRegistry';
 import type { Permission } from '@/lib/permissions/definitions';
 import { AlertSnackbar, Button, Card, Icon, Select, Switch } from '@/shared/components/ui';
 import { ThemeSettings } from '@/shared/components/ui/ThemeSettings';
