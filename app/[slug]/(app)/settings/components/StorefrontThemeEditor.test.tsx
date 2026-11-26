@@ -1,4 +1,10 @@
-﻿import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+﻿import type { StorefrontTheme } from '@/core/storefront';
+import { buildStorefrontThemeVars } from '@/core/storefront/buildStorefrontThemeVars';
+import {
+  resolveStorefrontFontFamily,
+  type StorefrontFontFamily,
+} from '@/core/storefront/storefrontFontRegistry';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { StorefrontThemeEditor } from './StorefrontThemeEditor';
 
@@ -44,11 +50,14 @@ vi.mock('@app/[slug]/(app)/settings/hooks/useSettingsState', async () => {
   };
 });
 
-vi.mock('@app/[slug]/(app)/settings/constants', () => ({
-  THEME_COLOR_FIELDS: [],
-  getFontFamilyCSS: () => 'sans-serif',
-  getSelectValue: (event: unknown) => (event as { target: { value: string } }).target.value,
-}));
+vi.mock('@app/[slug]/(app)/settings/constants', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    THEME_COLOR_FIELDS: [],
+    getSelectValue: (event: unknown) => (event as { target: { value: string } }).target.value,
+  };
+});
 
 vi.mock('@/shared/components/ui', () => ({
   AlertSnackbar: ({
@@ -131,7 +140,7 @@ const theme = {
     palette: { primary: '#111111', secondary: '#222222', accent: '#333333' },
     background: { type: 'solid' as const, colors: ['#000000'] },
   },
-} as never;
+} satisfies StorefrontTheme;
 
 function renderEditor(scheme: 'light' | 'dark' = 'light') {
   return render(
@@ -240,5 +249,53 @@ describe('StorefrontThemeEditor scheme semantics', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Cerrar aviso' }));
     expect(screen.queryByText('No se pudo guardar la apariencia pública.')).toBeNull();
+  });
+
+  test('font preview uses the same resolved value as the storefront (T18)', () => {
+    renderEditor();
+
+    const previewCard = screen.getByText('Vista previa').closest('div');
+    expect(previewCard).not.toBeNull();
+
+    const storeValue = buildStorefrontThemeVars(theme, 'light')['--storefront-font-family'];
+    expect(previewCard?.style.fontFamily).toBe(storeValue);
+    expect(previewCard?.style.fontFamily).toBe(resolveStorefrontFontFamily('google-sans'));
+    expect(previewCard?.style.fontFamily).toContain('var(--font-google-sans-flex)');
+
+    const fontControl = screen.getByLabelText('Estilo de tipografía') as HTMLSelectElement;
+    fireEvent.change(fontControl, { target: { value: 'poppins' } });
+
+    const nextFont = 'poppins' satisfies StorefrontFontFamily;
+    expect(previewCard?.style.fontFamily).toBe(
+      buildStorefrontThemeVars({ ...theme, fontFamily: nextFont }, 'light')[
+        '--storefront-font-family'
+      ],
+    );
+    expect(previewCard?.style.fontFamily).toBe(resolveStorefrontFontFamily(nextFont));
+    expect(previewCard?.style.fontFamily).toContain('var(--font-storefront-poppins)');
+    expect(previewCard?.style.fontFamily).not.toBe('Poppins');
+  });
+
+  test('every font option previews the shipped variable-based value in both schemes', () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      const rendered = renderEditor(scheme);
+      const previewCard = screen.getByText('Vista previa').closest('div');
+      expect(previewCard).not.toBeNull();
+      const fontControl = screen.getByLabelText('Estilo de tipografía') as HTMLSelectElement;
+
+      for (const value of ['google-sans', 'inter', 'roboto', 'poppins'] as StorefrontFontFamily[]) {
+        fireEvent.change(fontControl, { target: { value } });
+        const expected = buildStorefrontThemeVars({ ...theme, fontFamily: value }, scheme)[
+          '--storefront-font-family'
+        ];
+        expect(previewCard?.style.fontFamily).toBe(expected);
+        expect(expected).toContain('var(--');
+        expect(previewCard?.style.fontFamily).not.toBe(value);
+        expect(['Google Sans', 'Inter', 'Roboto', 'Poppins']).not.toContain(
+          previewCard?.style.fontFamily,
+        );
+      }
+      rendered.unmount();
+    }
   });
 });
