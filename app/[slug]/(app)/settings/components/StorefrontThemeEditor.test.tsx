@@ -1,4 +1,4 @@
-﻿import type { StorefrontTheme } from '@/core/storefront';
+﻿import { DEFAULT_STOREFRONT_THEME, type StorefrontTheme } from '@/core/storefront';
 import { buildStorefrontThemeVars } from '@/core/storefront/buildStorefrontThemeVars';
 import {
   resolveStorefrontFontFamily,
@@ -54,7 +54,6 @@ vi.mock('@app/[slug]/(app)/settings/constants', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
-    THEME_COLOR_FIELDS: [],
     getSelectValue: (event: unknown) => (event as { target: { value: string } }).target.value,
   };
 });
@@ -129,16 +128,27 @@ const entitlements = {
   canCustomizeStorefront: true,
   plan: 'lite_pago',
 } as never;
+const patternOverlay = {
+  patternId: 'test-pattern',
+  background: '#fff7ed',
+  backgroundImage: 'radial-gradient(circle, #111111 1px, transparent 1px)',
+  backgroundSize: '8px 8px',
+};
 const theme = {
   version: 2 as const,
   fontFamily: 'google-sans',
   light: {
     palette: { primary: '#111111', secondary: '#222222', accent: '#333333' },
-    background: { type: 'solid' as const, colors: ['#ffffff'] },
+    background: { type: 'solid' as const, colors: ['#ffffff'], cssOverlay: patternOverlay },
   },
   dark: {
-    palette: { primary: '#111111', secondary: '#222222', accent: '#333333' },
-    background: { type: 'solid' as const, colors: ['#000000'] },
+    palette: { primary: '#444444', secondary: '#555555', accent: '#666666' },
+    background: {
+      type: 'gradient' as const,
+      colors: ['#000000', '#111111'],
+      gradientDirection: 135,
+      cssOverlay: patternOverlay,
+    },
   },
 } satisfies StorefrontTheme;
 
@@ -297,5 +307,93 @@ describe('StorefrontThemeEditor scheme semantics', () => {
       }
       rendered.unmount();
     }
+  });
+
+  test('scheme tabs switch the edited palette without changing the visitor default (T26)', () => {
+    renderEditor();
+
+    const save = screen.getByRole('button', {
+      name: /Sin cambios pendientes|Guardar apariencia pública/,
+    });
+    expect(save).toHaveProperty('disabled', true);
+    expect((screen.getByLabelText('Color principal') as HTMLInputElement).value).toBe('#111111');
+
+    const darkTab = screen.getByRole('button', { name: 'Oscuro' });
+    expect(darkTab.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(darkTab);
+
+    expect(screen.getByRole('button', { name: 'Oscuro' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    expect((screen.getByLabelText('Color principal') as HTMLInputElement).value).toBe('#444444');
+    expect(
+      (screen.getByLabelText('Esquema que verán tus visitantes') as HTMLSelectElement).value,
+    ).toBe('light');
+    expect(screen.getByRole('button', { name: /Sin cambios pendientes/ })).toHaveProperty(
+      'disabled',
+      true,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Claro' }));
+    expect((screen.getByLabelText('Color principal') as HTMLInputElement).value).toBe('#111111');
+  });
+
+  test('randomize twice keeps font and background/pattern while changing only palettes (T26)', async () => {
+    renderEditor();
+
+    const randomize = screen.getByRole('button', { name: /Combinación aleatoria/ });
+    fireEvent.click(randomize);
+    fireEvent.click(randomize);
+
+    const save = screen.getByRole('button', { name: /Guardar apariencia pública/ });
+    expect(save).toHaveProperty('disabled', false);
+    fireEvent.click(save);
+
+    await waitFor(() => {
+      expect(mockUpdateTheme).toHaveBeenCalledTimes(1);
+    });
+    const saved = mockUpdateTheme.mock.calls[0]?.[2] as StorefrontTheme;
+
+    expect(saved.version).toBe(theme.version);
+    expect(saved.fontFamily).toBe(theme.fontFamily);
+    expect(saved.light.background?.type).toBe('solid');
+    expect(saved.light.background?.colors).toEqual(['#ffffff']);
+    expect(saved.light.background?.cssOverlay).toMatchObject(patternOverlay);
+    expect(saved.dark.background?.type).toBe('gradient');
+    expect(saved.dark.background?.colors).toEqual(['#000000', '#111111']);
+    expect(saved.dark.background?.gradientDirection).toBe(135);
+    expect(saved.dark.background?.cssOverlay).toMatchObject(patternOverlay);
+    expect(saved.light.palette).not.toEqual(theme.light.palette);
+    expect(saved.dark.palette).not.toEqual(theme.dark.palette);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Sin cambios pendientes/ })).toHaveProperty(
+        'disabled',
+        true,
+      );
+    });
+  });
+
+  test('defaults restore palettes without resetting font or background/pattern (T26)', async () => {
+    renderEditor();
+
+    fireEvent.click(screen.getByRole('button', { name: /Valores iniciales/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Guardar apariencia pública/ }));
+
+    await waitFor(() => {
+      expect(mockUpdateTheme).toHaveBeenCalledTimes(1);
+    });
+    const saved = mockUpdateTheme.mock.calls[0]?.[2] as StorefrontTheme;
+
+    expect(saved.version).toBe(theme.version);
+    expect(saved.fontFamily).toBe(theme.fontFamily);
+    expect(saved.light.background?.type).toBe('solid');
+    expect(saved.light.background?.colors).toEqual(['#ffffff']);
+    expect(saved.light.background?.cssOverlay).toMatchObject(patternOverlay);
+    expect(saved.dark.background?.type).toBe('gradient');
+    expect(saved.dark.background?.colors).toEqual(['#000000', '#111111']);
+    expect(saved.dark.background?.gradientDirection).toBe(135);
+    expect(saved.dark.background?.cssOverlay).toMatchObject(patternOverlay);
+    expect(saved.light.palette).toEqual(DEFAULT_STOREFRONT_THEME.light.palette);
+    expect(saved.dark.palette).toEqual(DEFAULT_STOREFRONT_THEME.dark.palette);
   });
 });

@@ -2,7 +2,7 @@
 
 import {
   createDefaultStorefrontTheme,
-  createRandomStorefrontTheme,
+  createRandomStorefrontPalette,
   isStorefrontColorScheme,
   normalizeStorefrontTheme,
   type StorefrontColorScheme,
@@ -34,6 +34,11 @@ function getSnackbarAutoCloseDuration(color: 'success' | 'error'): number {
   return color === 'error' ? 0 : 5000;
 }
 
+const SCHEME_TABS: { value: StorefrontColorScheme; label: string }[] = [
+  { value: 'light', label: 'Claro' },
+  { value: 'dark', label: 'Oscuro' },
+];
+
 export function StorefrontThemeEditor({
   business,
   entitlements,
@@ -57,7 +62,7 @@ export function StorefrontThemeEditor({
   const [storefrontTheme, setStorefrontTheme] = useState<StorefrontTheme>(() =>
     normalizeStorefrontTheme(initialStorefrontTheme),
   );
-  const [scheme] = useState<StorefrontColorScheme>(initialScheme ?? 'light');
+  const [scheme, setScheme] = useState<StorefrontColorScheme>(initialScheme ?? 'light');
   const [defaultScheme, setDefaultScheme] = useState<'light' | 'dark'>(initialScheme ?? 'light');
   const currentConfig = storefrontTheme[scheme];
   const { feedback, showSuccess, showError, close: closeFeedback } = useSnackbarFeedback();
@@ -69,6 +74,29 @@ export function StorefrontThemeEditor({
   const [savedTheme, setSavedTheme] = useState<StorefrontTheme>(() =>
     normalizeStorefrontTheme(initialStorefrontTheme),
   );
+
+  // Palette actions replace colors only. Font, fills and patterns are data the
+  // merchant already chose, so randomizing or resetting must not discard them.
+  const handleRandomizePalette = () => {
+    setStorefrontTheme((prev) =>
+      normalizeStorefrontTheme({
+        ...prev,
+        light: { ...prev.light, palette: createRandomStorefrontPalette() },
+        dark: { ...prev.dark, palette: createRandomStorefrontPalette() },
+      }),
+    );
+  };
+
+  const handleDefaultPalette = () => {
+    const defaults = createDefaultStorefrontTheme();
+    setStorefrontTheme((prev) =>
+      normalizeStorefrontTheme({
+        ...prev,
+        light: { ...prev.light, palette: defaults.light.palette },
+        dark: { ...prev.dark, palette: defaults.dark.palette },
+      }),
+    );
+  };
 
   const handleDefaultSchemeChange = (event: SelectValueEvent) => {
     const next = getSelectValue(event);
@@ -327,6 +355,27 @@ export function StorefrontThemeEditor({
                   Partimos de la paleta base del preview de creación y desde acá la podés ajustar.
                 </p>
               </div>
+              <div className={styles.schemeTabs} style={{ padding: '0 24px 16px' }}>
+                {SCHEME_TABS.map((tab) => (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    className={`${styles.schemeTab} ${
+                      scheme === tab.value ? styles.schemeTabActive : ''
+                    }`}
+                    aria-label={tab.label}
+                    aria-pressed={scheme === tab.value}
+                    disabled={usePlatformColors}
+                    onClick={() => setScheme(tab.value)}
+                  >
+                    <Icon size={18}>{tab.value === 'light' ? 'light_mode' : 'dark_mode'}</Icon>
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <p className={styles.previewSupporting} style={{ padding: '0 24px 8px' }}>
+                Elegí qué esquema editar. El esquema con el que se abre la tienda se define arriba.
+              </p>
               <div className={styles.themeColorGrid}>
                 {THEME_COLOR_FIELDS.map((field) => {
                   const colorValue = currentConfig.palette[field.key];
@@ -389,22 +438,14 @@ export function StorefrontThemeEditor({
                 <Button
                   variant="tonal"
                   disabled={usePlatformColors}
-                  onClick={() =>
-                    setStorefrontTheme(
-                      createRandomStorefrontTheme({ fontFamily: storefrontTheme.fontFamily }),
-                    )
-                  }
+                  onClick={handleRandomizePalette}
                 >
                   <Icon slot="icon" size={20}>
                     casino
                   </Icon>
                   Combinación aleatoria
                 </Button>
-                <Button
-                  variant="text"
-                  disabled={usePlatformColors}
-                  onClick={() => setStorefrontTheme(createDefaultStorefrontTheme())}
-                >
+                <Button variant="text" disabled={usePlatformColors} onClick={handleDefaultPalette}>
                   <Icon slot="icon" size={20}>
                     restart_alt
                   </Icon>
