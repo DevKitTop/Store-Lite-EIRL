@@ -225,10 +225,10 @@ describe('StorefrontProductGridSection — merchant-view uses isStaff', () => {
   });
 });
 
-// ─── Paint surface: storefront vars stay on the scoped root ───────────────
+// ─── Paint surface: the shell owns the single scoped surface ─────────────
 
 describe('StorefrontContent — one scoped paint surface', () => {
-  it('renders children without a style attribute when no custom theme is saved', () => {
+  it('does not duplicate theme vars on the home content root', () => {
     const buildVars = vi.mocked(buildStorefrontThemeVars);
     buildVars.mockClear();
 

@@ -50,15 +50,17 @@ describe('T29 storefront theme route consumption', () => {
     expect(styleTag).toContain('--md-sys-color-surface-container-high-rgb:');
   });
 
-  it('keeps the editor preview as a local inline override', () => {
+  it('keeps the editor preview as a local inline override in the shell', () => {
+    const shell = readProjectFile('app/[slug]/(app)/components/StorefrontThemeShell.tsx');
     const businessPage = readProjectFile('app/[slug]/(app)/BusinessPageContent.tsx');
     const layout = readProjectFile('app/[slug]/(app)/layout.tsx');
 
     expect(layout).toContain('<StorefrontThemeScope');
     expect(layout).toContain('{children}');
     expect(layout).toContain('{modal}');
-    expect(businessPage).toContain('buildStorefrontThemeVars(editableTheme, activeScheme)');
-    expect(businessPage).toContain('style={themeStyles}');
-    expect(businessPage).not.toContain('document.documentElement.style');
+    expect(shell).toContain('buildStorefrontThemeVars(editableTheme, activeScheme)');
+    expect(shell).toContain('style={themeVars}');
+    expect(shell).not.toContain('document.documentElement.style');
+    expect(businessPage).not.toContain('style={themeStyles}');
   });
 });

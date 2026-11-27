@@ -9,12 +9,6 @@ import {
   getStorefrontThemeFromPreferences,
   hasCustomStorefrontTheme,
 } from '@/core/storefront';
-import { resolveStorefrontDefaultScheme } from '@/core/storefront/resolveStorefrontDefaultScheme';
-import {
-  hasStorefrontCustomizationAccess,
-  hasStorefrontEditPermission,
-} from '@/core/storefront/storefrontCustomizationAccess';
-import { viewerSchemeCookieName } from '@/core/storefront/viewerScheme';
 import { getMemberPermissions } from '@/lib/permissions';
 import { createClient } from '@/lib/supabase/server';
 import { buildHomeBreadcrumbs } from '@/shared/seo/buildStorefrontBreadcrumbs';
@@ -24,7 +18,6 @@ import { getCanonicalBusinessUrl } from '@/shared/utils/url';
 import type { PublicBusiness } from '@/types/business';
 import { eq } from 'drizzle-orm';
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
 import BusinessPageContent from '../BusinessPageContent';
 
@@ -147,10 +140,6 @@ export default async function BusinessPage({ params }: Props) {
 
   // Consideramos staff a quien tenga acceso de gestión (Dueño o Miembro con algún permiso)
   const isStaff = isOwner || permissions.length > 0;
-  const canCustomizeStorefront = hasStorefrontCustomizationAccess({
-    hasEditPermission: hasStorefrontEditPermission({ isOwner, permissions }),
-    canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
-  });
 
   const { hasPaymentGateway, chatEnabled } = entitlements;
 
@@ -176,11 +165,6 @@ export default async function BusinessPage({ params }: Props) {
     ? getStorefrontThemeFromPreferences(settings?.preferences)
     : undefined;
 
-  const cookieStore = await cookies();
-  const defaultScheme = resolveStorefrontDefaultScheme({
-    cookieValue: cookieStore.get(viewerSchemeCookieName(business.slug))?.value,
-    storedScheme: settings?.themeMode,
-  });
   // DS 011 customer-facing trust signal: same data source as the complaint
   // banner (getBusinessTrustScore). Returns null when ENABLE_AUTO_DEACTIVATION
   // is off, which ALSO gates the badge — mirroring the banner's gating. It is
@@ -204,7 +188,6 @@ export default async function BusinessPage({ params }: Props) {
         business={business}
         isOwner={isOwner}
         isStaff={isStaff}
-        canCustomizeStorefront={canCustomizeStorefront}
         isLoggedIn={isLoggedIn}
         categories={categories.slice(0, 7)}
         products={allProducts}
@@ -218,7 +201,6 @@ export default async function BusinessPage({ params }: Props) {
         businessName={business.name}
         businessRuc={business.taxId ?? undefined}
         businessAddress={business.address ?? undefined}
-        defaultScheme={defaultScheme}
         trustSignal={trustSignal}
       />
     </>

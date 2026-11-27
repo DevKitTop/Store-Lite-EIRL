@@ -25,6 +25,23 @@ describe('storefront role tokens', () => {
     expect(getContrastRatio(container, '#000000')).toBeLessThan(getContrastRatio(base, '#000000'));
   });
 
+  it('emits derived containers in the complete token map', () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      const vars = buildStorefrontThemeVars(theme, scheme);
+      const palette = scheme === 'light' ? theme.light.palette : theme.dark.palette;
+
+      expect(vars['--md-sys-color-primary-container']).toBe(
+        deriveStorefrontTonalContainer(palette.primary, scheme),
+      );
+      expect(vars['--md-sys-color-secondary-container']).toBe(
+        deriveStorefrontTonalContainer(palette.secondary, scheme),
+      );
+      expect(vars['--md-sys-color-tertiary-container']).toBe(
+        deriveStorefrontTonalContainer(palette.accent, scheme),
+      );
+    }
+  });
+
   it('snapshots the complete token map for each scheme', () => {
     expect(buildStorefrontThemeVars(theme, 'light')).toMatchSnapshot();
     expect(buildStorefrontThemeVars(theme, 'dark')).toMatchSnapshot();

@@ -5,7 +5,11 @@ import type {
   PatternCraftPattern,
   PatternCraftStyle,
 } from '@/data/patterncraft/curated';
-import { curatedPatternByCategory, getCuratedPatternById } from '@/data/patterncraft/curated';
+import {
+  classifyPatternSuitability,
+  curatedPatternByCategory,
+  getCuratedPatternById,
+} from '@/data/patterncraft/curated';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDialogSurface } from '../useDialogSurface';
 import styles from './PatternBrowser.module.css';
@@ -66,77 +70,6 @@ function previewStyle(style: PatternCraftStyle): React.CSSProperties {
   return css;
 }
 
-function luminanceFromHex(hex: string): number | undefined {
-  const normalized =
-    hex.length === 4 ? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}` : hex.slice(0, 7);
-  const match = normalized.match(/^#([0-9a-f]{6})$/i);
-  if (!match) return undefined;
-  const r = parseInt(match[1].slice(0, 2), 16);
-  const g = parseInt(match[1].slice(2, 4), 16);
-  const b = parseInt(match[1].slice(4, 6), 16);
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-}
-
-function extractColorLuminances(value: string): number[] {
-  const luminances: number[] = [];
-  const hexMatches = value.match(/#[0-9a-f]{3,8}\b/gi) ?? [];
-  for (const hex of hexMatches) {
-    const lum = luminanceFromHex(hex);
-    if (lum !== undefined) luminances.push(lum);
-  }
-  return luminances;
-}
-
-/**
- * Classifies a pattern by scheme compatibility.
- * - 'dark': dark own background -> show only in dark mode
- * - 'light': light own background -> show only in light mode
- * - 'both': transparent overlay -> show in both modes
- */
-function classifyPattern(style: PatternCraftStyle): 'dark' | 'light' | 'both' {
-  const bg = (typeof style.background === 'string' ? style.background : '').trim();
-  const bgColor = (typeof style.backgroundColor === 'string' ? style.backgroundColor : '').trim();
-  const bgImage = (typeof style.backgroundImage === 'string' ? style.backgroundImage : '').trim();
-  let color = bgColor;
-
-  if (!bgColor && bg) {
-    const lastComma = bg.lastIndexOf(',');
-    if (lastComma !== -1) {
-      const possibleColor = bg.slice(lastComma + 1).trim();
-      if (/^#[0-9a-fA-F]{6,8}$/.test(possibleColor)) {
-        color = possibleColor;
-      }
-    }
-    if (!color && !/gradient\(|url\(|image\(/i.test(bg)) {
-      color = bg;
-    }
-  }
-
-  const source = [bgColor, bg, bgImage].filter(Boolean).join(' ');
-  const luminances = extractColorLuminances(source);
-  if (!color && luminances.length > 0 && /gradient\(|url\(|image\(/i.test(source)) {
-    const average = luminances.reduce((sum, lum) => sum + lum, 0) / luminances.length;
-    return average < 0.45 ? 'dark' : 'light';
-  }
-
-  // No own background -> transparent overlay, works in both schemes.
-  if (!color) return 'both';
-
-  // Quick check for common dark bases
-  if (/^#0[0-9a-f]{5}$/i.test(color)) return 'dark'; // #0xxxxx
-  if (/^#1[0-9a-f]{5}$/i.test(color)) return 'dark'; // #1xxxxx
-  if (/^#2[0-9a-b][0-9a-f]{4}$/i.test(color)) return 'dark'; // #2[0-b]xxxx
-  if (color === '#000' || color === '#000000' || color === 'black') return 'dark';
-
-  const lum = luminanceFromHex(color);
-  if (lum !== undefined) {
-    return lum < 0.4 ? 'dark' : 'light';
-  }
-
-  // If it has a color but we could not determine it, assume light.
-  return 'light';
-}
-
 export function PatternBrowser({
   open,
   onClose,
@@ -166,7 +99,7 @@ export function PatternBrowser({
   const patterns = useMemo(
     () =>
       curatedForCategory(activeCategory).filter((p) => {
-        const match = classifyPattern(p.style);
+        const match = classifyPatternSuitability(p.style);
         return match === 'both' || match === colorScheme;
       }),
     [activeCategory, colorScheme],
@@ -235,7 +168,7 @@ export function PatternBrowser({
         <div className={styles.tabs}>
           {visibleCategories.map((cat) => {
             const filteredCount = curatedForCategory(cat.key).filter((p) => {
-              const match = classifyPattern(p.style);
+              const match = classifyPatternSuitability(p.style);
               return match === 'both' || match === colorScheme;
             }).length;
             return (

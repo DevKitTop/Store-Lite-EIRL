@@ -3,6 +3,7 @@
 import {
   readLegacyViewerScheme,
   readViewerSchemeCookie,
+  STOREFRONT_VIEWER_THEME_EVENT,
   writeViewerSchemeCookie,
   type ViewerScheme,
 } from '@/core/storefront/viewerScheme';
@@ -45,6 +46,21 @@ export function useStorefrontViewerTheme({ slug, defaultScheme }: UseStorefrontV
       writeViewerSchemeCookie(slug, legacyScheme);
       setViewerTheme(legacyScheme);
     }
+  }, [setViewerTheme, slug]);
+
+  // The navbar's global theme control forwards its resolved scheme here so a
+  // mounted storefront reacts immediately, without a reload or an extra cookie
+  // read. Only events for the active slug are accepted.
+  useEffect(() => {
+    const handleGlobalThemeChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ slug: string; scheme: ViewerScheme }>).detail;
+      if (detail?.slug === slug && (detail.scheme === 'light' || detail.scheme === 'dark')) {
+        setViewerTheme(detail.scheme);
+      }
+    };
+
+    window.addEventListener(STOREFRONT_VIEWER_THEME_EVENT, handleGlobalThemeChange);
+    return () => window.removeEventListener(STOREFRONT_VIEWER_THEME_EVENT, handleGlobalThemeChange);
   }, [setViewerTheme, slug]);
 
   const handleViewerThemeToggle = useCallback(() => {

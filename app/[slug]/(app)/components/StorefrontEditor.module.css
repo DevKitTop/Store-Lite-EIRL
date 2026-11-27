@@ -52,7 +52,8 @@
   z-index: 920;
   width: 420px;
   max-width: 100vw;
-  background: var(--md-sys-color-surface-container-high);
+  background: rgba(var(--md-sys-color-surface-container-high-rgb, 233, 238, 246), 0.96);
+  backdrop-filter: blur(12px);
   border-left: 1px solid var(--md-sys-color-outline-variant);
   box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
   display: flex;

@@ -63,10 +63,10 @@ export function buildStorefrontThemeVars(
   const isDark = scheme === 'dark';
   const onSurface = isDark ? '#f3f4f6' : '#111827';
   const onSurfaceVariant = isDark ? '#cbd5e1' : '#4b5563';
+  const error = isDark ? '#f2b8b5' : '#b3261e';
   const primaryContainer = deriveStorefrontTonalContainer(palette.primary, scheme);
   const secondaryContainer = deriveStorefrontTonalContainer(palette.secondary, scheme);
   const tertiaryContainer = deriveStorefrontTonalContainer(palette.accent, scheme);
-  const error = isDark ? '#f2b8b5' : '#b3261e';
   const errorContainer = deriveStorefrontTonalContainer(error, scheme);
   const inversePrimary = deriveStorefrontTonalContainer(palette.primary, scheme, 0.4);
   const ff = resolveStorefrontFontFamily(theme.fontFamily);

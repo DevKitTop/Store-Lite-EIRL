@@ -401,6 +401,7 @@ export function StorefrontEditor({
       {/* FAB */}
       <button
         className={styles.fab}
+        data-editor-fab=""
         onClick={() => {
           setOpen(true);
           setStoreVisible(false);

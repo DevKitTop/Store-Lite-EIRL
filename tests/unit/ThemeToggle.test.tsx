@@ -1,4 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { ThemeToggle } from '../../app/[slug]/(app)/components/ThemeToggle';
 
@@ -79,5 +82,23 @@ describe('ThemeToggle', () => {
       fireEvent.keyDown(screen.getByRole('button'), { key: 'Escape' });
       expect(onToggle).not.toHaveBeenCalled();
     });
+  });
+
+  it('keeps the fixed toggle on the left, clear of the editor FAB', () => {
+    const cssPath = join(
+      dirname(fileURLToPath(import.meta.url)),
+      '..',
+      '..',
+      'app',
+      '[slug]',
+      '(app)',
+      'components',
+      'ThemeToggle.module.css',
+    );
+    const css = readFileSync(cssPath, 'utf8');
+
+    expect(css).toContain('left: 24px');
+    expect(css).not.toContain('right: 24px');
+    expect(css).toMatch(/z-index:\s*150/);
   });
 });

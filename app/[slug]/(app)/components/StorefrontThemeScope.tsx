@@ -1,25 +1,26 @@
 import { db } from '@/core/database/client';
 import { businessSettings } from '@/core/database/schema';
-import {
-  buildStorefrontThemeStyleTag,
-  getStorefrontThemeFromPreferences,
-  hasCustomStorefrontTheme,
-} from '@/core/storefront';
+import { getStorefrontThemeFromPreferences, hasCustomStorefrontTheme } from '@/core/storefront';
 import { resolveStorefrontDefaultScheme } from '@/core/storefront/resolveStorefrontDefaultScheme';
 import { viewerSchemeCookieName } from '@/core/storefront/viewerScheme';
 import { eq } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 import type { ReactNode } from 'react';
+import { StorefrontThemeShell } from './StorefrontThemeShell';
 
 interface StorefrontThemeScopeProps {
   businessId: string;
   slug: string;
+  canCustomizeStorefront?: boolean;
+  isAdminView?: boolean;
   children: ReactNode;
 }
 
 export async function StorefrontThemeScope({
   businessId,
   slug,
+  canCustomizeStorefront = false,
+  isAdminView = false,
   children,
 }: StorefrontThemeScopeProps) {
   const settings = await db.query.businessSettings.findFirst({
@@ -40,14 +41,16 @@ export async function StorefrontThemeScope({
     storedScheme: settings?.themeMode,
   });
 
-  const styleTag = savedStorefrontTheme
-    ? buildStorefrontThemeStyleTag(savedStorefrontTheme, defaultScheme)
-    : '';
-
   return (
-    <>
-      {styleTag && <style dangerouslySetInnerHTML={{ __html: styleTag }} />}
+    <StorefrontThemeShell
+      businessId={businessId}
+      slug={slug}
+      storefrontTheme={savedStorefrontTheme}
+      defaultScheme={defaultScheme}
+      canCustomizeStorefront={canCustomizeStorefront}
+      isAdminView={isAdminView}
+    >
       {children}
-    </>
+    </StorefrontThemeShell>
   );
 }

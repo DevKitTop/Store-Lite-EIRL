@@ -1,0 +1,56 @@
+.shell {
+  position: relative;
+  isolation: isolate;
+  min-height: 100%;
+  font-family: var(--storefront-font-family);
+  color: var(--md-sys-color-on-surface);
+  transition:
+    background-color 300ms ease,
+    color 300ms ease;
+}
+
+/*
+ * One full-viewport paint surface for public storefront routes. It replaces
+ * the competing `.layout` / `.main-area` and home-only `::before` surfaces,
+ * so the pattern, base color and SaaS shell can never disagree.
+ */
+.shell::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--storefront-bg, var(--md-sys-color-surface));
+  background-image: var(--storefront-bg-image, none);
+  background-size: var(--storefront-bg-size, auto);
+  background-position: var(--storefront-bg-position, 0 0);
+  background-repeat: var(--storefront-bg-repeat, repeat);
+  background-blend-mode: var(--storefront-bg-blend-mode, normal);
+  transition: background-color 300ms ease;
+  -webkit-mask-image: var(--storefront-mask-image, none);
+  mask-image: var(--storefront-mask-image, none);
+  -webkit-mask-size: var(--storefront-mask-size, auto);
+  mask-size: var(--storefront-mask-size, auto);
+  -webkit-mask-position: var(--storefront-mask-position, 0 0);
+  mask-position: var(--storefront-mask-position, 0 0);
+  -webkit-mask-repeat: var(--storefront-mask-repeat, repeat);
+  mask-repeat: var(--storefront-mask-repeat, repeat);
+  -webkit-mask-composite: var(--storefront-mask-composite, source-over);
+  mask-composite: var(--storefront-mask-composite, add);
+  filter: var(--storefront-filter, none);
+  opacity: var(--storefront-opacity, 1);
+  mix-blend-mode: var(--storefront-mix-blend-mode, normal);
+  animation: var(--storefront-animation, none);
+  box-shadow: var(--storefront-box-shadow, none);
+  image-rendering: var(--storefront-image-rendering, auto);
+  transform-origin: center;
+}
+
+/*
+ * The editor FAB keeps its original top-right position; the viewer toggle
+ * stays on the left. Keep the floating cart below the FAB so they never
+ * overlap or block each other.
+ */
+.shell [data-floating-cart] {
+  top: 88px;
+}

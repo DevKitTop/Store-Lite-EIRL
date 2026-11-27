@@ -16,7 +16,7 @@ const theme = createDefaultStorefrontTheme();
 const schemes = ['light', 'dark'] as const;
 
 describe('storefront role token invariants', () => {
-  it('derives containers and readable on-colors (S2,S3,S4)', () => {
+  it('derives containers and readable on-colors', () => {
     for (const scheme of schemes) {
       const vars = buildStorefrontThemeVars(theme, scheme);
       const palette = scheme === 'dark' ? theme.dark.palette : theme.light.palette;
@@ -46,9 +46,10 @@ describe('storefront role token invariants', () => {
       }
       const error = vars['--md-sys-color-error'];
       const errorContainer = vars['--md-sys-color-error-container'];
-      expect(errorContainer).toBe(deriveStorefrontTonalContainer(error, scheme));
+      expect(errorContainer).toBe(deriveStorefrontTonalContainer(error ?? '#000', scheme));
+      if (!errorContainer) continue;
       expect(
-        getContrastRatio(errorContainer, vars['--md-sys-color-on-error-container']),
+        getContrastRatio(errorContainer, vars['--md-sys-color-on-error-container'] ?? '#000'),
       ).toBeGreaterThanOrEqual(4.5);
     }
   });
@@ -114,7 +115,7 @@ describe('storefront role token invariants', () => {
     }
   });
 
-  it('clamps ratios and passes invalid hex through (S2 boundary)', () => {
+  it('clamps ratios and passes invalid hex through', () => {
     expect(deriveStorefrontTonalContainer('#123456', 'light', -1)).toBe('#123456');
     expect(deriveStorefrontTonalContainer('#123456', 'light', 2)).toBe('#ffffff');
     expect(deriveStorefrontTonalContainer('garbage', 'dark')).toBe('garbage');

@@ -21,9 +21,20 @@ vi.mock('@/core/database/client', () => ({
 }));
 
 vi.mock('next/headers', () => ({ cookies: mockCookies }));
+vi.mock('next/navigation', () => ({ usePathname: () => '/demo-store' }));
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const layoutPath = join(__dirname, '..', '..', 'app', '[slug]', '(app)', 'layout.tsx');
+const scopePath = join(
+  __dirname,
+  '..',
+  '..',
+  'app',
+  '[slug]',
+  '(app)',
+  'components',
+  'StorefrontThemeScope.tsx',
+);
 const homePagePath = join(__dirname, '..', '..', 'app', '[slug]', '(app)', '(home)', 'page.tsx');
 
 function themeFixture() {
@@ -59,7 +70,7 @@ beforeEach(() => {
 });
 
 describe('StorefrontThemeScope', () => {
-  it('reads settings once and emits the cookie-selected theme variable', async () => {
+  it('reads settings once and scopes the cookie-selected theme on the shell', async () => {
     const markup = renderToStaticMarkup(
       await StorefrontThemeScope({
         businessId: 'business-1',
@@ -70,12 +81,13 @@ describe('StorefrontThemeScope', () => {
 
     expect(mockFindFirst).toHaveBeenCalledTimes(1);
     expect(markup).toContain('data-testid="scope-child"');
+    expect(markup).toContain('data-storefront-theme');
     expect(markup).toContain('--md-sys-color-primary:#111111');
     expect(markup).not.toContain('--md-sys-color-primary:#222222');
-    expect(markup.match(/<style/g)).toHaveLength(1);
+    expect(markup).not.toMatch(/<style\b/);
   });
 
-  it('does not emit a style tag when the store has no custom theme', async () => {
+  it('inherits platform tokens when the store has no custom theme', async () => {
     mockFindFirst.mockResolvedValue({
       preferences: { locale: 'es' },
       themeMode: 'dark',
@@ -91,15 +103,21 @@ describe('StorefrontThemeScope', () => {
 
     expect(mockFindFirst).toHaveBeenCalledTimes(1);
     expect(markup).toContain('data-testid="scope-child"');
+    expect(markup).toContain('data-storefront-theme');
     expect(markup).not.toContain('--md-sys-color-primary');
+    expect(markup).not.toContain('--storefront-font-family');
+    expect(markup).not.toMatch(/data-storefront-theme=""[^>]*\sstyle=/);
     expect(markup).not.toMatch(/<style\b/);
   });
 
   it('injects once from the layout instead of the home page', () => {
     const layout = readFileSync(layoutPath, 'utf-8');
+    const scope = readFileSync(scopePath, 'utf-8');
     const homePage = readFileSync(homePagePath, 'utf-8');
 
     expect(layout).toMatch(/<StorefrontThemeScope/);
+    expect(layout).toMatch(/isAdminView=\{isAdminView\}/);
+    expect(scope).toMatch(/isAdminView=\{isAdminView\}/);
     expect(homePage).not.toMatch(/buildStorefrontThemeStyleTag/);
     expect(homePage).not.toMatch(/<style\b/);
   });

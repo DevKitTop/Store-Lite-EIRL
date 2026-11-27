@@ -3,6 +3,10 @@ import { resolvePublicBusinessSlug } from '@/core/business/publicSlug';
 import { db } from '@/core/database/client';
 import { productCategories, products } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
+import {
+  hasStorefrontCustomizationAccess,
+  hasStorefrontEditPermission,
+} from '@/core/storefront/storefrontCustomizationAccess';
 import { resolvePromotionOffer } from '@/features/promotions/discoveryRules';
 import { getPromotionCandidates } from '@/features/promotions/getApplicablePromotion';
 import type { Product } from '@/features/storage/data';
@@ -53,6 +57,10 @@ export default async function AppGroupLayout({ children, modal, params }: AppLay
   // Calcular entitlements del negocio según su plan de suscripción activo
   const entitlements = await getBusinessEntitlements(business.id);
   const navbarPlanName = entitlements.plan;
+  const canCustomizeStorefront = hasStorefrontCustomizationAccess({
+    hasEditPermission: hasStorefrontEditPermission({ isOwner, permissions }),
+    canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
+  });
 
   // Owner-only discovery nudge. The server resolves eligibility so a team
   // member or a stale client cache cannot surface an unavailable offer.
@@ -125,7 +133,12 @@ export default async function AppGroupLayout({ children, modal, params }: AppLay
   }
 
   return (
-    <StorefrontThemeScope businessId={business.id} slug={business.slug}>
+    <StorefrontThemeScope
+      businessId={business.id}
+      slug={business.slug}
+      canCustomizeStorefront={canCustomizeStorefront}
+      isAdminView={isAdminView}
+    >
       <BusinessProviders
         businessSlug={business.slug}
         businessId={business.id}

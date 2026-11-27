@@ -1,4 +1,4 @@
-import { viewerSchemeCookieName } from '@/core/storefront/viewerScheme';
+import { requestStorefrontThemeSync, viewerSchemeCookieName } from '@/core/storefront/viewerScheme';
 import { ThemeProvider, useTheme } from '@/shared/context/ThemeContext';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -88,11 +88,19 @@ function SyncHarness({ defaultScheme = 'light' }: { defaultScheme?: 'light' | 'd
   );
 }
 
-// Simulates the navbar/settings toggle that writes into the global ThemeContext.
+// Simulates the navbar toggle: it writes the global ThemeContext and forwards
+// the resolved scheme to the active storefront viewer.
 function GlobalThemeControl() {
   const { theme, setTheme } = useTheme();
   return (
-    <button type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+    <button
+      type="button"
+      onClick={() => {
+        const next = theme === 'dark' ? 'light' : 'dark';
+        setTheme(next);
+        requestStorefrontThemeSync(SLUG, next);
+      }}
+    >
       toggle-global
     </button>
   );
@@ -178,7 +186,7 @@ describe('themeSyncConvergence', () => {
     expect(document.body.classList.contains('dark')).toBe(true);
   });
 
-  it('global (navbar) changes no longer propagate into the storefront viewer', async () => {
+  it('global (navbar) changes propagate into the storefront viewer', async () => {
     localStorageMock.setItem('app-theme', 'light');
     setCookie('light');
 
@@ -197,6 +205,9 @@ describe('themeSyncConvergence', () => {
     await waitFor(() => {
       expect(document.body.classList.contains('dark')).toBe(true);
     });
-    expect(themeState()).toEqual({ viewer: 'light', active: 'light' });
+    await waitFor(() => {
+      expect(themeState()).toEqual({ viewer: 'dark', active: 'dark' });
+    });
+    expect(cookieContains('dark')).toBe(true);
   });
 });

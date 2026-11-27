@@ -42,6 +42,12 @@
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
 }
 
+/* Storefront surface tokens are translucent; keep the preview navbar readable. */
+[data-storefront-theme] .navbar {
+  background-color: rgba(var(--md-sys-color-surface-container-low-rgb, 248, 250, 252), 0.96);
+  backdrop-filter: blur(12px);
+}
+
 .navbar--expanded {
   width: var(--navbar-expanded-width);
 }
