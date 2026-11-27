@@ -1,5 +1,6 @@
 'use client';
 
+import { requestStorefrontThemeSync } from '@/core/storefront/viewerScheme';
 import { clearBusinessSessionData, STORAGE_KEY } from '@/hooks/useBusinessSession';
 import { createClient } from '@/lib/supabase/client';
 import { useTheme } from '@/shared/context/ThemeContext';
@@ -71,7 +72,9 @@ export default function Navbar({
   const { effectiveTheme, setTheme } = useTheme();
 
   const toggleTheme = () => {
-    setTheme(effectiveTheme === 'dark' ? 'light' : 'dark');
+    const next = effectiveTheme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    if (slug) requestStorefrontThemeSync(slug, next);
   };
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);

@@ -3,27 +3,38 @@
 import { env } from '@/config/env';
 import { isBusinessSlugTaken } from '@/core/business/slug';
 import { db } from '@/core/database/client';
-import { businesses, businessSettings, businessSlugAliases } from '@/core/database/schema';
+import { businessSettings, businessSlugAliases, businesses } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements';
 import { FROZEN_FIELD_MESSAGE, hasLockingPayments } from '@/core/orders/paymentGuards';
 import {
   type StorefrontLayout,
   type StorefrontTheme,
-  clearStorefrontThemeFromPreferences,
+  STOREFRONT_LAYOUT_PREFERENCES_KEY,
   createDefaultStorefrontLayout,
   createDefaultStorefrontTheme,
-  mergeStorefrontLayoutIntoPreferences,
-  mergeStorefrontThemeIntoPreferences,
   normalizeStorefrontLayout,
   normalizeStorefrontTheme,
 } from '@/core/storefront';
+import {
+  businessSlugCharactersSchema,
+  businessSlugLengthSchema,
+  storefrontColorSchemeSchema,
+  storefrontSlugSchema,
+  storefrontThemePayloadSchema,
+} from '@/core/storefront/actionInputSchemas';
+import { canonicalizeStorefrontThemePatterns } from '@/core/storefront/patternCatalog';
+import {
+  STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
+  hasStorefrontCustomizationAccess,
+} from '@/core/storefront/storefrontCustomizationAccess';
+import { STOREFRONT_THEME_PREFERENCES_KEY } from '@/core/storefront/storefrontTheme';
 import { requireAccessOnId } from '@/features/storage/actions/authz';
 import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { logger, toErrorDetail } from '@/lib/logger';
 import { getPostHogClient } from '@/lib/posthogServer';
 import type { ActionState } from '@/types/actions';
 import { getErrorMessage } from '@/utils/errors';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 
 export interface SlugActionState extends ActionState {
@@ -32,6 +43,52 @@ export interface SlugActionState extends ActionState {
 
 export interface ToggleActionState extends ActionState {
   isActive?: boolean;
+}
+
+/**
+ * Single-statement JSONB merge: `coalesce(preferences, '{}') || patch`.
+ *
+ * Keeps the preference keys this action does not own and removes the
+ * read-modify-write race between two concurrent saves of the same store.
+ * The value is bound as a parameter and cast, never interpolated.
+ */
+function mergePreferencesPatch(patch: Record<string, unknown>) {
+  return sql`coalesce(${businessSettings.preferences}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`;
+}
+
+/**
+ * Storefront cache invalidation must target the tenant that actually changed,
+ * so the slug is read from the business record instead of trusting the caller.
+ */
+async function resolveStoreSlug(storeId: string, fallbackSlug: string) {
+  const business = await db.query.businesses.findFirst({
+    where: eq(businesses.id, storeId),
+    columns: { slug: true },
+  });
+
+  return business?.slug ?? fallbackSlug;
+}
+
+/** Fire-and-forget analytics: a slow or failing flush must never fail the save. */
+function trackStorefrontCustomized(storeId: string, slug: string) {
+  try {
+    const posthog = getPostHogClient();
+    posthog.capture({
+      distinctId: storeId,
+      event: AnalyticsEvents.STOREFRONT_CUSTOMIZED,
+      properties: { business_id: storeId, customization_type: 'theme', slug },
+    });
+
+    posthog.flush().catch((error: unknown) => {
+      logger.warn('PostHog flush failed after storefront theme update', {
+        error: toErrorDetail(error),
+      });
+    });
+  } catch (error: unknown) {
+    logger.warn('PostHog capture failed after storefront theme update', {
+      error: toErrorDetail(error),
+    });
+  }
 }
 
 export async function updateBusinessSlug(
@@ -54,11 +111,11 @@ export async function updateBusinessSlug(
     return { success: false, error: FROZEN_FIELD_MESSAGE };
   }
 
-  if (newSlug.length < 10 || newSlug.length > 30) {
+  if (!businessSlugLengthSchema.safeParse(newSlug).success) {
     return { success: false, error: 'El slug debe tener entre 10 y 30 caracteres.' };
   }
 
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(newSlug) || newSlug.endsWith('-')) {
+  if (!businessSlugCharactersSchema.safeParse(newSlug).success) {
     return {
       success: false,
       error:
@@ -196,6 +253,9 @@ export interface StorefrontThemeActionState extends ActionState {
   storefrontTheme?: StorefrontTheme;
 }
 
+const INVALID_STOREFRONT_SLUG_MESSAGE = 'Slug no valido.';
+const INVALID_STOREFRONT_THEME_MESSAGE = 'Datos de apariencia no validos.';
+
 export async function updateBusinessSEO(
   businessId: string,
   seoData: SEOActionInput,
@@ -246,49 +306,45 @@ export async function updateStorefrontLayout(
   }
 
   const entitlements = await getBusinessEntitlements(businessId);
-  if (entitlements.plan === 'lite') {
+  // requireAccessOnId already resolved the identity side of this predicate.
+  if (
+    !hasStorefrontCustomizationAccess({
+      hasEditPermission: true,
+      canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
+    })
+  ) {
     return {
       success: false,
-      error: 'Funcion disponible solo para planes con personalizacion de storefront.',
+      error: STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
     };
   }
 
+  if (!storefrontSlugSchema.safeParse(slug).success) {
+    return { success: false, error: INVALID_STOREFRONT_SLUG_MESSAGE };
+  }
+
   const normalizedLayout = normalizeStorefrontLayout(layout);
+  const layoutPatch = { [STOREFRONT_LAYOUT_PREFERENCES_KEY]: normalizedLayout };
 
   try {
-    const existingSettings = await db.query.businessSettings.findFirst({
-      where: eq(businessSettings.businessId, businessId),
-      columns: {
-        id: true,
-        preferences: true,
-      },
-    });
+    const tenantSlug = await resolveStoreSlug(businessId, slug);
 
-    const nextPreferences = mergeStorefrontLayoutIntoPreferences(
-      existingSettings?.preferences ?? {},
-      normalizedLayout,
-    );
-
-    if (existingSettings) {
-      await db
-        .update(businessSettings)
-        .set({
-          preferences: nextPreferences,
-          updatedAt: new Date(),
-        })
-        .where(eq(businessSettings.businessId, businessId));
-    } else {
-      await db.insert(businessSettings).values({
+    await db
+      .insert(businessSettings)
+      .values({
         businessId,
-        themeMode: 'light',
         contrastLevel: 'standard',
-        preferences: mergeStorefrontLayoutIntoPreferences({}, normalizedLayout),
+        preferences: layoutPatch,
+      })
+      .onConflictDoUpdate({
+        target: businessSettings.businessId,
+        set: {
+          preferences: mergePreferencesPatch(layoutPatch),
+          updatedAt: new Date(),
+        },
       });
-    }
 
-    revalidatePath(`/${slug}`);
-    revalidatePath(`/${slug}/settings`);
-    revalidatePath('/', 'layout');
+    revalidatePath(`/${tenantSlug}`, 'layout');
 
     return {
       success: true,
@@ -309,7 +365,6 @@ export async function updateStorefrontTheme(
   businessId: string,
   slug: string,
   storefrontTheme: StorefrontTheme,
-  themeMode?: 'light' | 'dark',
 ): Promise<StorefrontThemeActionState> {
   try {
     await requireAccessOnId(businessId, 'storefront.edit');
@@ -318,58 +373,58 @@ export async function updateStorefrontTheme(
   }
 
   const entitlements = await getBusinessEntitlements(businessId);
-  if (entitlements.plan === 'lite') {
+  // requireAccessOnId already resolved the identity side of this predicate.
+  if (
+    !hasStorefrontCustomizationAccess({
+      hasEditPermission: true,
+      canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
+    })
+  ) {
     return {
       success: false,
-      error: 'Funcion disponible solo para planes con personalizacion de storefront.',
+      error: STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
     };
   }
 
-  const normalizedTheme = normalizeStorefrontTheme(storefrontTheme);
+  if (!storefrontSlugSchema.safeParse(slug).success) {
+    return { success: false, error: INVALID_STOREFRONT_SLUG_MESSAGE };
+  }
+
+  if (!storefrontThemePayloadSchema.safeParse(storefrontTheme).success) {
+    return { success: false, error: INVALID_STOREFRONT_THEME_MESSAGE };
+  }
+
+  // Pattern overlays are re-derived from the PatternCraft catalog first, so the
+  // catalog CSS is then normalized and sanitized exactly like any other value.
+  // For a known pattern id the client payload is never persisted.
+  const normalizedTheme = normalizeStorefrontTheme(
+    canonicalizeStorefrontThemePatterns(storefrontTheme),
+  );
+  const themePatch = { [STOREFRONT_THEME_PREFERENCES_KEY]: normalizedTheme };
 
   try {
-    const existingSettings = await db.query.businessSettings.findFirst({
-      where: eq(businessSettings.businessId, businessId),
-      columns: {
-        id: true,
-        preferences: true,
-      },
-    });
+    // Resolve the tenant before writing so a failed lookup cannot leave a
+    // committed row behind a failed response.
+    const tenantSlug = await resolveStoreSlug(businessId, slug);
 
-    const nextPreferences = mergeStorefrontThemeIntoPreferences(
-      existingSettings?.preferences ?? {},
-      normalizedTheme,
-    );
-
-    if (existingSettings) {
-      await db
-        .update(businessSettings)
-        .set({
-          preferences: nextPreferences,
-          ...(themeMode && { themeMode }),
-          updatedAt: new Date(),
-        })
-        .where(eq(businessSettings.businessId, businessId));
-    } else {
-      await db.insert(businessSettings).values({
+    await db
+      .insert(businessSettings)
+      .values({
         businessId,
-        themeMode: themeMode ?? 'light',
         contrastLevel: 'standard',
-        preferences: mergeStorefrontThemeIntoPreferences({}, normalizedTheme),
+        preferences: themePatch,
+      })
+      .onConflictDoUpdate({
+        target: businessSettings.businessId,
+        set: {
+          preferences: mergePreferencesPatch(themePatch),
+          updatedAt: new Date(),
+        },
       });
-    }
 
-    revalidatePath(`/${slug}`);
-    revalidatePath(`/${slug}/settings`);
-    revalidatePath('/', 'layout');
+    revalidatePath(`/${tenantSlug}`, 'layout');
 
-    const posthog = getPostHogClient();
-    posthog.capture({
-      distinctId: businessId,
-      event: AnalyticsEvents.STOREFRONT_CUSTOMIZED,
-      properties: { business_id: businessId, customization_type: 'theme', slug },
-    });
-    await posthog.flush();
+    trackStorefrontCustomized(businessId, tenantSlug);
 
     return {
       success: true,
@@ -386,6 +441,69 @@ export async function updateStorefrontTheme(
   }
 }
 
+/**
+ * The store's default scheme is a deliberate, standalone choice. Palette and
+ * layout saves must never write it, so this is the only action that does.
+ */
+export async function updateStorefrontDefaultScheme(
+  businessId: string,
+  slug: string,
+  defaultScheme: 'light' | 'dark',
+): Promise<ActionState> {
+  try {
+    await requireAccessOnId(businessId, 'storefront.edit');
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error, 'No autorizado') };
+  }
+
+  const entitlements = await getBusinessEntitlements(businessId);
+  // requireAccessOnId already resolved the identity side of this predicate.
+  if (
+    !hasStorefrontCustomizationAccess({
+      hasEditPermission: true,
+      canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
+    })
+  ) {
+    return {
+      success: false,
+      error: STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
+    };
+  }
+
+  if (!storefrontSlugSchema.safeParse(slug).success) {
+    return { success: false, error: INVALID_STOREFRONT_SLUG_MESSAGE };
+  }
+
+  if (!storefrontColorSchemeSchema.safeParse(defaultScheme).success) {
+    return { success: false, error: 'Esquema de color no valido.' };
+  }
+
+  try {
+    // Resolve the tenant before writing so a failed lookup cannot leave a
+    // committed row behind a failed response.
+    const tenantSlug = await resolveStoreSlug(businessId, slug);
+
+    // Upsert only the scheme column; sibling preference keys stay untouched.
+    await db
+      .insert(businessSettings)
+      .values({ businessId, themeMode: defaultScheme })
+      .onConflictDoUpdate({
+        target: businessSettings.businessId,
+        set: { themeMode: defaultScheme, updatedAt: new Date() },
+      });
+
+    revalidatePath(`/${tenantSlug}`, 'layout');
+
+    return { success: true, message: 'Esquema por defecto actualizado correctamente.' };
+  } catch (error: unknown) {
+    logger.error('Error updating storefront default scheme:', { error: toErrorDetail(error) });
+    return {
+      success: false,
+      error: 'Error inesperado al actualizar el esquema por defecto.',
+    };
+  }
+}
+
 export async function clearStorefrontTheme(businessId: string, slug: string): Promise<ActionState> {
   try {
     await requireAccessOnId(businessId, 'storefront.edit');
@@ -394,39 +512,42 @@ export async function clearStorefrontTheme(businessId: string, slug: string): Pr
   }
 
   const entitlements = await getBusinessEntitlements(businessId);
-  if (entitlements.plan === 'lite') {
+  // requireAccessOnId already resolved the identity side of this predicate.
+  if (
+    !hasStorefrontCustomizationAccess({
+      hasEditPermission: true,
+      canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
+    })
+  ) {
     return {
       success: false,
-      error: 'Funcion disponible solo para planes con personalizacion de storefront.',
+      error: STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE,
     };
   }
 
-  try {
-    const existingSettings = await db.query.businessSettings.findFirst({
-      where: eq(businessSettings.businessId, businessId),
-      columns: {
-        id: true,
-        preferences: true,
-      },
-    });
+  if (!storefrontSlugSchema.safeParse(slug).success) {
+    return { success: false, error: INVALID_STOREFRONT_SLUG_MESSAGE };
+  }
 
-    if (!existingSettings) {
+  try {
+    const tenantSlug = await resolveStoreSlug(businessId, slug);
+
+    // Atomic removal of the theme key: no read-modify-write, and sibling
+    // preference keys (layout, notifications) are preserved.
+    const updatedRows = await db
+      .update(businessSettings)
+      .set({
+        preferences: sql`coalesce(${businessSettings.preferences}, '{}'::jsonb) - ${STOREFRONT_THEME_PREFERENCES_KEY}::text`,
+        updatedAt: new Date(),
+      })
+      .where(eq(businessSettings.businessId, businessId))
+      .returning({ id: businessSettings.id });
+
+    if (updatedRows.length === 0) {
       return { success: true, message: 'La apariencia publica ya usaba los colores por defecto.' };
     }
 
-    const nextPreferences = clearStorefrontThemeFromPreferences(existingSettings.preferences ?? {});
-
-    await db
-      .update(businessSettings)
-      .set({
-        preferences: nextPreferences,
-        updatedAt: new Date(),
-      })
-      .where(eq(businessSettings.businessId, businessId));
-
-    revalidatePath(`/${slug}`);
-    revalidatePath(`/${slug}/settings`);
-    revalidatePath('/', 'layout');
+    revalidatePath(`/${tenantSlug}`, 'layout');
 
     return {
       success: true,

@@ -1,20 +1,16 @@
 'use client';
 
-import type { StorefrontColorScheme } from '@/core/storefront';
 import type { PublicBusiness } from '@/types/business';
 import { Footer } from '../Footer';
 import { CartDrawer } from './CartDrawer';
 import { FloatingCartButton } from './FloatingCartButton';
 import { FloatingChatFab } from './FloatingChatFab';
-import { ThemeToggle } from './ThemeToggle';
 
 interface CustomerFloatingUiProps {
   business: PublicBusiness;
   paymentsEnabled: boolean;
   culqiPublicKey?: string;
   chatEnabled: boolean;
-  activeScheme: StorefrontColorScheme;
-  onViewerThemeToggle: () => void;
   onContactClick: () => void;
 }
 
@@ -23,8 +19,6 @@ export function CustomerFloatingUi({
   paymentsEnabled,
   culqiPublicKey,
   chatEnabled,
-  activeScheme,
-  onViewerThemeToggle,
   onContactClick,
 }: CustomerFloatingUiProps) {
   return (
@@ -48,7 +42,6 @@ export function CustomerFloatingUi({
           businessLogo={business.logoUrl}
         />
       )}
-      <ThemeToggle currentScheme={activeScheme} onToggle={onViewerThemeToggle} />
       <Footer business={business} />
     </>
   );

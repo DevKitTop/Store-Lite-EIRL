@@ -52,7 +52,8 @@
   z-index: 920;
   width: 420px;
   max-width: 100vw;
-  background: var(--md-sys-color-surface-container-high);
+  background: rgba(var(--md-sys-color-surface-container-high-rgb, 233, 238, 246), 0.96);
+  backdrop-filter: blur(12px);
   border-left: 1px solid var(--md-sys-color-outline-variant);
   box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
   display: flex;
@@ -63,6 +64,12 @@
 
 .panelOpen {
   transform: translateX(0);
+}
+
+/* Mobile preview: keep the header accessible while the store stays visible. */
+.panelCollapsed .panelBody,
+.panelCollapsed .panelFooter {
+  display: none;
 }
 
 /* ============================================================
@@ -100,6 +107,20 @@
 
 .closeBtn:hover {
   background: var(--md-sys-color-surface-container-highest);
+}
+
+.viewStoreBtn {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 999px;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* ============================================================
@@ -199,6 +220,11 @@
   border-color: var(--md-sys-color-primary);
   color: var(--md-sys-color-primary);
   background: color-mix(in srgb, var(--md-sys-color-primary) 4%, transparent);
+}
+
+.schemeTab:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
 }
 
 .schemeTabActive {
@@ -555,6 +581,11 @@
   position: absolute;
 }
 
+.toggle input:focus-visible + .toggleSlider {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
+
 .toggleSlider {
   position: absolute;
   cursor: pointer;
@@ -616,24 +647,6 @@
   color: var(--md-sys-color-outline);
   line-height: 1.3;
   padding-left: 1.7rem;
-}
-
-.patternCraftRemoveBtn {
-  margin-left: auto;
-  padding: 4px 12px;
-  border: 1px solid var(--md-sys-color-error, #b3261e);
-  background: transparent;
-  color: var(--md-sys-color-error, #b3261e);
-  border-radius: 6px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s;
-  flex-shrink: 0;
-}
-
-.patternCraftRemoveBtn:hover {
-  background: color-mix(in srgb, var(--md-sys-color-error) 10%, transparent);
 }
 
 /* ── Fill disabled state (when non-geometric pattern is active) ── */
@@ -738,11 +751,63 @@
   background: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent);
   color: var(--md-sys-color-primary);
   animation: feedbackIn 0.25s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.feedbackDismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.feedbackDismiss:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
 .feedbackError {
   background: color-mix(in srgb, var(--md-sys-color-error) 10%, transparent);
   color: var(--md-sys-color-error, #b3261e);
+}
+
+.footerActions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.discardBtn {
+  width: 100%;
+  padding: 0.65rem 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.discardBtn:hover:not(:disabled) {
+  background: var(--md-sys-color-surface-container-high);
+}
+
+.discardBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 @keyframes feedbackIn {
@@ -788,14 +853,45 @@
 /* ============================================================
    Responsive
    ============================================================ */
+@media (max-width: 768px) {
+  .viewStoreBtn {
+    display: inline-flex;
+  }
+
+  .fab {
+    bottom: auto;
+  }
+
+  /* Sit above the 4.5rem bottom navbar (24px offset + 8px gap). */
+  .panelCollapsed {
+    top: auto;
+    right: 1rem;
+    bottom: calc(4.5rem + 24px + 8px);
+    width: calc(100% - 2rem);
+    max-width: 450px;
+    height: auto;
+    border: 1px solid var(--md-sys-color-outline-variant);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 420px) {
   .panel {
     width: 100vw;
   }
 
+  .panelCollapsed {
+    right: 0.5rem;
+    bottom: calc(4.5rem + 16px + 8px);
+    width: calc(100% - 1rem);
+  }
+
   .fab {
     top: 16px;
     right: 16px;
+    bottom: auto;
     width: 48px;
     height: 48px;
   }

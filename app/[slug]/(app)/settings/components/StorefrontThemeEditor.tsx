@@ -1,19 +1,25 @@
 'use client';
 
 import {
-  STOREFRONT_FONT_OPTIONS,
   createDefaultStorefrontTheme,
-  createRandomStorefrontTheme,
+  createRandomStorefrontPalette,
+  getContrastRatio,
+  isStorefrontColorScheme,
   normalizeStorefrontTheme,
   type StorefrontColorScheme,
   type StorefrontTheme,
 } from '@/core/storefront';
+import { STOREFRONT_FONT_OPTIONS } from '@/core/storefront/storefrontFontRegistry';
 import type { Permission } from '@/lib/permissions/definitions';
 import { AlertSnackbar, Button, Card, Icon, Select, Switch } from '@/shared/components/ui';
 import { ThemeSettings } from '@/shared/components/ui/ThemeSettings';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition, type CSSProperties } from 'react';
-import { clearStorefrontTheme, updateStorefrontTheme } from '../actions';
+import {
+  clearStorefrontTheme,
+  updateStorefrontDefaultScheme,
+  updateStorefrontTheme,
+} from '../actions';
 import {
   THEME_COLOR_FIELDS,
   getFontFamilyCSS,
@@ -24,6 +30,15 @@ import {
 } from '../constants';
 import { useSnackbarFeedback } from '../hooks/useSettingsState';
 import styles from '../settings.module.css';
+
+function getSnackbarAutoCloseDuration(color: 'success' | 'error'): number {
+  return color === 'error' ? 0 : 5000;
+}
+
+const SCHEME_TABS: { value: StorefrontColorScheme; label: string }[] = [
+  { value: 'light', label: 'Claro' },
+  { value: 'dark', label: 'Oscuro' },
+];
 
 export function StorefrontThemeEditor({
   business,
@@ -49,24 +64,72 @@ export function StorefrontThemeEditor({
     normalizeStorefrontTheme(initialStorefrontTheme),
   );
   const [scheme, setScheme] = useState<StorefrontColorScheme>(initialScheme ?? 'light');
+  const [defaultScheme, setDefaultScheme] = useState<'light' | 'dark'>(initialScheme ?? 'light');
   const currentConfig = storefrontTheme[scheme];
+  const backgroundColor =
+    currentConfig.background?.colors[0] ?? (scheme === 'dark' ? '#111827' : '#ffffff');
+  const hasLowPrimaryContrast =
+    getContrastRatio(currentConfig.palette.primary, backgroundColor) < 4.5;
   const { feedback, showSuccess, showError, close: closeFeedback } = useSnackbarFeedback();
 
   // ── Dirty tracking snapshots ──
   // Captured at the same time as the state initializers so they are
   // guaranteed to match on the first render (no serialization mismatch).
   const [savedPlatformColors, setSavedPlatformColors] = useState(!initialHasCustomTheme);
-  const [savedThemeJson, setSavedThemeJson] = useState(() =>
-    JSON.stringify(normalizeStorefrontTheme(initialStorefrontTheme)),
+  const [savedTheme, setSavedTheme] = useState<StorefrontTheme>(() =>
+    normalizeStorefrontTheme(initialStorefrontTheme),
   );
 
+  // Palette actions replace colors only. Font, fills and patterns are data the
+  // merchant already chose, so randomizing or resetting must not discard them.
+  const handleRandomizePalette = () => {
+    setStorefrontTheme((prev) =>
+      normalizeStorefrontTheme({
+        ...prev,
+        light: { ...prev.light, palette: createRandomStorefrontPalette() },
+        dark: { ...prev.dark, palette: createRandomStorefrontPalette() },
+      }),
+    );
+  };
+
+  const handleDefaultPalette = () => {
+    const defaults = createDefaultStorefrontTheme();
+    setStorefrontTheme((prev) =>
+      normalizeStorefrontTheme({
+        ...prev,
+        light: { ...prev.light, palette: defaults.light.palette },
+        dark: { ...prev.dark, palette: defaults.dark.palette },
+      }),
+    );
+  };
+
+  const handleDefaultSchemeChange = (event: SelectValueEvent) => {
+    const next = getSelectValue(event);
+    if (!isStorefrontColorScheme(next)) return;
+
+    const previous = defaultScheme;
+    setDefaultScheme(next);
+    startTransition(async () => {
+      const result = await updateStorefrontDefaultScheme(business.id, business.slug, next);
+      if (!result.success) {
+        setDefaultScheme(previous);
+        showError(result.error || 'No se pudo actualizar el esquema por defecto.');
+        return;
+      }
+
+      showSuccess('Esquema por defecto actualizado correctamente.');
+      router.refresh();
+    });
+  };
+
   const handleSaveTheme = () => {
+    closeFeedback();
     startTransition(async () => {
       let result;
       if (usePlatformColors) {
         result = await clearStorefrontTheme(business.id, business.slug);
       } else {
-        result = await updateStorefrontTheme(business.id, business.slug, storefrontTheme, scheme);
+        result = await updateStorefrontTheme(business.id, business.slug, storefrontTheme);
       }
 
       if (!result.success) {
@@ -77,10 +140,10 @@ export function StorefrontThemeEditor({
       if ('storefrontTheme' in result && result.storefrontTheme) {
         const updated = normalizeStorefrontTheme(result.storefrontTheme);
         setStorefrontTheme(updated);
-        setSavedThemeJson(JSON.stringify(updated));
+        setSavedTheme(updated);
       } else {
-        // clearStorefrontTheme — snapshot stays in sync
-        setSavedThemeJson(JSON.stringify(storefrontTheme));
+        // clearStorefrontTheme — snapshot stays in sync with the saved theme
+        setSavedTheme(normalizeStorefrontTheme(storefrontTheme));
       }
 
       setSavedPlatformColors(usePlatformColors);
@@ -90,11 +153,18 @@ export function StorefrontThemeEditor({
   };
 
   // Dirty state: comparar contra snapshots guardados (no contra props)
-  const themeChanged = JSON.stringify(storefrontTheme) !== savedThemeJson;
+  const themeChanged = JSON.stringify(storefrontTheme) !== JSON.stringify(savedTheme);
   const hasChanges =
     usePlatformColors !== savedPlatformColors || (!usePlatformColors && themeChanged);
 
+  const handleDiscardTheme = () => {
+    closeFeedback();
+    setStorefrontTheme(normalizeStorefrontTheme(savedTheme));
+    setUsePlatformColors(savedPlatformColors);
+  };
+
   const canSave = isOwner || permissions.includes('storefront.edit');
+  const actionsDisabled = isPending || !canSave || !hasChanges;
 
   return (
     <div className={styles.sectionArea}>
@@ -193,6 +263,24 @@ export function StorefrontThemeEditor({
               </div>
             </div>
 
+            {/* Default scheme — the only writer of themeMode */}
+            <div style={{ padding: '0 24px 20px' }}>
+              <Select
+                label="Esquema que verán tus visitantes"
+                value={defaultScheme}
+                disabled={isPending}
+                options={[
+                  { value: 'light', label: 'Claro' },
+                  { value: 'dark', label: 'Oscuro' },
+                ]}
+                onChange={handleDefaultSchemeChange}
+              />
+              <p className={styles.previewSupporting} style={{ padding: 0, marginTop: '4px' }}>
+                Elegí el esquema con el que se abre tu tienda. No cambia el modo que usás para
+                administrar.
+              </p>
+            </div>
+
             {/* Divisor */}
             <div
               style={{
@@ -272,6 +360,27 @@ export function StorefrontThemeEditor({
                   Partimos de la paleta base del preview de creación y desde acá la podés ajustar.
                 </p>
               </div>
+              <div className={styles.schemeTabs} style={{ padding: '0 24px 16px' }}>
+                {SCHEME_TABS.map((tab) => (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    className={`${styles.schemeTab} ${
+                      scheme === tab.value ? styles.schemeTabActive : ''
+                    }`}
+                    aria-label={tab.label}
+                    aria-pressed={scheme === tab.value}
+                    disabled={usePlatformColors}
+                    onClick={() => setScheme(tab.value)}
+                  >
+                    <Icon size={18}>{tab.value === 'light' ? 'light_mode' : 'dark_mode'}</Icon>
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <p className={styles.previewSupporting} style={{ padding: '0 24px 8px' }}>
+                Elegí qué esquema editar. El esquema con el que se abre la tienda se define arriba.
+              </p>
               <div className={styles.themeColorGrid}>
                 {THEME_COLOR_FIELDS.map((field) => {
                   const colorValue = currentConfig.palette[field.key];
@@ -322,6 +431,14 @@ export function StorefrontThemeEditor({
                 })}
               </div>
 
+              {!usePlatformColors && hasLowPrimaryContrast && (
+                <p className={styles.contrastWarning} role="status" aria-live="polite">
+                  <Icon size={18}>warning_amber</Icon>
+                  El color principal tiene poco contraste con este fondo. Podés guardarlo, pero
+                  puede dificultar la lectura.
+                </p>
+              )}
+
               {/* Botones de paleta */}
               <div
                 style={{
@@ -334,22 +451,14 @@ export function StorefrontThemeEditor({
                 <Button
                   variant="tonal"
                   disabled={usePlatformColors}
-                  onClick={() =>
-                    setStorefrontTheme(
-                      createRandomStorefrontTheme({ fontFamily: storefrontTheme.fontFamily }),
-                    )
-                  }
+                  onClick={handleRandomizePalette}
                 >
                   <Icon slot="icon" size={20}>
                     casino
                   </Icon>
                   Combinación aleatoria
                 </Button>
-                <Button
-                  variant="text"
-                  disabled={usePlatformColors}
-                  onClick={() => setStorefrontTheme(createDefaultStorefrontTheme())}
-                >
+                <Button variant="text" disabled={usePlatformColors} onClick={handleDefaultPalette}>
                   <Icon slot="icon" size={20}>
                     restart_alt
                   </Icon>
@@ -359,13 +468,12 @@ export function StorefrontThemeEditor({
             </div>
           </Card>
 
-          {/* Botón guardar — activo solo si hay cambios */}
+          {/* Botones de guardado y descarte — activos solo si hay cambios */}
           <div className={styles.actionRow}>
-            <Button
-              variant="filled"
-              onClick={handleSaveTheme}
-              disabled={isPending || !canSave || !hasChanges}
-            >
+            <Button variant="text" onClick={handleDiscardTheme} disabled={actionsDisabled}>
+              Descartar cambios
+            </Button>
+            <Button variant="filled" onClick={handleSaveTheme} disabled={actionsDisabled}>
               <Icon slot="icon" size={20}>
                 {isPending ? 'sync' : 'save'}
               </Icon>
@@ -385,6 +493,7 @@ export function StorefrontThemeEditor({
         color={feedback.color}
         icon={feedback.icon}
         onClose={closeFeedback}
+        autoCloseDuration={getSnackbarAutoCloseDuration(feedback.color)}
       />
     </div>
   );

@@ -5,8 +5,6 @@ import { db } from '@/core/database/client';
 import { businessSettings, productCategories } from '@/core/database/schema';
 import { getBusinessEntitlements } from '@/core/entitlements/getBusinessEntitlements';
 import {
-  buildStorefrontThemeStyleTag,
-  createDefaultStorefrontTheme,
   getStorefrontLayoutFromPreferences,
   getStorefrontThemeFromPreferences,
   hasCustomStorefrontTheme,
@@ -167,10 +165,6 @@ export default async function BusinessPage({ params }: Props) {
     ? getStorefrontThemeFromPreferences(settings?.preferences)
     : undefined;
 
-  const defaultScheme = settings?.themeMode ?? 'light';
-  const effectiveStorefrontTheme = savedStorefrontTheme ?? createDefaultStorefrontTheme();
-  const ssrThemeStyleTag = buildStorefrontThemeStyleTag(effectiveStorefrontTheme, defaultScheme);
-
   // DS 011 customer-facing trust signal: same data source as the complaint
   // banner (getBusinessTrustScore). Returns null when ENABLE_AUTO_DEACTIVATION
   // is off, which ALSO gates the badge — mirroring the banner's gating. It is
@@ -190,7 +184,6 @@ export default async function BusinessPage({ params }: Props) {
           dangerouslySetInnerHTML={{ __html: toSafeJsonLd(breadcrumbJsonLd) }}
         />
       )}
-      <style dangerouslySetInnerHTML={{ __html: ssrThemeStyleTag }} />
       <BusinessPageContent
         business={business}
         isOwner={isOwner}
@@ -208,7 +201,6 @@ export default async function BusinessPage({ params }: Props) {
         businessName={business.name}
         businessRuc={business.taxId ?? undefined}
         businessAddress={business.address ?? undefined}
-        defaultScheme={settings?.themeMode ?? 'light'}
         trustSignal={trustSignal}
       />
     </>

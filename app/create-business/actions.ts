@@ -16,6 +16,7 @@ import {
   mergeStorefrontThemeIntoPreferences,
   normalizeStorefrontTheme,
 } from '@/core/storefront';
+import { canonicalizeStorefrontThemePatterns } from '@/core/storefront/patternCatalog';
 import { captureEvent } from '@/lib/analytics/capture';
 import { AnalyticsEvents } from '@/lib/analytics/taxonomy';
 import { sendPromotionWelcomeEmail } from '@/lib/email/promotionEmails';
@@ -176,7 +177,9 @@ export async function createBusinessAction(formData: FormData) {
 
   if (typeof rawStorefrontTheme === 'string' && rawStorefrontTheme.trim().length > 0) {
     try {
-      storefrontTheme = normalizeStorefrontTheme(JSON.parse(rawStorefrontTheme));
+      storefrontTheme = normalizeStorefrontTheme(
+        canonicalizeStorefrontThemePatterns(JSON.parse(rawStorefrontTheme)),
+      );
     } catch (error) {
       logger.warn('createBusinessAction: invalid theme payload, using default', {
         error: toErrorDetail(error),

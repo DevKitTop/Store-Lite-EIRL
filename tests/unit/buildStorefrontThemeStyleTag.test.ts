@@ -64,4 +64,58 @@ describe('storefront theme style tag — style element breakout guard', () => {
     // The vars builder itself must not reject a legitimate gradient config.
     expect(buildStorefrontThemeVars(gradient, 'light')).toBeTruthy();
   });
+
+  it('emits the full mask/filter/blend var set for a masked pattern', () => {
+    const theme = createDefaultStorefrontTheme();
+    const masked = {
+      ...theme,
+      light: {
+        ...theme.light,
+        background: {
+          type: 'gradient' as const,
+          colors: ['#ffffff', '#000000'],
+          cssOverlay: {
+            backgroundImage: 'linear-gradient(#ffffff, #000000)',
+            maskImage: 'linear-gradient(#000000, transparent)',
+            filter: 'blur(1px)',
+            backgroundBlendMode: 'overlay',
+            mixBlendMode: 'multiply',
+          },
+        },
+      },
+    };
+
+    const vars = buildStorefrontThemeVars(masked, 'light');
+
+    expect(vars['--storefront-bg-image']).toBe('linear-gradient(#ffffff, #000000)');
+    expect(vars['--storefront-mask-image']).toBe('linear-gradient(#000000, transparent)');
+    expect(vars['--storefront-filter']).toBe('blur(1px)');
+    expect(vars['--storefront-bg-blend-mode']).toBe('overlay');
+    expect(vars['--storefront-mix-blend-mode']).toBe('multiply');
+  });
+
+  it('sanitizes hostile CSS carried by a pattern var', () => {
+    const theme = createDefaultStorefrontTheme();
+    const hostile = {
+      ...theme,
+      light: {
+        ...theme.light,
+        background: {
+          type: 'gradient' as const,
+          colors: ['#ffffff', '#000000'],
+          cssOverlay: {
+            backgroundImage: 'linear-gradient(#ffffff, #000000)',
+            maskImage: 'red;}</style><script>alert(1)</script>',
+          },
+        },
+      },
+    };
+
+    const css = buildStorefrontThemeStyleTag(hostile, 'light');
+
+    expect(css).not.toContain('</style>');
+    expect(css).not.toContain('<script');
+    expect(css).not.toContain('<');
+    expect(css).not.toContain('>');
+  });
 });

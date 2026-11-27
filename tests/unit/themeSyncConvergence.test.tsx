@@ -1,3 +1,4 @@
+import { requestStorefrontThemeSync, viewerSchemeCookieName } from '@/core/storefront/viewerScheme';
 import { ThemeProvider, useTheme } from '@/shared/context/ThemeContext';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -43,6 +44,18 @@ Object.defineProperty(window, 'matchMedia', {
   writable: true,
 });
 
+function setCookie(value: string) {
+  document.cookie = `${viewerSchemeCookieName(SLUG)}=${value}; path=/`;
+}
+
+function clearCookie() {
+  document.cookie = `${viewerSchemeCookieName(SLUG)}=; path=/; max-age=0`;
+}
+
+function cookieContains(value: string) {
+  return document.cookie.split('; ').includes(`${viewerSchemeCookieName(SLUG)}=${value}`);
+}
+
 function createMediaQueryList({ matches = false } = {}) {
   return {
     matches,
@@ -56,17 +69,17 @@ function createMediaQueryList({ matches = false } = {}) {
   };
 }
 
-function SyncHarness({ slug, editorOpen = false }: { slug: string; editorOpen?: boolean }) {
-  const { viewerTheme, effectiveTheme, handleViewerThemeToggle } = useStorefrontViewerTheme({
-    slug,
-    editorOpen,
+function SyncHarness({ defaultScheme = 'light' }: { defaultScheme?: 'light' | 'dark' }) {
+  const { viewerTheme, handleViewerThemeToggle } = useStorefrontViewerTheme({
+    slug: SLUG,
+    defaultScheme,
   });
   return (
     <>
       <output
         data-testid="theme-state"
         data-viewer={viewerTheme ?? 'null'}
-        data-effective={effectiveTheme}
+        data-active={viewerTheme ?? defaultScheme}
       />
       <button type="button" onClick={handleViewerThemeToggle}>
         toggle-viewer
@@ -75,11 +88,19 @@ function SyncHarness({ slug, editorOpen = false }: { slug: string; editorOpen?: 
   );
 }
 
-// Simulates the navbar/settings toggle that writes into the global ThemeContext.
+// Simulates the navbar toggle: it writes the global ThemeContext and forwards
+// the resolved scheme to the active storefront viewer.
 function GlobalThemeControl() {
   const { theme, setTheme } = useTheme();
   return (
-    <button type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+    <button
+      type="button"
+      onClick={() => {
+        const next = theme === 'dark' ? 'light' : 'dark';
+        setTheme(next);
+        requestStorefrontThemeSync(SLUG, next);
+      }}
+    >
       toggle-global
     </button>
   );
@@ -87,128 +108,106 @@ function GlobalThemeControl() {
 
 function themeState() {
   const el = screen.getByTestId('theme-state');
-  return { viewer: el.getAttribute('data-viewer'), effective: el.getAttribute('data-effective') };
+  return {
+    viewer: el.getAttribute('data-viewer'),
+    active: el.getAttribute('data-active'),
+  };
 }
 
 describe('themeSyncConvergence', () => {
   beforeEach(() => {
     matchMediaMock.mockReset();
     matchMediaMock.mockReturnValue(createMediaQueryList());
+    clearCookie();
   });
 
   afterEach(() => {
+    clearCookie();
     localStorageMock.clear();
     document.body.className = '';
     document.documentElement.removeAttribute('data-theme');
     document.documentElement.style.colorScheme = '';
   });
 
-  it('settles on a single stable scheme when app-theme and storefront-theme seeds diverge', async () => {
-    localStorageMock.setItem('app-theme', 'dark');
+  it('prefers the store cookie over a legacy localStorage value and the store default', async () => {
+    setCookie('dark');
     localStorageMock.setItem(STORE_KEY, 'light');
 
-    const { rerender } = render(
-      <ThemeProvider>
-        <SyncHarness slug={SLUG} />
-      </ThemeProvider>,
-    );
+    render(<SyncHarness defaultScheme="light" />);
 
-    // The mount resolution (global effective theme) converges into the viewer in
-    // one step; there is no oscillation between the divergent seeds.
     await waitFor(() => {
-      expect(themeState()).toEqual({ viewer: 'dark', effective: 'dark' });
+      expect(themeState()).toEqual({ viewer: 'dark', active: 'dark' });
     });
-
-    // Unrelated re-renders must never flip the scheme back and forth.
-    for (let i = 0; i < 10; i += 1) {
-      rerender(
-        <ThemeProvider>
-          <SyncHarness slug={SLUG} />
-        </ThemeProvider>,
-      );
-      expect(themeState()).toEqual({ viewer: 'dark', effective: 'dark' });
-    }
-
-    // Exactly one data-theme attribute at all times (no dark+light churn).
-    const dataTheme = document.documentElement.getAttribute('data-theme');
-    expect(dataTheme).toBe('dark');
+    expect(cookieContains('dark')).toBe(true);
   });
 
-  it('propagates an explicit viewer toggle exactly once and never reverts it', async () => {
-    localStorageMock.setItem(STORE_KEY, 'light');
+  it('migrates a legacy localStorage value to the store cookie on mount', async () => {
+    localStorageMock.setItem(STORE_KEY, 'dark');
 
-    const { rerender } = render(
+    render(<SyncHarness defaultScheme="light" />);
+
+    await waitFor(() => {
+      expect(themeState()).toEqual({ viewer: 'dark', active: 'dark' });
+    });
+    expect(cookieContains('dark')).toBe(true);
+  });
+
+  it('ignores the OS preference and uses the store default when no choice is stored', async () => {
+    matchMediaMock.mockReturnValue(createMediaQueryList({ matches: true }));
+
+    render(<SyncHarness defaultScheme="light" />);
+
+    await waitFor(() => {
+      expect(themeState()).toEqual({ viewer: 'null', active: 'light' });
+    });
+    expect(matchMediaMock).not.toHaveBeenCalled();
+  });
+
+  it('viewer toggle never mutates the platform app theme', async () => {
+    localStorageMock.setItem('app-theme', 'dark');
+    setCookie('light');
+
+    render(
       <ThemeProvider>
-        <SyncHarness slug={SLUG} />
+        <SyncHarness />
+        <GlobalThemeControl />
       </ThemeProvider>,
     );
     await waitFor(() => {
-      expect(themeState()).toEqual({ viewer: 'light', effective: 'light' });
+      expect(themeState()).toEqual({ viewer: 'light', active: 'light' });
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'toggle-viewer' }));
 
     await waitFor(() => {
-      expect(themeState()).toEqual({ viewer: 'dark', effective: 'dark' });
+      expect(themeState()).toEqual({ viewer: 'dark', active: 'dark' });
     });
-
-    // The toggle must not be reverted by the reverse-sync on later renders.
-    for (let i = 0; i < 10; i += 1) {
-      rerender(
-        <ThemeProvider>
-          <SyncHarness slug={SLUG} />
-        </ThemeProvider>,
-      );
-      expect(themeState()).toEqual({ viewer: 'dark', effective: 'dark' });
-    }
+    expect(localStorageMock.getItem('app-theme')).toBe('dark');
+    expect(document.body.classList.contains('dark')).toBe(true);
   });
 
-  it('propagates a global (navbar) change to the viewer when the editor is closed', async () => {
-    localStorageMock.setItem(STORE_KEY, 'light');
+  it('global (navbar) changes propagate into the storefront viewer', async () => {
+    localStorageMock.setItem('app-theme', 'light');
+    setCookie('light');
 
     render(
       <ThemeProvider>
-        <SyncHarness slug={SLUG} />
+        <SyncHarness />
         <GlobalThemeControl />
       </ThemeProvider>,
     );
     await waitFor(() => {
-      expect(themeState()).toEqual({ viewer: 'light', effective: 'light' });
+      expect(themeState()).toEqual({ viewer: 'light', active: 'light' });
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'toggle-global' }));
 
     await waitFor(() => {
-      expect(themeState()).toEqual({ viewer: 'dark', effective: 'dark' });
+      expect(document.body.classList.contains('dark')).toBe(true);
     });
-  });
-
-  it('blocks reverse sync while the customize editor is open', async () => {
-    localStorageMock.setItem(STORE_KEY, 'light');
-
-    const { rerender } = render(
-      <ThemeProvider>
-        <SyncHarness slug={SLUG} />
-        <GlobalThemeControl />
-      </ThemeProvider>,
-    );
     await waitFor(() => {
-      expect(themeState()).toEqual({ viewer: 'light', effective: 'light' });
+      expect(themeState()).toEqual({ viewer: 'dark', active: 'dark' });
     });
-
-    rerender(
-      <ThemeProvider>
-        <SyncHarness slug={SLUG} editorOpen />
-        <GlobalThemeControl />
-      </ThemeProvider>,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'toggle-global' }));
-
-    // The global side updates, but the viewer must stay put while the editor is open.
-    await waitFor(() => {
-      expect(themeState().effective).toBe('dark');
-    });
-    expect(themeState().viewer).toBe('light');
+    expect(cookieContains('dark')).toBe(true);
   });
 });

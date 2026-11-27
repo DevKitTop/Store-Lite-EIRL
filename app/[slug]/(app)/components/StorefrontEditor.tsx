@@ -8,13 +8,15 @@ import type {
   StorefrontTheme,
 } from '@/core/storefront';
 import { normalizeStorefrontTheme, patternToCssOverlay, randomHexColor } from '@/core/storefront';
-import type { PatternCraftPattern } from '@/data/patterncraft';
-import { getPatternCraftById } from '@/data/patterncraft';
+import { STOREFRONT_FONT_OPTIONS } from '@/core/storefront/storefrontFontRegistry';
+import type { PatternCraftPattern } from '@/data/patterncraft/curated';
+import { getCuratedPatternById } from '@/data/patterncraft/curated';
 import { Icon } from '@/shared/components/ui/data-display/Icon';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { updateStorefrontTheme } from '../settings/actions';
 import { PatternBrowser } from './PatternBrowser';
 import styles from './StorefrontEditor.module.css';
+import { useDialogSurface } from './useDialogSurface';
 
 interface StorefrontEditorProps {
   business: { id: string; slug: string };
@@ -35,12 +37,6 @@ interface StorefrontEditorProps {
 
 // NOTE: Built-in overlays (dots, lines, etc.) and custom CSS textarea were removed in V2.
 // PatternCraft is now the only decorative pattern option.
-
-const FONT_OPTIONS = [
-  { value: 'google-sans', label: 'Predeterminado' },
-  { value: 'inter', label: 'Inter' },
-  { value: 'roboto', label: 'Roboto' },
-] as const;
 
 const SCHEME_TABS: { value: StorefrontColorScheme; label: string }[] = [
   { value: 'light', label: 'Claro' },
@@ -75,22 +71,37 @@ export function StorefrontEditor({
   onOpenChange,
 }: StorefrontEditorProps) {
   const [open, setOpen] = useState(false);
+  const [storeVisible, setStoreVisible] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savedTheme, setSavedTheme] = useState<StorefrontTheme>(() =>
+    normalizeStorefrontTheme(storefrontTheme),
+  );
+  const [feedback, setFeedback] = useState<{ message: string; error?: boolean } | null>(null);
+  const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const hasChanges = useMemo(
+    () => JSON.stringify(normalizeStorefrontTheme(storefrontTheme)) !== JSON.stringify(savedTheme),
+    [storefrontTheme, savedTheme],
+  );
+  // While "Ver tienda" is active, the storefront stays interactive: no backdrop,
+  // no focus trap and no body scroll lock. The compact editor bar remains usable.
+  const editorActive = open && !storeVisible;
+  const clearFeedback = useCallback(() => {
+    clearTimeout(feedbackTimeoutRef.current);
+    feedbackTimeoutRef.current = undefined;
+    setFeedback(null);
+  }, []);
 
   // Notify the page when the editor opens/closes so reverse theme sync
   // can be skipped while the storefront is being customized.
   useEffect(() => {
     onOpenChange?.(open);
   }, [open, onOpenChange]);
-  const [feedback, setFeedback] = useState<{ message: string; error?: boolean } | null>(null);
   const [isPatternBrowserOpen, setIsPatternBrowserOpen] = useState(false);
-  const [, setOverlayPending] = useState(false);
   // The scheme state (light/dark) persists across open/close cycles because
   // this component stays mounted. The user's last tab selection remains active,
   // and onPreviewSchemeChange keeps the page preview showing that scheme even
   // after the editor closes. No reset logic needed here.
   const [scheme, setScheme] = useState<StorefrontColorScheme>(defaultScheme ?? 'light');
-  const panelRef = useRef<HTMLDivElement>(null);
 
   const currentConfig: StorefrontColorConfig = storefrontTheme[scheme];
   const bg = currentConfig.background;
@@ -107,39 +118,12 @@ export function StorefrontEditor({
   //     show a color editor for it; otherwise fill shows through ──
   const hasPatternColor = !!cssOverlay?.background;
 
-  // Lock body scroll when open
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
   // Sync the editor's internal scheme tab to whatever scheme is active on the
   // page (from the floating toggle or OS default) whenever the editor opens.
   useEffect(() => {
     if (!open) return;
     setScheme(currentScheme ?? detectedColorScheme);
   }, [open, currentScheme, detectedColorScheme]);
-
-  // Close handler — keeps the last selected preview scheme so the page
-  // stays in the scheme the user was editing after the editor closes.
-  const handleClose = useCallback(() => {
-    setOpen(false);
-    onClose?.();
-  }, [onClose]);
-
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleClose();
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open, handleClose]);
 
   // Update the color config for the current scheme (light or dark)
   const updateConfig = useCallback(
@@ -257,6 +241,43 @@ export function StorefrontEditor({
     scheduleFillFlush();
   };
 
+  // ── Dirty-state actions ───────────────────────────────────────
+
+  const cancelDebouncedDrafts = useCallback(() => {
+    clearTimeout(paletteFlushRef.current);
+    clearTimeout(fillFlushRef.current);
+    paletteFlushRef.current = undefined;
+    fillFlushRef.current = undefined;
+    paletteDraftRef.current = {};
+    fillDraftRef.current = {};
+    setDraftPalette(null);
+    setDraftFillColors(null);
+  }, []);
+
+  const discardChanges = useCallback(() => {
+    cancelDebouncedDrafts();
+    clearFeedback();
+    onThemeChange(normalizeStorefrontTheme(savedTheme));
+  }, [cancelDebouncedDrafts, clearFeedback, onThemeChange, savedTheme]);
+
+  // Close handler — keeps the last selected preview scheme so the page
+  // stays in the scheme the user was editing after the editor closes.
+  const handleClose = useCallback(() => {
+    if (hasChanges && !window.confirm('¿Descartar los cambios sin guardar?')) return;
+    if (hasChanges) discardChanges();
+    setOpen(false);
+    setStoreVisible(false);
+    onClose?.();
+  }, [discardChanges, hasChanges, onClose]);
+
+  // The picker owns keyboard input while nested; the panel resumes focus
+  // trapping after it closes.
+  const { surfaceRef } = useDialogSurface({
+    open: editorActive,
+    onClose: handleClose,
+    suspended: isPatternBrowserOpen,
+  });
+
   // ── Color removal / add (replaces [1][2][3][4] grid) ──
 
   const removeColorAt = (index: number) => {
@@ -286,18 +307,19 @@ export function StorefrontEditor({
   // ── Global actions ───────────────────────────────────────────
 
   const handleSave = async () => {
+    if (!hasChanges || saving) return;
+    clearFeedback();
     setSaving(true);
-    setFeedback(null);
     try {
-      const result = await updateStorefrontTheme(
-        business.id,
-        business.slug,
-        storefrontTheme,
-        scheme,
-      );
+      const result = await updateStorefrontTheme(business.id, business.slug, storefrontTheme);
       if (result.success) {
+        const saved =
+          'storefrontTheme' in result && result.storefrontTheme
+            ? normalizeStorefrontTheme(result.storefrontTheme)
+            : normalizeStorefrontTheme(storefrontTheme);
+        setSavedTheme(saved);
         setFeedback({ message: 'Guardado correctamente' });
-        setTimeout(() => setFeedback(null), 3000);
+        feedbackTimeoutRef.current = setTimeout(clearFeedback, 3000);
       } else {
         setFeedback({ message: result.error || 'Error al guardar', error: true });
       }
@@ -333,11 +355,9 @@ export function StorefrontEditor({
   const toggleOverlay = (enable: boolean) => {
     if (enable) {
       if (!cssOverlay) {
-        setOverlayPending(true);
         setIsPatternBrowserOpen(true);
       }
     } else {
-      setOverlayPending(false);
       updateConfig({
         background: { type: fillType, colors: fillColors },
       });
@@ -369,13 +389,22 @@ export function StorefrontEditor({
     });
   }, [fillType, fillColors, updateConfig]);
 
+  let saveLabel = 'Sin cambios pendientes';
+  if (saving) {
+    saveLabel = 'Guardando...';
+  } else if (hasChanges) {
+    saveLabel = 'Guardar cambios';
+  }
+
   return (
     <>
       {/* FAB */}
       <button
         className={styles.fab}
+        data-editor-fab=""
         onClick={() => {
           setOpen(true);
+          setStoreVisible(false);
           onOpen?.();
         }}
         aria-label="Personalizar tienda"
@@ -384,18 +413,48 @@ export function StorefrontEditor({
       </button>
 
       {/* Backdrop */}
-      {open && <div className={styles.backdrop} onClick={handleClose} />}
+      {editorActive && (
+        <div
+          data-testid="storefront-editor-backdrop"
+          className={styles.backdrop}
+          onClick={handleClose}
+          aria-hidden="true"
+        />
+      )}
 
       {/* Panel */}
-      <div ref={panelRef} className={`${styles.panel} ${open ? styles.panelOpen : ''}`}>
+      <div
+        ref={surfaceRef}
+        data-testid="storefront-editor-panel"
+        className={`${styles.panel} ${editorActive ? styles.panelOpen : ''} ${storeVisible ? styles.panelCollapsed : ''}`}
+        role="dialog"
+        aria-modal={editorActive ? 'true' : undefined}
+        aria-labelledby="storefront-editor-title"
+        aria-hidden={open ? undefined : true}
+        inert={!open}
+        tabIndex={-1}
+      >
         <div className={styles.panelHeader}>
-          <h2 className={styles.panelTitle}>Personalizar tienda</h2>
-          <button className={styles.closeBtn} onClick={handleClose}>
+          <h2 id="storefront-editor-title" className={styles.panelTitle}>
+            Personalizar tienda
+          </h2>
+          <button
+            type="button"
+            className={styles.viewStoreBtn}
+            onClick={() => setStoreVisible((visible) => !visible)}
+            aria-label={storeVisible ? 'Editar estilo' : 'Ver tienda'}
+            aria-expanded={!storeVisible}
+            aria-controls="storefront-editor-body"
+          >
+            <Icon>{storeVisible ? 'edit' : 'visibility'}</Icon>
+            {storeVisible ? 'Editar estilo' : 'Ver tienda'}
+          </button>
+          <button className={styles.closeBtn} onClick={handleClose} aria-label="Cerrar editor">
             <Icon>close</Icon>
           </button>
         </div>
 
-        <div className={styles.panelBody}>
+        <div id="storefront-editor-body" className={styles.panelBody}>
           {/* ── Toggle modo claro/oscuro ── */}
           <div className={styles.sectionCard}>
             <h3 className={styles.sectionTitle}>
@@ -407,6 +466,7 @@ export function StorefrontEditor({
                 <button
                   key={tab.value}
                   className={`${styles.schemeTab} ${scheme === tab.value ? styles.schemeTabActive : ''}`}
+                  aria-pressed={scheme === tab.value}
                   onClick={() => {
                     setScheme(tab.value);
                     onPreviewSchemeChange?.(tab.value);
@@ -448,6 +508,7 @@ export function StorefrontEditor({
                         value={color}
                         onChange={(e) => handlePaletteChange(key, e.target.value)}
                         className={styles.colorInput}
+                        aria-label={`Color ${label.toLowerCase()}`}
                       />
                       <span className={styles.colorPreview} style={{ backgroundColor: color }} />
                     </div>
@@ -479,26 +540,16 @@ export function StorefrontEditor({
               Tipografía
             </h3>
             <div className={styles.fontGrid}>
-              {FONT_OPTIONS.map((opt) => (
+              {STOREFRONT_FONT_OPTIONS.map((option) => (
                 <button
-                  key={opt.value}
-                  className={`${styles.fontOption} ${storefrontTheme.fontFamily === opt.value ? styles.fontOptionActive : ''}`}
-                  onClick={() => updateTheme({ fontFamily: opt.value })}
+                  key={option.value}
+                  className={`${styles.fontOption} ${storefrontTheme.fontFamily === option.value ? styles.fontOptionActive : ''}`}
+                  onClick={() => updateTheme({ fontFamily: option.value })}
                 >
-                  <span
-                    className={styles.fontPreview}
-                    style={{
-                      fontFamily:
-                        opt.value === 'google-sans'
-                          ? undefined
-                          : opt.value === 'inter'
-                            ? "'Inter', sans-serif"
-                            : "'Roboto', sans-serif",
-                    }}
-                  >
+                  <span className={styles.fontPreview} style={{ fontFamily: option.cssValue }}>
                     Aa
                   </span>
-                  <span className={styles.fontLabel}>{opt.label}</span>
+                  <span className={styles.fontLabel}>{option.label}</span>
                 </button>
               ))}
             </div>
@@ -538,6 +589,7 @@ export function StorefrontEditor({
                       className={styles.dirRandomBtn}
                       onClick={handleRandomizeDirection}
                       title="Randomizar dirección del degradado"
+                      aria-label="Randomizar dirección del degradado"
                     >
                       <Icon>shuffle</Icon>
                     </button>
@@ -557,6 +609,11 @@ export function StorefrontEditor({
                           value={color}
                           onChange={(e) => handleFillColorChange(i, e.target.value)}
                           className={styles.colorInput}
+                          aria-label={
+                            fillColorCount === 1
+                              ? 'Color de fondo'
+                              : `Color de fondo, capa ${i + 1}`
+                          }
                         />
                         <span className={styles.colorPreview} style={{ backgroundColor: color }} />
                       </div>
@@ -582,6 +639,7 @@ export function StorefrontEditor({
                             style={{ backgroundColor: c }}
                             onClick={() => handleFillColorChange(i, c)}
                             title={c}
+                            aria-label={`Color ${c}`}
                           />
                         ))}
                       </div>
@@ -590,6 +648,7 @@ export function StorefrontEditor({
                           className={styles.removeColorBtn}
                           onClick={() => removeColorAt(i)}
                           title="Quitar color"
+                          aria-label="Quitar color"
                         >
                           <Icon>close</Icon>
                         </button>
@@ -618,6 +677,7 @@ export function StorefrontEditor({
                   type="checkbox"
                   checked={hasActiveOverlay}
                   onChange={(e) => toggleOverlay(e.target.checked)}
+                  aria-label="Patrón decorativo"
                 />
                 <span className={styles.toggleSlider} />
               </label>
@@ -633,15 +693,10 @@ export function StorefrontEditor({
                       <span className={styles.patternCraftActiveIcon}>✦</span>
                       <span>
                         <strong>
-                          {getPatternCraftById(cssOverlay.patternId)?.name ?? cssOverlay.patternId}
+                          {getCuratedPatternById(cssOverlay.patternId)?.name ??
+                            cssOverlay.patternId}
                         </strong>
                       </span>
-                      <button
-                        className={styles.patternCraftRemoveBtn}
-                        onClick={handleRemovePatternCraft}
-                      >
-                        Quitar
-                      </button>
                     </div>
                     <span className={styles.patternCraftHint}>
                       {hasPatternColor
@@ -696,13 +751,36 @@ export function StorefrontEditor({
         {/* Footer del panel */}
         <div className={styles.panelFooter}>
           {feedback && (
-            <span className={`${styles.feedback} ${feedback.error ? styles.feedbackError : ''}`}>
-              {feedback.message}
-            </span>
+            <div className={`${styles.feedback} ${feedback.error ? styles.feedbackError : ''}`}>
+              <span>{feedback.message}</span>
+              {feedback.error && (
+                <button
+                  className={styles.feedbackDismiss}
+                  type="button"
+                  onClick={clearFeedback}
+                  aria-label="Cerrar aviso"
+                >
+                  <Icon>close</Icon>
+                </button>
+              )}
+            </div>
           )}
-          <button className={styles.saveBtn} onClick={handleSave} disabled={saving}>
-            {saving ? 'Guardando...' : 'Guardar cambios'}
-          </button>
+          <div className={styles.footerActions}>
+            <button
+              className={styles.discardBtn}
+              onClick={discardChanges}
+              disabled={saving || !hasChanges}
+            >
+              Descartar cambios
+            </button>
+            <button
+              className={styles.saveBtn}
+              onClick={handleSave}
+              disabled={saving || !hasChanges}
+            >
+              {saveLabel}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -711,6 +789,7 @@ export function StorefrontEditor({
         open={isPatternBrowserOpen}
         onClose={() => setIsPatternBrowserOpen(false)}
         onSelect={handlePatternCraftSelect}
+        onClear={handleRemovePatternCraft}
         currentPatternId={cssOverlay?.patternId}
         colorScheme={scheme}
       />

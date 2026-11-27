@@ -7,6 +7,10 @@ import {
   type ProductGridSection,
   type StorefrontLayout,
 } from '@/core/storefront';
+import {
+  hasStorefrontCustomizationAccess,
+  hasStorefrontEditPermission,
+} from '@/core/storefront/storefrontCustomizationAccess';
 import { claimPromotionAction } from '@/features/promotions/actions';
 import type { Permission } from '@/lib/permissions/definitions';
 import {
@@ -1616,11 +1620,18 @@ export function SettingsClient({
   permissions,
   isOwner,
 }: SettingsClientProps) {
+  const canCustomizeStorefront = hasStorefrontCustomizationAccess({
+    hasEditPermission: hasStorefrontEditPermission({ isOwner, permissions }),
+    canCustomizeStorefrontPlan: entitlements.canCustomizeStorefront,
+  });
+
   const navItemsWithAccess = React.useMemo(() => {
     return NAV_GROUPS.flatMap((group) =>
       group.items.map((item) => {
         let hasAccess = false;
-        if (isOwner) {
+        if (item.id === 'storefront') {
+          hasAccess = canCustomizeStorefront;
+        } else if (isOwner) {
           hasAccess = true;
         } else {
           switch (item.id) {
@@ -1629,7 +1640,6 @@ export function SettingsClient({
                 permissions.includes('business.edit') || permissions.includes('contact.edit');
               break;
             case 'appearance':
-            case 'storefront':
               hasAccess = permissions.includes('storefront.edit');
               break;
             case 'plan':
@@ -1657,7 +1667,7 @@ export function SettingsClient({
         return { ...item, hasAccess };
       }),
     );
-  }, [isOwner, permissions, entitlements]);
+  }, [canCustomizeStorefront, isOwner, permissions, entitlements]);
 
   const accessibleItems = React.useMemo(
     () => navItemsWithAccess.filter((i) => i.hasAccess),
@@ -1753,7 +1763,7 @@ export function SettingsClient({
                     permissions={permissions}
                   />
                 )}
-                {active === 'storefront' && (
+                {active === 'storefront' && canCustomizeStorefront && (
                   <StorefrontSectionEditor
                     business={business}
                     entitlements={entitlements}

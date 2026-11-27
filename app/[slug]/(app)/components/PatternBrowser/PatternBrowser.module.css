@@ -134,6 +134,11 @@
   color: var(--md-sys-color-on-surface, #374151);
 }
 
+.tab:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary, #6366f1);
+  outline-offset: 2px;
+}
+
 .tabActive {
   color: var(--md-sys-color-primary, #6366f1);
   border-bottom-color: var(--md-sys-color-primary, #6366f1);
@@ -196,6 +201,12 @@
   border-color: var(--md-sys-color-primary, #818cf8);
   box-shadow: 0 4px 14px rgba(var(--md-sys-color-primary-rgb, 99, 102, 241), 0.18);
   transform: translateY(-1px);
+}
+
+.card:focus-visible {
+  outline: 3px solid var(--md-sys-color-primary, #6366f1);
+  outline-offset: 2px;
+  border-color: var(--md-sys-color-primary, #6366f1);
 }
 
 .cardSelected {

@@ -8,9 +8,12 @@ import {
   updateBusinessSEO,
   updateBusinessSlug,
   updateCulqiCredentials,
+  updateStorefrontDefaultScheme,
   updateStorefrontLayout,
   updateStorefrontTheme,
 } from '@/app/[slug]/(app)/settings/actions';
+import { STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE } from '@/core/storefront/storefrontCustomizationAccess';
+import { revalidatePath } from 'next/cache';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // ── Mocks ────────────────────────────────────────────
@@ -62,8 +65,10 @@ const {
 
 const mockDbUpdateSet = vi.fn();
 const mockDbUpdateWhere = vi.fn();
+const mockDbUpdateReturning = vi.fn();
 const mockDbInsertValues = vi.fn();
 const mockDbInsertOnConflictDoNothing = vi.fn();
+const mockDbInsertOnConflictDoUpdate = vi.fn();
 const mockDbDeleteWhere = vi.fn();
 
 vi.mock('@/core/database/client', () => ({
@@ -92,15 +97,19 @@ vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
 }));
 
+const mockPosthogCapture = vi.hoisted(() => vi.fn());
+const mockPosthogFlush = vi.hoisted(() => vi.fn());
+
 vi.mock('@/lib/posthogServer', () => ({
   getPostHogClient: vi.fn(() => ({
-    capture: vi.fn(),
-    flush: vi.fn().mockResolvedValue(undefined),
+    capture: mockPosthogCapture,
+    flush: mockPosthogFlush,
   })),
 }));
 
 // Storefront helpers
 vi.mock('@/core/storefront', () => ({
+  STOREFRONT_LAYOUT_PREFERENCES_KEY: 'storefrontLayout',
   normalizeStorefrontLayout: vi.fn((l: unknown) => l),
   normalizeStorefrontTheme: vi.fn((t: unknown) => t),
   mergeStorefrontLayoutIntoPreferences: vi.fn((prefs: unknown, layout: unknown) => ({
@@ -173,15 +182,20 @@ describe('settings actions — plan enforcement', () => {
       isOwner: true,
     });
 
-    // Chain update → set → where
+    // Chain update → set → where (→ returning for actions that need row counts)
     mockDbUpdate.mockReturnValue({ set: mockDbUpdateSet });
     mockDbUpdateSet.mockReturnValue({ where: mockDbUpdateWhere });
-    mockDbUpdateWhere.mockResolvedValue(undefined);
+    mockDbUpdateWhere.mockReturnValue({ returning: mockDbUpdateReturning });
+    mockDbUpdateReturning.mockResolvedValue([{ id: 'settings-1' }]);
 
-    // Chain insert → values → onConflictDoNothing
+    // Chain insert → values → onConflictDoNothing | onConflictDoUpdate
     mockDbInsert.mockReturnValue({ values: mockDbInsertValues });
-    mockDbInsertValues.mockReturnValue({ onConflictDoNothing: mockDbInsertOnConflictDoNothing });
+    mockDbInsertValues.mockReturnValue({
+      onConflictDoNothing: mockDbInsertOnConflictDoNothing,
+      onConflictDoUpdate: mockDbInsertOnConflictDoUpdate,
+    });
     mockDbInsertOnConflictDoNothing.mockResolvedValue(undefined);
+    mockDbInsertOnConflictDoUpdate.mockResolvedValue(undefined);
 
     // Chain delete → where
     mockDbDelete.mockReturnValue({ where: mockDbDeleteWhere });
@@ -201,6 +215,9 @@ describe('settings actions — plan enforcement', () => {
 
     // Business has no locking payment history (paymentGuards suite covers locking)
     mockHasLockingPayments.mockResolvedValue(false);
+
+    // Analytics is fire-and-forget by default
+    mockPosthogFlush.mockResolvedValue(undefined);
   });
 
   // ============================================================
@@ -329,12 +346,22 @@ describe('settings actions — plan enforcement', () => {
 
     test('proceeds when plan is lite_pago', async () => {
       mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
-      mockDbQueryBusinessSettingsFindFirst.mockResolvedValue(null);
 
       const result = await updateStorefrontLayout(BUSINESS_ID, 'test-slug', layout);
 
       expect(result.success).toBe(true);
       expect(mockGetEntitlements).toHaveBeenCalledWith(BUSINESS_ID);
+    });
+
+    test('writes the layout with a single upsert, no read-modify-write', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      await updateStorefrontLayout(BUSINESS_ID, 'test-slug', layout);
+
+      expect(mockDbQueryBusinessSettingsFindFirst).not.toHaveBeenCalled();
+      expect(mockDbInsertOnConflictDoUpdate).toHaveBeenCalledTimes(1);
+      const values = mockDbInsertValues.mock.calls[0][0] as Record<string, unknown>;
+      expect(values.preferences).toEqual({ storefrontLayout: layout });
     });
   });
 
@@ -344,7 +371,7 @@ describe('settings actions — plan enforcement', () => {
     test('returns error when plan is lite', async () => {
       mockGetEntitlements.mockResolvedValue(LITE_ENTITLEMENTS);
 
-      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme, 'light');
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
 
       expect(result).toEqual({
         success: false,
@@ -366,7 +393,7 @@ describe('settings actions — plan enforcement', () => {
         maxTeamMembers: 3,
       });
 
-      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme, 'light');
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
 
       expect(result).toEqual({
         success: false,
@@ -376,12 +403,112 @@ describe('settings actions — plan enforcement', () => {
 
     test('proceeds when plan is lite_pago', async () => {
       mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
-      mockDbQueryBusinessSettingsFindFirst.mockResolvedValue(null);
 
-      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme, 'light');
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
 
       expect(result.success).toBe(true);
       expect(mockGetEntitlements).toHaveBeenCalledWith(BUSINESS_ID);
+    });
+
+    test('persists through a single atomic upsert, no read-modify-write', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
+
+      expect(result.success).toBe(true);
+      expect(mockDbQueryBusinessSettingsFindFirst).not.toHaveBeenCalled();
+      expect(mockDbInsertOnConflictDoUpdate).toHaveBeenCalledTimes(1);
+
+      const values = mockDbInsertValues.mock.calls[0][0] as Record<string, unknown>;
+      expect(values).not.toHaveProperty('themeMode');
+      expect(values.preferences).toHaveProperty('storefrontTheme');
+
+      const options = mockDbInsertOnConflictDoUpdate.mock.calls[0][0] as {
+        set: Record<string, unknown>;
+      };
+      expect(options.set).not.toHaveProperty('themeMode');
+    });
+
+    test('saving an edited dark palette does not change the default scheme (T07)', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      // No fourth argument: the editing tab is no longer forwarded by the UI.
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
+
+      expect(result.success).toBe(true);
+      const values = mockDbInsertValues.mock.calls[0][0] as Record<string, unknown>;
+      expect(values).not.toHaveProperty('themeMode');
+      expect(values.preferences).toHaveProperty('storefrontTheme');
+
+      const options = mockDbInsertOnConflictDoUpdate.mock.calls[0][0] as {
+        set: Record<string, unknown>;
+      };
+      expect(options.set).not.toHaveProperty('themeMode');
+    });
+
+    test('revalidates the tenant slug from the business record, not the caller', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+      mockDbQueryBusinessesFindFirst.mockResolvedValue({ slug: 'real-slug' });
+
+      await updateStorefrontTheme(BUSINESS_ID, 'spoofed-slug', theme);
+
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith('/real-slug', 'layout');
+      expect(vi.mocked(revalidatePath)).not.toHaveBeenCalledWith('/spoofed-slug', 'layout');
+    });
+
+    test('stays successful when the analytics flush rejects', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+      mockPosthogFlush.mockRejectedValueOnce(new Error('posthog down'));
+
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', theme);
+
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('updateStorefrontDefaultScheme', () => {
+    test('rejects an invalid scheme before any write', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      const result = await updateStorefrontDefaultScheme(
+        BUSINESS_ID,
+        'test-slug',
+        'sepia' as unknown as 'dark',
+      );
+
+      expect(result).toEqual({ success: false, error: 'Esquema de color no valido.' });
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    test('writes only themeMode, preserving sibling preference keys (T08)', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      const result = await updateStorefrontDefaultScheme(BUSINESS_ID, 'test-slug', 'dark');
+
+      expect(result.success).toBe(true);
+      expect(mockDbQueryBusinessSettingsFindFirst).not.toHaveBeenCalled();
+      expect(mockDbInsertOnConflictDoUpdate).toHaveBeenCalledTimes(1);
+
+      const values = mockDbInsertValues.mock.calls[0][0] as Record<string, unknown>;
+      expect(values.themeMode).toBe('dark');
+      expect(values).not.toHaveProperty('preferences');
+
+      const options = mockDbInsertOnConflictDoUpdate.mock.calls[0][0] as {
+        set: Record<string, unknown>;
+      };
+      expect(options.set).toHaveProperty('themeMode', 'dark');
+      expect(options.set).not.toHaveProperty('preferences');
+    });
+
+    test('revalidates the tenant slug from the business record', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+      mockDbQueryBusinessesFindFirst.mockResolvedValue({ slug: 'real-slug' });
+
+      await updateStorefrontDefaultScheme(BUSINESS_ID, 'spoofed-slug', 'dark');
+
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith('/real-slug', 'layout');
+      expect(vi.mocked(revalidatePath)).not.toHaveBeenCalledWith('/spoofed-slug', 'layout');
     });
   });
 
@@ -421,12 +548,72 @@ describe('settings actions — plan enforcement', () => {
 
     test('proceeds when plan is lite_pago', async () => {
       mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
-      mockDbQueryBusinessSettingsFindFirst.mockResolvedValue(null);
 
       const result = await clearStorefrontTheme(BUSINESS_ID, 'test-slug');
 
       expect(result.success).toBe(true);
       expect(mockGetEntitlements).toHaveBeenCalledWith(BUSINESS_ID);
+    });
+
+    test('reports defaults when the store had no settings row', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+      mockDbUpdateReturning.mockResolvedValue([]);
+
+      const result = await clearStorefrontTheme(BUSINESS_ID, 'test-slug');
+
+      expect(result).toEqual({
+        success: true,
+        message: 'La apariencia publica ya usaba los colores por defecto.',
+      });
+    });
+  });
+
+  describe('storefront actions — shared access predicate (T27)', () => {
+    const writeActions: [string, () => Promise<{ success: boolean; error?: string }>][] = [
+      [
+        'updateStorefrontLayout',
+        () => updateStorefrontLayout(BUSINESS_ID, 'test-slug', { type: 'grid' }),
+      ],
+      [
+        'updateStorefrontTheme',
+        () => updateStorefrontTheme(BUSINESS_ID, 'test-slug', { colors: { primary: '#ff0000' } }),
+      ],
+      [
+        'updateStorefrontDefaultScheme',
+        () => updateStorefrontDefaultScheme(BUSINESS_ID, 'test-slug', 'dark'),
+      ],
+      ['clearStorefrontTheme', () => clearStorefrontTheme(BUSINESS_ID, 'test-slug')],
+    ];
+
+    test.each(writeActions)(
+      '%s denies when the entitlement is false on a paid plan',
+      async (_, call) => {
+        mockGetEntitlements.mockResolvedValue({
+          ...PREMIUM_ENTITLEMENTS,
+          canCustomizeStorefront: false,
+        });
+
+        const result = await call();
+
+        expect(result.success).toBe(false);
+        expect(result.error).toBe(STOREFRONT_CUSTOMIZATION_DENIED_MESSAGE);
+        expect(mockDbInsertValues).not.toHaveBeenCalled();
+        expect(mockDbUpdateSet).not.toHaveBeenCalled();
+      },
+    );
+
+    test.each(writeActions)('%s denies a member without storefront.edit', async (_, call) => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+      mockRequireAccessOnId.mockRejectedValueOnce(
+        new Error('No tienes permiso para realizar esta acción'),
+      );
+
+      const result = await call();
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('No tienes permiso para realizar esta acción');
+      expect(mockDbInsertValues).not.toHaveBeenCalled();
+      expect(mockDbUpdateSet).not.toHaveBeenCalled();
     });
   });
 
@@ -560,6 +747,47 @@ describe('settings actions — plan enforcement', () => {
       const result = await updateCulqiCredentials(BUSINESS_ID, 'pk_test_abc', 'sk_test_xyz');
 
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('T06 action input validation', () => {
+    test('rejects an invalid default scheme before any write', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      const result = await updateStorefrontDefaultScheme(
+        BUSINESS_ID,
+        'test-slug',
+        'purple' as never,
+      );
+
+      expect(result).toEqual({ success: false, error: 'Esquema de color no valido.' });
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    test('rejects a malformed slug before any write', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'Bad Slug!', {
+        colors: { primary: '#ff0000' },
+      } as never);
+
+      expect(result).toEqual({ success: false, error: 'Slug no valido.' });
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    test('rejects an oversized theme payload before any write', async () => {
+      mockGetEntitlements.mockResolvedValue(PREMIUM_ENTITLEMENTS);
+
+      const result = await updateStorefrontTheme(BUSINESS_ID, 'test-slug', {
+        colors: { primary: '#ff0000' },
+        oversized: 'x'.repeat(60_000),
+      } as never);
+
+      expect(result).toEqual({ success: false, error: 'Datos de apariencia no validos.' });
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
 });

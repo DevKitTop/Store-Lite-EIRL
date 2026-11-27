@@ -11,7 +11,7 @@ export function FloatingCartButton() {
   if (cartItems.length === 0) return null;
 
   return (
-    <div className={styles.container}>
+    <div className={styles.container} data-floating-cart="">
       <Button variant="elevated" className={styles.cartBtn} onClick={() => setIsCartOpen(true)}>
         <div className={styles.content}>
           <div className={styles.iconWrapper}>

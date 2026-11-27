@@ -4,29 +4,60 @@ import type {
   PatternCraftCategory,
   PatternCraftPattern,
   PatternCraftStyle,
-} from '@/data/patterncraft';
-import { getPatternCraftById, patternCraftByCategory } from '@/data/patterncraft';
+} from '@/data/patterncraft/curated';
+import {
+  classifyPatternSuitability,
+  curatedPatternByCategory,
+  getCuratedPatternById,
+} from '@/data/patterncraft/curated';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useDialogSurface } from '../useDialogSurface';
 import styles from './PatternBrowser.module.css';
 
 interface PatternBrowserProps {
   open: boolean;
   onClose: () => void;
   onSelect: (pattern: PatternCraftPattern) => void;
+  onClear?: (pattern: PatternCraftPattern) => void;
   currentPatternId?: string;
   colorScheme: 'light' | 'dark';
 }
 
+type PatternBrowserCategoryKey = 'gradients' | 'geometric' | 'effects';
+
 const CATEGORIES: {
-  key: PatternCraftCategory;
+  key: PatternBrowserCategoryKey;
   label: string;
   icon: string;
 }[] = [
   { key: 'gradients', label: 'Gradientes', icon: 'gradient' },
   { key: 'geometric', label: 'Geométricos', icon: 'grid_view' },
-  { key: 'decorative', label: 'Decorativos', icon: 'auto_awesome' },
-  { key: 'effects', label: 'Efectos', icon: 'blur_on' },
+  { key: 'effects', label: 'Efectos', icon: 'auto_awesome' },
 ];
+
+const CATEGORY_FAMILIES: ReadonlyMap<PatternBrowserCategoryKey, readonly PatternCraftCategory[]> =
+  new Map([
+    ['gradients', ['gradients']],
+    ['geometric', ['geometric']],
+    ['effects', ['decorative', 'effects']],
+  ]);
+
+function patternsForFamily(family: PatternCraftCategory): PatternCraftPattern[] {
+  switch (family) {
+    case 'gradients':
+      return curatedPatternByCategory.gradients;
+    case 'geometric':
+      return curatedPatternByCategory.geometric;
+    case 'decorative':
+      return curatedPatternByCategory.decorative;
+    case 'effects':
+      return curatedPatternByCategory.effects;
+  }
+}
+
+function curatedForCategory(key: PatternBrowserCategoryKey): PatternCraftPattern[] {
+  return (CATEGORY_FAMILIES.get(key) ?? []).flatMap(patternsForFamily);
+}
 
 function previewStyle(style: PatternCraftStyle): React.CSSProperties {
   const css: React.CSSProperties = {};
@@ -39,114 +70,17 @@ function previewStyle(style: PatternCraftStyle): React.CSSProperties {
   return css;
 }
 
-function luminanceFromHex(hex: string): number | undefined {
-  const normalized =
-    hex.length === 4 ? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}` : hex.slice(0, 7);
-  const match = normalized.match(/^#([0-9a-f]{6})$/i);
-  if (!match) return undefined;
-  const r = parseInt(match[1].slice(0, 2), 16);
-  const g = parseInt(match[1].slice(2, 4), 16);
-  const b = parseInt(match[1].slice(4, 6), 16);
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-}
-
-function extractColorLuminances(value: string): number[] {
-  const luminances: number[] = [];
-  const hexMatches = value.match(/#[0-9a-f]{3,8}\b/gi) ?? [];
-  for (const hex of hexMatches) {
-    const lum = luminanceFromHex(hex);
-    if (lum !== undefined) luminances.push(lum);
-  }
-  return luminances;
-}
-
-/**
- * Classifies a pattern by scheme compatibility.
- * - 'dark': dark own background -> show only in dark mode
- * - 'light': light own background -> show only in light mode
- * - 'both': transparent overlay -> show in both modes
- */
-function classifyPattern(style: PatternCraftStyle): 'dark' | 'light' | 'both' {
-  const bg = (typeof style.background === 'string' ? style.background : '').trim();
-  const bgColor = (typeof style.backgroundColor === 'string' ? style.backgroundColor : '').trim();
-  const bgImage = (typeof style.backgroundImage === 'string' ? style.backgroundImage : '').trim();
-  let color = bgColor;
-
-  if (!bgColor && bg) {
-    const lastComma = bg.lastIndexOf(',');
-    if (lastComma !== -1) {
-      const possibleColor = bg.slice(lastComma + 1).trim();
-      if (/^#[0-9a-fA-F]{6,8}$/.test(possibleColor)) {
-        color = possibleColor;
-      }
-    }
-    if (!color && !/gradient\(|url\(|image\(/i.test(bg)) {
-      color = bg;
-    }
-  }
-
-  const source = [bgColor, bg, bgImage].filter(Boolean).join(' ');
-  const luminances = extractColorLuminances(source);
-  if (!color && luminances.length > 0 && /gradient\(|url\(|image\(/i.test(source)) {
-    const average = luminances.reduce((sum, lum) => sum + lum, 0) / luminances.length;
-    return average < 0.45 ? 'dark' : 'light';
-  }
-
-  // No own background -> transparent overlay, works in both schemes.
-  if (!color) return 'both';
-
-  // Quick check for common dark bases
-  if (/^#0[0-9a-f]{5}$/i.test(color)) return 'dark'; // #0xxxxx
-  if (/^#1[0-9a-f]{5}$/i.test(color)) return 'dark'; // #1xxxxx
-  if (/^#2[0-9a-b][0-9a-f]{4}$/i.test(color)) return 'dark'; // #2[0-b]xxxx
-  if (color === '#000' || color === '#000000' || color === 'black') return 'dark';
-
-  const lum = luminanceFromHex(color);
-  if (lum !== undefined) {
-    return lum < 0.4 ? 'dark' : 'light';
-  }
-
-  // If it has a color but we could not determine it, assume light.
-  return 'light';
-}
-
-// Patrones eliminados del browser (no se renderizan en ningún scheme)
-const REMOVED = new Set([
-  'left-masked-basic-grid',
-  'left-masked-circuit-board',
-  'left-masked-circuit-board-light',
-  'left-masked-dashed-grid-light',
-  'right-masked-basic-grid',
-  'right-masked-circuit-board',
-  'right-masked-circuit-board-light',
-  'right-masked-dashed-grid-light',
-  'diagonal-lines',
-]);
-
-// Patrones que solo se muestran en dark mode
-const DARK_ONLY = new Set([
-  'striped-dark',
-  'azure-depths-top',
-  'crimson-depth-top',
-  'dark-horizon-glow-top',
-  'emerald-void-top',
-  'orchid-depths-top',
-  'violet-abyss-top',
-  'cosmic-noise',
-  'cosmic-sparkle',
-  'deep-ocean-glow',
-  'midnight-ember',
-]);
-
 export function PatternBrowser({
   open,
   onClose,
   onSelect,
+  onClear,
   currentPatternId,
   colorScheme,
 }: PatternBrowserProps) {
-  const [activeCategory, setActiveCategory] = useState<PatternCraftCategory>('gradients');
+  const [activeCategory, setActiveCategory] = useState<PatternBrowserCategoryKey>('gradients');
   const [selectedId, setSelectedId] = useState<string | null>(currentPatternId ?? null);
+  const { surfaceRef } = useDialogSurface({ open, onClose, captureEscape: true });
 
   // Sync selection when currentPatternId changes externally
   useEffect(() => {
@@ -162,57 +96,52 @@ export function PatternBrowser({
     }
   }, [visibleCategories, activeCategory]);
 
-  // Lock body scroll when modal is open
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open, onClose]);
-
   const patterns = useMemo(
     () =>
-      (patternCraftByCategory[activeCategory] ?? []).filter((p) => {
-        if (REMOVED.has(p.id)) return false;
-        if (colorScheme === 'light' && DARK_ONLY.has(p.id)) return false;
-        const match = classifyPattern(p.style);
+      curatedForCategory(activeCategory).filter((p) => {
+        const match = classifyPatternSuitability(p.style);
         return match === 'both' || match === colorScheme;
       }),
     [activeCategory, colorScheme],
   );
 
-  const handleConfirm = useCallback(() => {
-    if (!selectedId) return;
-    const pattern = getPatternCraftById(selectedId);
-    if (pattern) {
-      onSelect(pattern);
-    }
-    onClose();
-  }, [selectedId, onSelect, onClose]);
+  const handleConfirm = useCallback(
+    (patternId: string | null = selectedId) => {
+      if (!patternId) return;
+      const pattern = getCuratedPatternById(patternId);
+      if (pattern) {
+        onSelect(pattern);
+      }
+      onClose();
+    },
+    [selectedId, onSelect, onClose],
+  );
 
-  const currentPattern = currentPatternId ? getPatternCraftById(currentPatternId) : undefined;
+  const currentPattern = currentPatternId ? getCuratedPatternById(currentPatternId) : undefined;
 
   if (!open) return null;
 
   return (
-    <div className={styles.overlay} onClick={onClose}>
-      <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+    <div className={styles.overlay} data-testid="pattern-browser-backdrop" onClick={onClose}>
+      <div
+        ref={surfaceRef}
+        className={styles.modal}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pattern-browser-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* ── Header ── */}
         <div className={styles.header}>
-          <h2 className={styles.title}>Patrones PatternCraft</h2>
-          <button className={styles.closeBtn} onClick={onClose}>
+          <h2 id="pattern-browser-title" className={styles.title}>
+            Patrones PatternCraft
+          </h2>
+          <button
+            className={styles.closeBtn}
+            onClick={onClose}
+            aria-label="Cerrar selector de patrones"
+          >
             ✕
           </button>
         </div>
@@ -225,10 +154,9 @@ export function PatternBrowser({
             <button
               className={styles.clearBtn}
               onClick={() => {
+                onClear?.(currentPattern);
                 setSelectedId(null);
                 onClose();
-                // Inform parent to clear by calling onSelect with a null signal
-                // We'll rely on parent handling
               }}
             >
               Quitar
@@ -239,17 +167,15 @@ export function PatternBrowser({
         {/* ── Category tabs ── */}
         <div className={styles.tabs}>
           {visibleCategories.map((cat) => {
-            const filteredCount =
-              (patternCraftByCategory[cat.key] ?? []).filter((p) => {
-                if (REMOVED.has(p.id)) return false;
-                if (colorScheme === 'light' && DARK_ONLY.has(p.id)) return false;
-                const match = classifyPattern(p.style);
-                return match === 'both' || match === colorScheme;
-              }).length ?? 0;
+            const filteredCount = curatedForCategory(cat.key).filter((p) => {
+              const match = classifyPatternSuitability(p.style);
+              return match === 'both' || match === colorScheme;
+            }).length;
             return (
               <button
                 key={cat.key}
                 className={`${styles.tab} ${activeCategory === cat.key ? styles.tabActive : ''}`}
+                aria-pressed={activeCategory === cat.key}
                 onClick={() => setActiveCategory(cat.key)}
               >
                 <span className={styles.tabIcon}>
@@ -268,10 +194,17 @@ export function PatternBrowser({
             <button
               key={pattern.id}
               className={`${styles.card} ${selectedId === pattern.id ? styles.cardSelected : ''}`}
+              aria-pressed={selectedId === pattern.id}
               onClick={() => setSelectedId(pattern.id)}
-              onDoubleClick={() => {
-                setSelectedId(pattern.id);
-                handleConfirm();
+              onDoubleClick={() => handleConfirm(pattern.id)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                if (selectedId === pattern.id) {
+                  handleConfirm(pattern.id);
+                } else {
+                  setSelectedId(pattern.id);
+                }
               }}
               title={pattern.name}
             >
@@ -289,8 +222,12 @@ export function PatternBrowser({
           <button className={styles.cancelBtn} onClick={onClose}>
             Cancelar
           </button>
-          <button className={styles.applyBtn} disabled={!selectedId} onClick={handleConfirm}>
-            {selectedId === currentPatternId ? 'Mantener selección' : 'Aplicar patrón'}
+          <button
+            className={styles.applyBtn}
+            disabled={!selectedId}
+            onClick={() => handleConfirm()}
+          >
+            Aplicar patrón
           </button>
         </div>
       </div>

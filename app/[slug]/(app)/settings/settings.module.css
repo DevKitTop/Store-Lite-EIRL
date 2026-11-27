@@ -1065,6 +1065,64 @@
   font-weight: 700;
 }
 
+.schemeTabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.schemeTab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.75rem;
+  border-radius: 10px;
+  border: 1.5px solid var(--md-sys-color-outline-variant);
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    color 0.2s,
+    background 0.2s;
+}
+
+.schemeTab:hover:not(:disabled) {
+  border-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-primary);
+  background: color-mix(in srgb, var(--md-sys-color-primary) 4%, transparent);
+}
+
+.schemeTab:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
+
+.schemeTab:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.schemeTabActive {
+  border-color: var(--md-sys-color-primary);
+  background: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent);
+  color: var(--md-sys-color-primary);
+}
+
+.contrastWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0 24px 16px;
+  color: var(--md-sys-color-error);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
 .themeColorGrid {
   display: grid;
   grid-template-columns: 1fr;

@@ -1,5 +1,7 @@
-.sheet {
+.sheet:global(.md-sheet) {
   max-height: 85vh;
+  background-color: rgba(var(--md-sys-color-surface-container-low-rgb, 248, 250, 252), 0.96);
+  backdrop-filter: blur(12px);
 }
 
 .content {
